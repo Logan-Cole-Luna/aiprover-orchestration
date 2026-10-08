@@ -10,8 +10,8 @@ Theorem library (`aiprover_orchestration/library/`)
 Orchestration (`aiprover_orchestration/orchestrator/`)
 - Automated formalize, audit, sketch, prove, assemble pipeline with captain,
   auditor and solver roles; role prompts of the theorem library.
-- Pluggable agent backends: Claude, OpenAI-compatible
-  endpoints (local vLLM), and AIProver jobs as solver.
+- Pluggable agent backends: Claude, OpenAI-compatible endpoints (local
+  vLLM, OpenAI, Hugging Face, OpenRouter), and AIProver jobs as solver.
 - AIProver integration: sample extraction and Lean gate, fallback that keeps
   the answer's own theorem under its `open` commands, helpers spliced under
   the answer's `open` commands.
@@ -155,6 +155,8 @@ Results
 
 ## Decisions
 
+- Claude roles use the Anthropic API with a per-deployment key; hosted
+  open-weights and OpenAI models use the OpenAI-compatible backend.
 - Proxy reply cap below the harness client's read timeout (16,384 tokens
   at 29 tokens/s against 720 s).
 - AIProver `verified` requires the target statement verbatim; other fixed
@@ -227,6 +229,9 @@ Results
 
 ## Done
 
+- `docs/orchestration.md` describes the whole system: deployment, GPU
+  groups and model serving, run lifecycle, AIProver sessions and the
+  reasoning proxy, traces, the theorem library, and the analysis.
 - Query server, reasoning proxies, runs, results, logs, AIProver jobs and
   server state moved to this repository; the archived repository runs
   nothing.
@@ -262,6 +267,18 @@ Results
 - Query server with run queue, live progress and Claude call budget.
 - Per-run model choice for orchestrator and subagent (Claude model and
   reasoning level, or AIProver trained/base) on the query server page.
+
+## 2026-10-08: Model backends over provider APIs
+
+- `agents/claude.py`: backend `claude` over the Anthropic Messages API
+  (`ANTHROPIC_API_KEY`), streamed, adaptive thinking, `effort` in
+  `output_config`; refusal fallback (`fallbacks: "default"`) for the models
+  that accept it; cost from list prices.
+- `openai_compatible`: `provider` presets `openai`, `huggingface`,
+  `openrouter` (base URL and key variable); hosted providers keep their own
+  sampling defaults; OpenAI requests carry `max_completion_tokens`.
+- Query server: hosted providers selectable per role with a model id.
+- Run configs and recorded results name the Claude backend `claude`.
 
 ## 2026-10-08: Reply cap, empty replies, target check, one process per run
 
@@ -482,8 +499,7 @@ Results
   accepted a proof of `h2_mem` (rw [h2_eq_conj c s]; conjugation in the
   normal commutator subgroup), refused a restatement of `h1_cube_eq` used by
   `h1_mem`, and applied a split.
-- Captain: `effort = "high"`, `max_output_tokens = 128000`
-.
+- Captain: `effort = "high"`, `max_output_tokens = 128000`.
 - Pages: jobs with different session counts, hand-back nodes in the lemma's
   column, split lemmas hanging from their hand-back, captain proofs as
   winners.

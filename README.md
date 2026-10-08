@@ -46,7 +46,7 @@ flowchart LR
 └── state/                      # databases of the server and the library
 ```
 
-Documentation in `docs/`: `orchestration.md` (design and analysis),
+Documentation in `docs/`: `orchestration.md` (system, design and analysis),
 `AIProver_README.md` (orchestrator components), `aiprover_tacc.md`
 (deployment), `server.md` (query server); work log in
 [logbook.md](logbook.md).
@@ -75,29 +75,24 @@ python -m aiprover_orchestration.orchestrator.reports.informal results/<run_id>
 python -m aiprover_orchestration.utils.smoke
 ```
 
+Each role in a run config names a backend: `claude` (Anthropic API),
+`openai_compatible` (a local server by `base_url`, or a hosted provider),
+or `aiprover` (solver only), e.g.
+
+```json
+{"backend": "claude", "model": "claude-opus-5-5", "effort": "high"}
+{"backend": "openai_compatible", "provider": "openrouter", "model": "qwen/qwen3-235b-a22b"}
+{"backend": "openai_compatible", "provider": "huggingface", "model": "Qwen/Qwen3-235B-A22B"}
+{"backend": "openai_compatible", "provider": "openai", "model": "gpt-5"}
+```
+
 Requirements: elan with Lean v4.23.0; Mathlib v4.23.0 in
 `~/workspace/lean_projects/TmpProjDir` (linked by `orchestration_workspace/`);
 Python 3.12 with `fastapi`, `httpx`, `uvicorn`, `aiohttp` and `pygments`;
-`pdflatex`; AIProver venvs and ripgrep from
+`pdflatex`; `anthropic`; a key for each hosted backend a config uses
+(`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `HF_TOKEN`, `OPENROUTER_API_KEY`);
+AIProver venvs and ripgrep from
 `AIPROVER_CONFIG=configs/aiprover/vista.toml AIProver/AIProver_plugin/setup.sh venvs rg`.
-
-## Current results
-
-G-Simple (Carbone et al., draft, Section 3); captain Claude Opus 5.5,
-solvers AIProver. Every verified proof received reviewer verdict FAITHFUL.
-
-| Problem | Status | Wall (h) | Final lemmas |
-|---|---|---|---|
-| Lemma 3.1 | proved | 1.7 | 5 |
-| Corollary 3.2 | proved | 0.9 | 3 |
-| Theorem 3.3 | proved | 15.4 | 26 |
-| Theorem 3.4 | proved | 3.6 | 8 |
-| Lemma 3.5 | proved | 0.3 | 1 |
-| Theorem 3.6 | proved | 4.2 | 6 |
-| Theorem 3.7 | running | 16.3 | 10 (7 proved) |
-
-Theorem library smoke test (Claude Haiku 4.5): publishing, gating, direct
-proofs, sketch resolution and the HTTP interface pass.
 
 ## Future work
 

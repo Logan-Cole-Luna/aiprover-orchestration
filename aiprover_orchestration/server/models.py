@@ -1,8 +1,10 @@
 """Models a run may use for each of its roles.
 
-A selection is `{"provider": "claude" | "aiprover", "model": ..., "effort": ...}`.
+A selection is `{"provider": ..., "model": ..., "effort": ...}` with provider
+"claude", "aiprover", or a hosted provider (`HOSTED_PROVIDERS`).
 For Claude, `model` is a model id and `effort` a reasoning level the model
-accepts (empty = the model default). For AIProver, `model` is a version, whose
+accepts (empty = the model default). For a hosted provider, `model` is any
+model id the provider serves and `effort` is empty. For AIProver, `model` is a version, whose
 checkpoint the Vista model server must serve, and `effort` is empty: the
 reasoning of the model is not configurable.
 
@@ -14,6 +16,7 @@ lemmas. A role absent from a stored selection keeps the served config's model.
 """
 
 import json
+import re
 from pathlib import Path
 
 from .vista import CHECKPOINTS
@@ -24,6 +27,12 @@ CLAUDE_MODELS = {
     "claude-sonnet-5-5": {"label": "Sonnet 5.5", "efforts": EFFORTS},
     "claude-haiku-4-5-20251001": {"label": "Haiku 4.5", "efforts": ()},
 }
+HOSTED_PROVIDERS = {
+    "openai": "OpenAI",
+    "huggingface": "Hugging Face",
+    "openrouter": "OpenRouter",
+}
+MODEL_ID_RE = re.compile(r"[\w.:/-]+")
 AIPROVER_VERSIONS = {
     "trained": "AIProver trained (FP8, Vista)",
     "base": "AIProver base (bf16, Vista)",
@@ -94,6 +103,10 @@ def catalog() -> dict:
             {"model": version, "label": label}
             for version, label in AIPROVER_VERSIONS.items()
         ],
+        "hosted": [
+            {"provider": provider, "label": label}
+            for provider, label in HOSTED_PROVIDERS.items()
+        ],
         "roles": [
             {
                 "role": role,
@@ -123,6 +136,10 @@ def validate(selection: dict) -> dict:
                     f"{role}: {CLAUDE_MODELS[model]['label']} has no "
                     f"reasoning level {effort!r}"
                 )
+        elif provider in HOSTED_PROVIDERS:
+            if not MODEL_ID_RE.fullmatch(model):
+                raise ValueError(f"{role}: invalid model id {model!r}")
+            effort = ""
         elif provider == "aiprover":
             if model not in AIPROVER_VERSIONS:
                 raise ValueError(f"{role}: unknown AIProver version {model!r}")
@@ -186,6 +203,14 @@ def build_config(base_config: Path, selection: dict) -> dict:
                 spec["effort"] = choice["effort"]
             if role == "subagent":
                 spec["timeout"] = SUBAGENT_TIMEOUT
+        elif choice["provider"] in HOSTED_PROVIDERS:
+            spec = {
+                "backend": "openai_compatible",
+                "provider": choice["provider"],
+                "model": choice["model"],
+                "timeout": spec.get("timeout", 2400),
+                "max_tokens": CHAT_REPLY_TOKENS,
+            }
         elif role != "subagent":
             spec = {
                 "backend": "openai_compatible",
