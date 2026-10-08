@@ -1,0 +1,250 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[varqu,scaled=0.95]{zi4}
+\usepackage{amsmath,amssymb,amsthm,mathtools}
+\usepackage[dvipsnames]{xcolor}
+\usepackage{fvextra}
+\usepackage{booktabs,enumitem,microtype,needspace}
+\usepackage[colorlinks,linkcolor=MidnightBlue,citecolor=MidnightBlue,urlcolor=MidnightBlue]{hyperref}
+\usepackage[capitalise,nameinlink]{cleveref}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}[theorem]{Lemma}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{Remark}
+\newcommand{\leanname}[1]{\texttt{\detokenize{#1}}}
+\newenvironment{leanblock}[1]
+  {\par\smallskip\Needspace{4\baselineskip}\noindent{\footnotesize\textsf{#1}}\par\nopagebreak\vspace{2pt}}
+  {\par\medskip}
+\fvset{breaklines=true,breakanywhere=true,fontsize=\footnotesize,frame=leftline,
+  framerule=0.8pt,rulecolor=\color{gray!60},xleftmargin=4pt,framesep=6pt}
+\usepackage{longtable}
+\newcommand{\unverified}{\quad\textup{\small[not machine-verified]}}
+
+\newcommand{\Gc}{G_c(\mathfrak{m})}
+
+\title{Vanishing of the unipotent generators at zero in the presented group $G(\mathfrak{m})$}
+\date{}
+\begin{document}
+\maketitle
+\begin{abstract}
+We prove Lemma 3.1 (book label "gsimple zero generators trivial"). It states that in the group $G(\mathfrak{m})$ given by generators and relations, each unipotent generator $X_{-1}(0)$, $Y_{-1}(0)$, $X_{\ell,jk}(0)$, $Y_{\ell,jk}(0)$ is the identity. In the formalization, the coefficient function $c$ of the modular function $J$ is replaced by an arbitrary function $c\colon\mathbb{N}\to\mathbb{N}$, and the result holds for every such $c$. The proof has two steps. First, a general lemma: a map from $(\mathbb{C},+)$ to a group that turns sums into products sends $0$ to $1$. Second, four lemmas showing that each family of unipotent generators has this property, by the additivity relations (Re:1a), (Re:1b), (Im:1a) and (Im:1b). The main theorem and all lemmas are machine-verified.
+\end{abstract}
+
+\begin{center}\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+Source & Carbone et al., G-Simple (draft), GSimple\_Lemma\_3\_1 \\
+Status & proof machine-verified (Lean 4, Mathlib) \\
+Lemmas & 5 \\
+Text & written by claude-opus-5-5, checked against the Lean source \\
+Run & \texttt{srv\_20261004\_123233\_GSimple\_Lemma\_3\_1} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\tableofcontents
+
+\section{Setting}
+
+Throughout, $\mathbb{N}=\{0,1,2,\dots\}$, $\mathbb{C}^\times$ is the group of units of $\mathbb{C}$, and $c\colon \mathbb{N}\to\mathbb{N}$ is an arbitrary function. The function $c$ plays the role of the coefficient function of $J$; no property of $c$ is assumed.
+
+\begin{definition}[Index set]
+Let
+\[
+E_c=\{(\ell,j,k)\in\mathbb{N}^3 \mid 1\le k\le c(j),\ \ell<j\}.
+\]
+Since $\ell<j$, every $(\ell,j,k)\in E_c$ has $j\ge 1$.
+
+For $e=(\ell,j,k)\in E_c$, put $e^{\ast}=(j-1-\ell,\,j,\,k)$. Then $e^{\ast}\in E_c$, because $j-1-\ell<j$.
+\end{definition}
+
+\begin{definition}[Structure constants]
+For $\ell,j\in\mathbb{N}$, let
+\[
+c_{\ell j}=(-1)^{\ell+1}\binom{j-1}{\ell}(\ell+1)(j-\ell)\in\mathbb{C}.
+\]
+\end{definition}
+
+For $\ell<j$ all differences here are ordinary differences of natural numbers, and $c_{\ell j}\neq 0$. Divisions by $c_{\ell j}$ below are therefore genuine divisions in $\mathbb{C}$.
+
+\begin{definition}[Generators]
+Let $\mathcal{X}_c$ be the set of formal symbols
+\[
+H_1(s),\ H_2(s)\ (s\in\mathbb{C}^\times),\qquad X_{-1}(u),\ Y_{-1}(u)\ (u\in\mathbb{C}),\qquad X_e(u),\ Y_e(u)\ (e\in E_c,\ u\in\mathbb{C}).
+\]
+For $e=(\ell,j,k)$ we also write $X_{\ell,jk}(u)=X_e(u)$ and $Y_{\ell,jk}(u)=Y_e(u)$. Let $F(\mathcal{X}_c)$ be the free group on $\mathcal{X}_c$.
+
+In $F(\mathcal{X}_c)$ define, for $s\in\mathbb{C}^\times$ and $e=(\ell,j,k)\in E_c$:
+\[
+\widetilde w_{-1}(s)=X_{-1}(s)\,Y_{-1}(-s^{-1})\,X_{-1}(s),\qquad \widetilde w_{-1}=\widetilde w_{-1}(1),
+\]
+\[
+\widetilde w_e(s)=X_e(s)\,Y_e\!\left(\frac{-s^{-1}}{c_{\ell j}}\right)X_e(s),\qquad \widetilde w_e=\widetilde w_e(1).
+\]
+The commutator is $(a,b)=aba^{-1}b^{-1}$.
+\end{definition}
+
+\begin{definition}[Relators]
+Let $\mathcal{R}_c\subseteq F(\mathcal{X}_c)$ consist of the following elements. In each list we write a relation ``$a=b$'', which stands for the relator $ab^{-1}$. A relation ``$(a,b)=1$'' stands for the relator $(a,b)$. The variables range over $s,t\in\mathbb{C}^\times$, $u,v\in\mathbb{C}$, and $e=(\ell,j,k)$, $f=(m,p,q)\in E_c$.
+\begin{itemize}
+\item (H:1a) $H_1(s)H_1(t)=H_1(st)$.
+\item (H:1b) $H_2(s)H_2(t)=H_2(st)$.
+\item (H:2) $H_1(s)H_2(t)=H_2(t)H_1(s)$.
+\item (Re:1a) $X_{-1}(u)X_{-1}(v)=X_{-1}(u+v)$.
+\item (Re:1b) $Y_{-1}(u)Y_{-1}(v)=Y_{-1}(u+v)$.
+\item (Re:2) $Y_{-1}(-t)X_{-1}(s)Y_{-1}(t)=X_{-1}(-t^{-1})\,Y_{-1}(-t^2s)\,X_{-1}(t^{-1})$.
+\item (Re:3) $\widetilde w_{-1}(s)\widetilde w_{-1}=H_1(-s)H_2(-s^{-1})$.
+\item (Re:4a) $\widetilde w_{-1}X_{-1}(u)\widetilde w_{-1}^{-1}=Y_{-1}(-u)$.
+\item (Re:4b) $\widetilde w_{-1}Y_{-1}(u)\widetilde w_{-1}^{-1}=X_{-1}(-u)$.
+\item (Re:5a) $\widetilde w_{-1}H_1(s)\widetilde w_{-1}^{-1}=H_2(s)$.
+\item (Re:5b) $\widetilde w_{-1}H_2(s)\widetilde w_{-1}^{-1}=H_1(s)$.
+\item (Re:6a) $H_1(s)X_{-1}(u)H_1(s)^{-1}=X_{-1}(su)$.
+\item (Re:6b) $H_2(s)X_{-1}(u)H_2(s)^{-1}=X_{-1}(s^{-1}u)$.
+\item (Re:6c) $H_1(s)Y_{-1}(u)H_1(s)^{-1}=Y_{-1}(s^{-1}u)$.
+\item (Re:6d) $H_2(s)Y_{-1}(u)H_2(s)^{-1}=Y_{-1}(su)$.
+\item (Im:1a) $X_e(u)X_e(v)=X_e(u+v)$.
+\item (Im:1b) $Y_e(u)Y_e(v)=Y_e(u+v)$.
+\item (Im:2) $Y_e(-t)X_e(s)Y_e(t)=X_e\!\left(\frac{-t^{-1}}{c_{\ell j}}\right)Y_e(-c_{\ell j}t^2s)\,X_e\!\left(\frac{t^{-1}}{c_{\ell j}}\right)$.
+\item (Im:3) $\widetilde w_e\big(s^{(\ell+1)(j-\ell)}\big)\widetilde w_e=H_1\big((-s)^{j-\ell}\big)H_2\big((-s)^{\ell+1}\big)$.
+\item (Im:4a) $\widetilde w_eX_e(u)\widetilde w_e^{-1}=Y_e(-u/c_{\ell j})$.
+\item (Im:4b) $\widetilde w_eY_e(u)\widetilde w_e^{-1}=X_e(-c_{\ell j}u)$.
+\item (Im:5a) $\widetilde w_eH_1(s^{j-\ell})\widetilde w_e^{-1}=H_2(s^{-(\ell+1)})$.
+\item (Im:5b) $\widetilde w_eH_2(s^{\ell+1})\widetilde w_e^{-1}=H_1(s^{-(j-\ell)})$.
+\item (Im:6a) $H_1(s)X_e(u)H_1(s)^{-1}=X_e(s^{\ell+1}u)$.
+\item (Im:6b) $H_2(s)X_e(u)H_2(s)^{-1}=X_e(s^{j-\ell}u)$.
+\item (Im:6c) $H_1(s)Y_e(u)H_1(s)^{-1}=Y_e(s^{-(\ell+1)}u)$.
+\item (Im:6d) $H_2(s)Y_e(u)H_2(s)^{-1}=Y_e(s^{-(j-\ell)}u)$.
+\item (U:1a) $(X_{-1}(u),X_e(v))=1$ if $\ell+1=j$.
+\item (U:1b) $(Y_{-1}(u),Y_e(v))=1$ if $\ell+1=j$.
+\item (U:1c) $(Y_{-1}(u),X_e(v))=1$ if $\ell=0$.
+\item (U:1d) $(X_{-1}(u),Y_e(v))=1$ if $\ell=0$.
+\item (U:2) $(X_e(u),Y_f(v))=1$ if $j\ne p$, or $k\ne q$, or $|\ell-m|>1$.
+\item (U:3a) $(X_e(u),Y_f(v))=X_{-1}(uv)$ if $e=(1,2,k)$ and $f=(0,2,k)$ for the same $k$.
+\item (U:3b) $(X_e(u),Y_f(v))=Y_{-1}(uv)$ if $e=(0,2,k)$ and $f=(1,2,k)$ for the same $k$.
+\item (U:4a) $\widetilde w_{-1}X_e(u)\widetilde w_{-1}^{-1}=X_{e^\ast}\big((-1)^{j-\ell-1}u\big)$.
+\item (U:4b) $\widetilde w_{-1}Y_e(u)\widetilde w_{-1}^{-1}=Y_{e^\ast}\big((-1)^{j-\ell-1}u\big)$.
+\end{itemize}
+\end{definition}
+
+\begin{definition}[The group]
+Let $\Gc=F(\mathcal{X}_c)/N_c$, where $N_c$ is the normal closure of $\mathcal{R}_c$. Let $\pi\colon F(\mathcal{X}_c)\to\Gc$ be the quotient homomorphism.
+
+By construction, $\pi(r)=1$ for every $r\in\mathcal{R}_c$. Consequently, if $ab^{-1}\in\mathcal{R}_c$, then $\pi(a)=\pi(b)$.
+\end{definition}
+
+\begin{theorem}\label{thm:main}
+Let $c\colon\mathbb{N}\to\mathbb{N}$ be any function. Then in $\Gc$:
+\begin{enumerate}
+\item[(a)] $\pi(X_{-1}(0))=1$;
+\item[(b)] $\pi(Y_{-1}(0))=1$;
+\item[(c)] $\pi(X_e(0))=1$ for every $e\in E_c$;
+\item[(d)] $\pi(Y_e(0))=1$ for every $e\in E_c$.
+\end{enumerate}
+\end{theorem}
+
+This is Lemma 3.1 of the source for an arbitrary coefficient function $c$. Taking $c(j)$ to be the coefficients of $J$ recovers the source statement. The hypothesis $c(2)\ge 1$, mentioned in the source's formalization note, is not needed here.
+
+\section{Lemmas}
+
+\subsection{A general fact about additive families}
+
+\begin{lemma}[Additive families vanish at zero]\label{lem:add_zero_group_lemma}
+Let $G$ be a group and $f\colon\mathbb{C}\to G$ a map with $f(u+v)=f(u)f(v)$ for all $u,v\in\mathbb{C}$. Then $f(0)=1$.
+\end{lemma}
+
+\begin{proof}
+Taking $u=v=0$ gives $f(0)=f(0+0)=f(0)f(0)$. Hence
+\[
+f(0)=f(0)\big(f(0)f(0)^{-1}\big)=\big(f(0)f(0)\big)f(0)^{-1}=f(0)f(0)^{-1}=1.\qedhere
+\]
+\end{proof}
+
+\subsection{Additivity of the unipotent families in $\Gc$}
+
+\begin{lemma}[Additivity of $X_{-1}$]\label{lem:mk_xm_add}
+For every $c\colon\mathbb{N}\to\mathbb{N}$ and all $u,v\in\mathbb{C}$, we have $\pi(X_{-1}(u+v))=\pi(X_{-1}(u))\,\pi(X_{-1}(v))$ in $\Gc$.
+\end{lemma}
+
+\begin{proof}
+By (Re:1a), the element $X_{-1}(u)X_{-1}(v)X_{-1}(u+v)^{-1}$ lies in $\mathcal{R}_c$, so its image under $\pi$ is $1$. Since $\pi$ is a homomorphism, this reads
+\[
+\pi(X_{-1}(u))\,\pi(X_{-1}(v))\,\pi(X_{-1}(u+v))^{-1}=1.
+\]
+Multiplying on the right by $\pi(X_{-1}(u+v))$ gives the claim.
+\end{proof}
+
+\begin{lemma}[Additivity of $Y_{-1}$]\label{lem:mk_ym_add}
+For every $c\colon\mathbb{N}\to\mathbb{N}$ and all $u,v\in\mathbb{C}$, we have $\pi(Y_{-1}(u+v))=\pi(Y_{-1}(u))\,\pi(Y_{-1}(v))$ in $\Gc$.
+\end{lemma}
+
+\begin{proof}
+By (Re:1b), the element $Y_{-1}(u)Y_{-1}(v)\,Y_{-1}(u+v)^{-1}$ lies in $\mathcal{R}_c$, so its image under $\pi$ is $1$. Hence
+\[
+\pi\big(Y_{-1}(u)Y_{-1}(v)\big)\,\pi(Y_{-1}(u+v))^{-1}=1.
+\]
+Multiplying on the right by $\pi(Y_{-1}(u+v))$ gives $\pi(Y_{-1}(u)Y_{-1}(v))=\pi(Y_{-1}(u+v))$. Since $\pi$ is a homomorphism, the left side equals $\pi(Y_{-1}(u))\pi(Y_{-1}(v))$.
+\end{proof}
+
+\begin{lemma}[Additivity of $X_e$]\label{lem:mk_xx_add}
+For every $c\colon\mathbb{N}\to\mathbb{N}$, every $e\in E_c$ and all $u,v\in\mathbb{C}$, we have $\pi(X_e(u+v))=\pi(X_e(u))\,\pi(X_e(v))$ in $\Gc$.
+\end{lemma}
+
+\begin{proof}
+By (Im:1a), the element $\big(X_e(u)X_e(v)\big)X_e(u+v)^{-1}$ lies in $\mathcal{R}_c$, so $\pi(X_e(u)X_e(v))=\pi(X_e(u+v))$. Since $\pi$ is a homomorphism,
+\[
+\pi(X_e(u+v))=\pi(X_e(u)X_e(v))=\pi(X_e(u))\,\pi(X_e(v)).\qedhere
+\]
+\end{proof}
+
+\begin{lemma}[Additivity of $Y_e$]\label{lem:mk_yy_add}
+For every $c\colon\mathbb{N}\to\mathbb{N}$, every $e\in E_c$ and all $u,v\in\mathbb{C}$, we have $\pi(Y_e(u+v))=\pi(Y_e(u))\,\pi(Y_e(v))$ in $\Gc$.
+\end{lemma}
+
+\begin{proof}
+By (Im:1b), the element $\big(Y_e(u)Y_e(v)\big)Y_e(u+v)^{-1}$ lies in $\mathcal{R}_c$, so $\pi(Y_e(u)Y_e(v))=\pi(Y_e(u+v))$. Since $\pi$ is a homomorphism,
+\[
+\pi(Y_e(u+v))=\pi(Y_e(u)Y_e(v))=\pi(Y_e(u))\,\pi(Y_e(v)).\qedhere
+\]
+\end{proof}
+
+\section{Proof of the theorem}
+
+\begin{proof}[Proof of \cref{thm:main}]
+Fix $c$. Each part applies \cref{lem:add_zero_group_lemma} with $G=\Gc$ to a suitable map $f\colon\mathbb{C}\to\Gc$.
+\begin{itemize}
+\item[(a)] Take $f(u)=\pi(X_{-1}(u))$. This map is additive by \cref{lem:mk_xm_add}, hence $\pi(X_{-1}(0))=1$.
+\item[(b)] Take $f(u)=\pi(Y_{-1}(u))$. This map is additive by \cref{lem:mk_ym_add}, hence $\pi(Y_{-1}(0))=1$.
+\item[(c)] Fix $e\in E_c$ and take $f(u)=\pi(X_e(u))$. This map is additive by \cref{lem:mk_xx_add}, hence $\pi(X_e(0))=1$.
+\item[(d)] Fix $e\in E_c$ and take $f(u)=\pi(Y_e(u))$. This map is additive by \cref{lem:mk_yy_add}, hence $\pi(Y_e(0))=1$.\qedhere
+\end{itemize}
+\end{proof}
+
+\paragraph{Relation to the source proof.}
+The source proof treats only part (a). It sets $u=v=0$ in (Re:1a) to get $X_{-1}(0)^{-1}X_{-1}(0)X_{-1}(0)=1$, and states that (b), (c), (d) follow in the same way from (Re:1b), (Im:1a) and (Im:1b).
+
+The argument here is the same in substance, organised in two steps. First, it extracts from each additivity relation the statement that $u\mapsto\pi(\cdot(u))$ is a homomorphism $(\mathbb{C},+)\to\Gc$. Then it applies, in all four cases, the general fact that such a map sends $0$ to $1$. All four parts are carried out explicitly.
+
+The only other difference is the one noted after the theorem. The coefficient function $c$ is an arbitrary parameter, and no hypothesis on $c$ is used, since only the relations (Re:1a), (Re:1b), (Im:1a) and (Im:1b) enter the proof.
+
+\appendix
+\section{Correspondence with the formal proof}
+Each lemma of the text and the Lean declaration that states it; \cref{thm:main} is \texttt{gsimple\_zero\_generators\_trivial}.
+
+\begin{longtable}{@{}lll@{}}
+\toprule
+Lemma & Lean declaration & Status \\
+\midrule
+\endhead
+\cref{lem:add_zero_group_lemma} & \texttt{add\_zero\_group\_lemma} & verified \\
+\cref{lem:mk_xm_add} & \texttt{mk\_xm\_add} & verified \\
+\cref{lem:mk_ym_add} & \texttt{mk\_ym\_add} & verified \\
+\cref{lem:mk_xx_add} & \texttt{mk\_xx\_add} & verified \\
+\cref{lem:mk_yy_add} & \texttt{mk\_yy\_add} & verified \\
+\bottomrule
+\end{longtable}
+\end{document}

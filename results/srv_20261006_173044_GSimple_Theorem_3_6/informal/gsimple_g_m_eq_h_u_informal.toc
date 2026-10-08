@@ -1,0 +1,8 @@
+\contentsline {section}{\numberline {1}Setting}{1}{section.1}%
+\contentsline {section}{\numberline {2}Lemmas}{3}{section.2}%
+\contentsline {subsection}{\numberline {2.1}The torus normalizes the unipotent subgroup}{3}{subsection.2.1}%
+\contentsline {subsection}{\numberline {2.2}The set $HU$ is a subgroup}{4}{subsection.2.2}%
+\contentsline {subsection}{\numberline {2.3}Elements of $H$, of $U$, and generators lie in $HU$}{4}{subsection.2.3}%
+\contentsline {section}{\numberline {3}Proof of the theorem}{5}{section.3}%
+\contentsline {paragraph}{Relation to the source.}{5}{section*.2}%
+\contentsline {section}{\numberline {A}Correspondence with the formal proof}{5}{appendix.A}%

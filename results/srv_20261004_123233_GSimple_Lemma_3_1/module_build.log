@@ -1,0 +1,5 @@
+⚠ [7216/7218] Replayed Theorems.Thm_gsimple_zero_generators_trivial
+warning: Theorems/Thm_gsimple_zero_generators_trivial.lean:5:8: declaration uses 'sorry'
+ℹ [7218/7218] Replayed Solutions.Check_gsimple_zero_generators_trivial
+info: Solutions/Check_gsimple_zero_generators_trivial.lean:8:0: 'solution' depends on axioms: [propext, Classical.choice, Quot.sound]
+Build completed successfully (7218 jobs).

@@ -1,0 +1,27 @@
+\contentsline {section}{\numberline {1}Statement}{2}{section.1}%
+\contentsline {paragraph}{Index set and constants.}{2}{section*.2}%
+\contentsline {paragraph}{Generators.}{2}{section*.3}%
+\contentsline {paragraph}{Relations.}{2}{section*.4}%
+\contentsline {paragraph}{The group and its subgroups.}{3}{section*.81}%
+\contentsline {section}{\numberline {2}Formalization}{4}{section.2}%
+\contentsline {subsection}{\numberline {2.1}The library}{4}{subsection.2.1}%
+\contentsline {paragraph}{Index set and constants.}{4}{section*.82}%
+\contentsline {paragraph}{Generators.}{4}{section*.83}%
+\contentsline {paragraph}{Generators as words.}{4}{section*.84}%
+\contentsline {paragraph}{The constant $c_{\ell j}$.}{5}{section*.85}%
+\contentsline {paragraph}{Commutators and relators.}{5}{section*.86}%
+\contentsline {paragraph}{The elements $\setbox \z@ \hbox {\mathsurround \z@ $\textstyle w$}\mathaccent "0365{w}$.}{6}{section*.87}%
+\contentsline {paragraph}{Relations.}{6}{section*.88}%
+\contentsline {paragraph}{The group.}{8}{section*.89}%
+\contentsline {paragraph}{Library theorems used.}{8}{section*.90}%
+\contentsline {subsection}{\numberline {2.2}The subgroups $H$ and $U$}{8}{subsection.2.2}%
+\contentsline {subsection}{\numberline {2.3}The target statement}{9}{subsection.2.3}%
+\contentsline {section}{\numberline {3}Proof}{9}{section.3}%
+\contentsline {subsection}{\numberline {3.1}Overview}{9}{subsection.3.1}%
+\contentsline {subsection}{\numberline {3.2}Proof of the theorem}{16}{subsection.3.2}%
+\contentsline {section}{\numberline {4}Independent review}{17}{section.4}%
+\contentsline {paragraph}{Definitions.}{17}{section*.91}%
+\contentsline {paragraph}{Statement.}{17}{section*.92}%
+\contentsline {paragraph}{Proof.}{18}{section*.93}%
+\contentsline {paragraph}{Concerns.}{18}{section*.94}%
+\contentsline {section}{\numberline {A}Complete Lean file}{18}{appendix.A}%

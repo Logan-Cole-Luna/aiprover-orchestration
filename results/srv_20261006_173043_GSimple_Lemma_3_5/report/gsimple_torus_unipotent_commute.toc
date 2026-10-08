@@ -1,0 +1,19 @@
+\contentsline {section}{\numberline {1}Statement}{1}{section.1}%
+\contentsline {section}{\numberline {2}Formalization}{3}{section.2}%
+\contentsline {paragraph}{The coefficients.}{3}{section*.78}%
+\contentsline {paragraph}{Index set.}{3}{section*.79}%
+\contentsline {paragraph}{Generators.}{4}{section*.80}%
+\contentsline {paragraph}{Constants and auxiliary words.}{5}{section*.81}%
+\contentsline {paragraph}{Relations.}{6}{section*.82}%
+\contentsline {paragraph}{Toral and unipotent subgroups.}{8}{section*.83}%
+\contentsline {paragraph}{The library result used.}{8}{section*.84}%
+\contentsline {paragraph}{The target statement.}{9}{section*.85}%
+\contentsline {section}{\numberline {3}Proof}{9}{section.3}%
+\contentsline {subsection}{\numberline {3.1}Overview}{9}{subsection.3.1}%
+\contentsline {subsection}{\numberline {3.2}Proof of the theorem}{9}{subsection.3.2}%
+\contentsline {section}{\numberline {4}Independent review}{10}{section.4}%
+\contentsline {paragraph}{Definitions.}{10}{section*.86}%
+\contentsline {paragraph}{Statement.}{11}{section*.87}%
+\contentsline {paragraph}{Proof.}{11}{section*.88}%
+\contentsline {paragraph}{Concerns.}{11}{section*.89}%
+\contentsline {section}{\numberline {A}Complete Lean file}{11}{appendix.A}%

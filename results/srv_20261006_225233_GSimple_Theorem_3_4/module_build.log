@@ -1,0 +1,51 @@
+⚠ [7215/7218] Built Definitions.Def_gsimple_torus_normalizes_unipotent (15s)
+warning: Definitions/Def_gsimple_torus_normalizes_unipotent.lean:219:6: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+info: Definitions/Def_gsimple_torus_normalizes_unipotent.lean:278:73: Try this: ring_nf
+warning: Definitions/Def_gsimple_torus_normalizes_unipotent.lean:359:49: this tactic is never executed
+
+Note: This linter can be disabled with `set_option linter.unreachableTactic false`
+warning: Definitions/Def_gsimple_torus_normalizes_unipotent.lean:359:7: 'intros' tactic does nothing
+
+Note: This linter can be disabled with `set_option linter.unusedTactic false`
+warning: Definitions/Def_gsimple_torus_normalizes_unipotent.lean:359:49: 'assumption' tactic does nothing
+
+Note: This linter can be disabled with `set_option linter.unusedTactic false`
+warning: Definitions/Def_gsimple_torus_normalizes_unipotent.lean:396:8: this tactic is never executed
+
+Note: This linter can be disabled with `set_option linter.unreachableTactic false`
+warning: Definitions/Def_gsimple_torus_normalizes_unipotent.lean:402:8: this tactic is never executed
+
+Note: This linter can be disabled with `set_option linter.unreachableTactic false`
+warning: Definitions/Def_gsimple_torus_normalizes_unipotent.lean:403:8: this tactic is never executed
+
+Note: This linter can be disabled with `set_option linter.unreachableTactic false`
+warning: Definitions/Def_gsimple_torus_normalizes_unipotent.lean:407:6: this tactic is never executed
+
+Note: This linter can be disabled with `set_option linter.unreachableTactic false`
+warning: Definitions/Def_gsimple_torus_normalizes_unipotent.lean:396:8: 'simpa using h1' tactic does nothing
+
+Note: This linter can be disabled with `set_option linter.unusedTactic false`
+warning: Definitions/Def_gsimple_torus_normalizes_unipotent.lean:402:8: '(rw [mul_comm]; exact div_mul_cancel₀ u ht)' tactic does nothing
+
+Note: This linter can be disabled with `set_option linter.unusedTactic false`
+warning: Definitions/Def_gsimple_torus_normalizes_unipotent.lean:403:8: 'field_simp' tactic does nothing
+
+Note: This linter can be disabled with `set_option linter.unusedTactic false`
+warning: Definitions/Def_gsimple_torus_normalizes_unipotent.lean:407:6: '(rw [← hu, yy_sub_mk c l j k h]; exact key)' tactic does nothing
+
+Note: This linter can be disabled with `set_option linter.unusedTactic false`
+⚠ [7216/7218] Built Theorems.Thm_gsimple_torus_normalizes_unipotent (6.2s)
+warning: Theorems/Thm_gsimple_torus_normalizes_unipotent.lean:5:8: declaration uses 'sorry'
+⚠ [7217/7218] Built Solutions.Sol_gsimple_torus_normalizes_unipotent (15s)
+warning: Solutions/Sol_gsimple_torus_normalizes_unipotent.lean:126:28: This simp argument is unused:
+  hφ_inv
+
+Hint: Omit it from the simp argument list.
+  simp [GM.eqr, hφ_mul,̵ ̵h̵φ̵_̵i̵n̵v̵]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+ℹ [7218/7218] Built Solutions.Check_gsimple_torus_normalizes_unipotent (6.1s)
+info: Solutions/Check_gsimple_torus_normalizes_unipotent.lean:8:0: 'solution' depends on axioms: [propext, Classical.choice, Quot.sound]
+Build completed successfully (7218 jobs).

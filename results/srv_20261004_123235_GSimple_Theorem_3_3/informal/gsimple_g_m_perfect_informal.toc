@@ -1,0 +1,13 @@
+\contentsline {section}{\numberline {1}Setting}{1}{section.1}%
+\contentsline {paragraph}{Parameters and index set.}{1}{section*.2}%
+\contentsline {paragraph}{Generators.}{2}{section*.3}%
+\contentsline {paragraph}{Relations.}{2}{section*.4}%
+\contentsline {paragraph}{The group.}{3}{section*.55}%
+\contentsline {section}{\numberline {2}Lemmas}{3}{section.2}%
+\contentsline {subsection}{\numberline {2.1}Generalities on the presentation}{3}{subsection.2.1}%
+\contentsline {subsection}{\numberline {2.2}Unipotent generators of the real root and the elements $\setbox \z@ \hbox {\mathsurround \z@ $\textstyle w$}\mathaccent "0365{w}$}{4}{subsection.2.2}%
+\contentsline {subsection}{\numberline {2.3}Unipotent generators of imaginary roots}{4}{subsection.2.3}%
+\contentsline {subsection}{\numberline {2.4}The torus generators}{6}{subsection.2.4}%
+\contentsline {section}{\numberline {3}Proof of the theorem}{7}{section.3}%
+\contentsline {paragraph}{Relation to the source proof.}{8}{section*.56}%
+\contentsline {section}{\numberline {A}Correspondence with the formal proof}{8}{appendix.A}%

@@ -1,0 +1,209 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[varqu,scaled=0.95]{zi4}
+\usepackage{amsmath,amssymb,amsthm,mathtools}
+\usepackage[dvipsnames]{xcolor}
+\usepackage{fvextra}
+\usepackage{booktabs,enumitem,microtype,needspace}
+\usepackage[colorlinks,linkcolor=MidnightBlue,citecolor=MidnightBlue,urlcolor=MidnightBlue]{hyperref}
+\usepackage[capitalise,nameinlink]{cleveref}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}[theorem]{Lemma}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{Remark}
+\newcommand{\leanname}[1]{\texttt{\detokenize{#1}}}
+\newenvironment{leanblock}[1]
+  {\par\smallskip\Needspace{4\baselineskip}\noindent{\footnotesize\textsf{#1}}\par\nopagebreak\vspace{2pt}}
+  {\par\medskip}
+\fvset{breaklines=true,breakanywhere=true,fontsize=\footnotesize,frame=leftline,
+  framerule=0.8pt,rulecolor=\color{gray!60},xleftmargin=4pt,framesep=6pt}
+\usepackage{longtable}
+\newcommand{\unverified}{\quad\textup{\small[not machine-verified]}}
+
+\newcommand{\wt}{\widetilde{w}}
+\newcommand{\CC}{\mathbb{C}}
+\newcommand{\NN}{\mathbb{N}}
+
+\title{The inverse of the root element $X_{-1}(u)$ in the group $G(\mathfrak{m})$}
+\date{}
+\begin{document}
+\maketitle
+\begin{abstract}
+We give a self-contained account of a machine-checked proof of Corollary 3.2 of the source: in the group $G(\mathfrak{m})$, given by generators and relations, one has $X_{-1}(u)^{-1}=X_{-1}(-u)$ for every $u\in\mathbb{C}$. The formalization does not fix the coefficients $c(j)$ of the modular function $J$. Instead it treats $c\colon\mathbb{N}\to\mathbb{N}$ as an arbitrary parameter, so the result is proved for every such $c$, with no hypothesis on $c$. The proof uses three lemmas: defining relators become trivial in the presented group, the additivity relation (Re:1a) holds there, and $X_{-1}(0)=1$. These lemmas and the final theorem are all machine-verified.
+\end{abstract}
+
+\begin{center}\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+Source & Carbone et al., G-Simple (draft), GSimple\_Corollary\_3\_2 \\
+Status & proof machine-verified (Lean 4, Mathlib) \\
+Lemmas & 3 \\
+Text & written by claude-opus-5-5, checked against the Lean source \\
+Run & \texttt{srv\_20261004\_123234\_GSimple\_Corollary\_3\_2} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\tableofcontents
+
+\section{Setting}
+
+Throughout, $\NN=\{0,1,2,\dots\}$, and $\CC^\times$ denotes the group of nonzero complex numbers. Fix an arbitrary function $c\colon\NN\to\NN$. In the source, $c(j)$ is the coefficient of $q^j$ in $J(q)$. In the present text $c$ is a free parameter, and nothing is assumed about it.
+
+\begin{definition}[Index set and structure constants]
+Let
+\[
+E=E_c=\{(\ell,j,k)\in\NN^3 \mid \ell<j,\ 1\le k\le c(j)\}.
+\]
+For $(\ell,j,k)\in E$ put
+\[
+c_{\ell j}=(-1)^{\ell+1}\binom{j-1}{\ell}(\ell+1)(j-\ell)\in\CC .
+\]
+Here $j-1\ge 0$ and $j-\ell\ge 1$, because $\ell<j$.
+\end{definition}
+
+\begin{definition}[Generators]
+Let $\mathcal{X}$ be the set of pairwise distinct symbols
+\[
+H_1(s),\ H_2(s)\ (s\in\CC^\times),\qquad X_{-1}(u),\ Y_{-1}(u)\ (u\in\CC),\qquad X_{\ell,jk}(u),\ Y_{\ell,jk}(u)\ ((\ell,j,k)\in E,\ u\in\CC).
+\]
+Let $F(\mathcal{X})$ be the free group on $\mathcal{X}$.
+
+For $a,b\in F(\mathcal{X})$ we write $(a,b)=aba^{-1}b^{-1}$. For $s\in\CC^\times$ and $(\ell,j,k)\in E$ we set
+\begin{align*}
+\wt_{-1}(s)&=X_{-1}(s)\,Y_{-1}(-s^{-1})\,X_{-1}(s), & \wt_{-1}&=\wt_{-1}(1),\\
+\wt_{\ell,jk}(s)&=X_{\ell,jk}(s)\,Y_{\ell,jk}\!\left(\frac{-s^{-1}}{c_{\ell j}}\right)X_{\ell,jk}(s), & \wt_{\ell,jk}&=\wt_{\ell,jk}(1).
+\end{align*}
+\end{definition}
+
+\begin{definition}[Relators and the group $G(\mathfrak{m})$]
+The set $\mathcal{R}\subseteq F(\mathcal{X})$ is defined from the relations listed below.
+\begin{itemize}
+\item A relation of the form $a=b$ contributes the relator $ab^{-1}$.
+\item A relation of the form $(a,b)=1$ contributes the relator $(a,b)$.
+\end{itemize}
+The relations range over all $s,t\in\CC^\times$, all $u,v\in\CC$, and all $(\ell,j,k),(m,p,q)\in E$, subject to the side conditions stated.
+\allowdisplaybreaks
+\begin{align*}
+H_1(s)H_1(t)&=H_1(st), \tag{H:1a}\\
+H_2(s)H_2(t)&=H_2(st), \tag{H:1b}\\
+H_1(s)H_2(t)&=H_2(t)H_1(s), \tag{H:2}\\
+X_{-1}(u)X_{-1}(v)&=X_{-1}(u+v), \tag{Re:1a}\\
+Y_{-1}(u)Y_{-1}(v)&=Y_{-1}(u+v), \tag{Re:1b}\\
+Y_{-1}(-t)X_{-1}(s)Y_{-1}(t)&=X_{-1}(-t^{-1})\,Y_{-1}(-t^2s)\,X_{-1}(t^{-1}), \tag{Re:2}\\
+\wt_{-1}(s)\,\wt_{-1}&=H_1(-s)\,H_2(-s^{-1}), \tag{Re:3}\\
+\wt_{-1}X_{-1}(u)\wt_{-1}^{-1}&=Y_{-1}(-u), \tag{Re:4a}\\
+\wt_{-1}Y_{-1}(u)\wt_{-1}^{-1}&=X_{-1}(-u), \tag{Re:4b}\\
+\wt_{-1}H_1(s)\wt_{-1}^{-1}&=H_2(s), \tag{Re:5a}\\
+\wt_{-1}H_2(s)\wt_{-1}^{-1}&=H_1(s), \tag{Re:5b}\\
+H_1(s)X_{-1}(u)H_1(s)^{-1}&=X_{-1}(su), \tag{Re:6a}\\
+H_2(s)X_{-1}(u)H_2(s)^{-1}&=X_{-1}(s^{-1}u), \tag{Re:6b}\\
+H_1(s)Y_{-1}(u)H_1(s)^{-1}&=Y_{-1}(s^{-1}u), \tag{Re:6c}\\
+H_2(s)Y_{-1}(u)H_2(s)^{-1}&=Y_{-1}(su), \tag{Re:6d}\\
+X_{\ell,jk}(u)X_{\ell,jk}(v)&=X_{\ell,jk}(u+v), \tag{Im:1a}\\
+Y_{\ell,jk}(u)Y_{\ell,jk}(v)&=Y_{\ell,jk}(u+v), \tag{Im:1b}\\
+Y_{\ell,jk}(-t)X_{\ell,jk}(s)Y_{\ell,jk}(t)&=X_{\ell,jk}\!\left(\frac{-t^{-1}}{c_{\ell j}}\right)Y_{\ell,jk}(-c_{\ell j}t^2s)\,X_{\ell,jk}\!\left(\frac{t^{-1}}{c_{\ell j}}\right), \tag{Im:2}\\
+\wt_{\ell,jk}\big(s^{(\ell+1)(j-\ell)}\big)\,\wt_{\ell,jk}&=H_1\big((-s)^{j-\ell}\big)\,H_2\big((-s)^{\ell+1}\big), \tag{Im:3}\\
+\wt_{\ell,jk}X_{\ell,jk}(u)\wt_{\ell,jk}^{-1}&=Y_{\ell,jk}\!\left(\frac{-u}{c_{\ell j}}\right), \tag{Im:4a}\\
+\wt_{\ell,jk}Y_{\ell,jk}(u)\wt_{\ell,jk}^{-1}&=X_{\ell,jk}(-c_{\ell j}u), \tag{Im:4b}\\
+\wt_{\ell,jk}H_1(s^{j-\ell})\wt_{\ell,jk}^{-1}&=H_2\big(s^{-(\ell+1)}\big), \tag{Im:5a}\\
+\wt_{\ell,jk}H_2(s^{\ell+1})\wt_{\ell,jk}^{-1}&=H_1\big(s^{-(j-\ell)}\big), \tag{Im:5b}\\
+H_1(s)X_{\ell,jk}(u)H_1(s)^{-1}&=X_{\ell,jk}(s^{\ell+1}u), \tag{Im:6a}\\
+H_2(s)X_{\ell,jk}(u)H_2(s)^{-1}&=X_{\ell,jk}(s^{j-\ell}u), \tag{Im:6b}\\
+H_1(s)Y_{\ell,jk}(u)H_1(s)^{-1}&=Y_{\ell,jk}(s^{-(\ell+1)}u), \tag{Im:6c}\\
+H_2(s)Y_{\ell,jk}(u)H_2(s)^{-1}&=Y_{\ell,jk}(s^{-(j-\ell)}u), \tag{Im:6d}\\
+(X_{-1}(u),X_{j-1,jk}(v))&=1 \quad\text{whenever } (j-1,j,k)\in E, \tag{U:1a}\\
+(Y_{-1}(u),Y_{j-1,jk}(v))&=1 \quad\text{whenever } (j-1,j,k)\in E, \tag{U:1b}\\
+(Y_{-1}(u),X_{0,jk}(v))&=1 \quad\text{whenever } (0,j,k)\in E, \tag{U:1c}\\
+(X_{-1}(u),Y_{0,jk}(v))&=1 \quad\text{whenever } (0,j,k)\in E, \tag{U:1d}\\
+(X_{\ell,jk}(u),Y_{m,pq}(v))&=1 \quad\text{if } j\ne p \text{ or } k\ne q \text{ or } |\ell-m|>1, \tag{U:2}\\
+(X_{1,2k}(u),Y_{0,2k}(v))&=X_{-1}(uv) \quad\text{whenever } (1,2,k),(0,2,k)\in E, \tag{U:3a}\\
+(X_{0,2k}(u),Y_{1,2k}(v))&=Y_{-1}(uv) \quad\text{whenever } (0,2,k),(1,2,k)\in E, \tag{U:3b}\\
+\wt_{-1}X_{\ell,jk}(u)\wt_{-1}^{-1}&=X_{j-1-\ell,jk}\big((-1)^{j-\ell-1}u\big), \tag{U:4a}\\
+\wt_{-1}Y_{\ell,jk}(u)\wt_{-1}^{-1}&=Y_{j-1-\ell,jk}\big((-1)^{j-\ell-1}u\big). \tag{U:4b}
+\end{align*}
+In (U:4a) and (U:4b), the triple $(j-1-\ell,j,k)$ lies in $E$ automatically. Let $N_{\mathcal{R}}$ be the normal closure of $\mathcal{R}$ in $F(\mathcal{X})$. Define
+\[
+G(\mathfrak{m})=G_c=\langle\mathcal{X}\mid\mathcal{R}\rangle=F(\mathcal{X})/N_{\mathcal{R}},
+\]
+and let $\pi\colon F(\mathcal{X})\to G_c$ be the quotient map. For a generator $x\in\mathcal{X}$ we also write $x$ for its image $\pi(x)$ when no confusion can arise.
+\end{definition}
+
+\begin{theorem}\label{thm:main}
+Let $c\colon\NN\to\NN$ be any function, and let $u\in\CC$. Then in $G_c$
+\[
+\pi\big(X_{-1}(u)\big)^{-1}=\pi\big(X_{-1}(-u)\big).
+\]
+\end{theorem}
+
+This is Corollary 3.2 of the source. The source takes $c$ to be the coefficient function of $J$; that is one instance of the parameter $c$ here. The formal statement holds for every $c$, with no hypothesis such as $c(2)\ge 1$. It therefore contains the source statement as a special case.
+
+\section{Lemmas}
+
+\begin{lemma}[Relators are trivial]\label{lem:mk_rel_eq_one_in_G}
+Let $c\colon\NN\to\NN$ be any function, and let $r\in F(\mathcal{X})$ be a word with $r\in\mathcal{R}$. Then $\pi(r)=1$ in $G_c$.
+\end{lemma}
+
+\begin{proof}
+We have $r\in\mathcal{R}\subseteq N_{\mathcal{R}}=\ker\pi$.
+\end{proof}
+
+\begin{lemma}[Additivity of $X_{-1}$]\label{lem:Xm_add_in_G}
+Let $c\colon\NN\to\NN$ be any function, and let $u,v\in\CC$. Then in $G_c$
+\[
+X_{-1}(u)\,X_{-1}(v)=X_{-1}(u+v).
+\]
+\end{lemma}
+
+\begin{proof}
+By (Re:1a), the word $X_{-1}(u)X_{-1}(v)X_{-1}(u+v)^{-1}$ belongs to $\mathcal{R}$. By \cref{lem:mk_rel_eq_one_in_G},
+\[
+\pi\big(X_{-1}(u)\big)\,\pi\big(X_{-1}(v)\big)\,\pi\big(X_{-1}(u+v)\big)^{-1}=1.
+\]
+Multiplying on the right by $\pi(X_{-1}(u+v))$ gives the claim.
+\end{proof}
+
+\begin{lemma}[$X_{-1}(0)$ is trivial]\label{lem:Xm_zero_in_G}
+Let $c\colon\NN\to\NN$ be any function. Then $X_{-1}(0)=1$ in $G_c$.
+\end{lemma}
+
+\begin{proof}
+Take $u=v=0$ in (Re:1a). The relator is then $X_{-1}(0)X_{-1}(0)X_{-1}(0+0)^{-1}$. Since $0+0=0$, this word equals
+\[
+X_{-1}(0)\,X_{-1}(0)\,X_{-1}(0)^{-1}=X_{-1}(0)
+\]
+in $F(\mathcal{X})$. Hence $X_{-1}(0)\in\mathcal{R}$, and \cref{lem:mk_rel_eq_one_in_G} gives $\pi(X_{-1}(0))=1$.
+\end{proof}
+
+\section{Proof of the theorem}
+
+\begin{proof}[Proof of \cref{thm:main}]
+In any group, if $ab=1$ then $a^{-1}=b$. It therefore suffices to show $X_{-1}(u)\,X_{-1}(-u)=1$ in $G_c$. Apply \cref{lem:Xm_add_in_G} with $v=-u$, then use $u+(-u)=0$ and \cref{lem:Xm_zero_in_G}:
+\[
+X_{-1}(u)\,X_{-1}(-u)=X_{-1}\big(u+(-u)\big)=X_{-1}(0)=1.
+\]
+Hence $X_{-1}(u)^{-1}=X_{-1}(-u)$.
+\end{proof}
+
+The argument follows the source proof step for step. The source first rewrites (Re:1a) in relator form, which corresponds to \cref{lem:mk_rel_eq_one_in_G}, and then in equational form, which is \cref{lem:Xm_add_in_G}. It then sets $v=-u$. The one difference concerns the fact $X_{-1}(0)=1$. The source obtains it by citing its Lemma 3.1. Here it is \cref{lem:Xm_zero_in_G}, proved directly from (Re:1a) at $u=v=0$. Apart from this, the formal result is more general in one respect only: it holds for an arbitrary parameter $c\colon\NN\to\NN$ and does not need the specific coefficients of $J$.
+
+\appendix
+\section{Correspondence with the formal proof}
+Each lemma of the text and the Lean declaration that states it; \cref{thm:main} is \texttt{gsimple\_x\_inverse}.
+
+\begin{longtable}{@{}lll@{}}
+\toprule
+Lemma & Lean declaration & Status \\
+\midrule
+\endhead
+\cref{lem:mk_rel_eq_one_in_G} & \texttt{mk\_rel\_eq\_one\_in\_G} & verified \\
+\cref{lem:Xm_add_in_G} & \texttt{Xm\_add\_in\_G} & verified \\
+\cref{lem:Xm_zero_in_G} & \texttt{Xm\_zero\_in\_G} & verified \\
+\bottomrule
+\end{longtable}
+\end{document}

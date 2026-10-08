@@ -1,0 +1,286 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[varqu,scaled=0.95]{zi4}
+\usepackage{amsmath,amssymb,amsthm,mathtools}
+\usepackage[dvipsnames]{xcolor}
+\usepackage{fvextra}
+\usepackage{booktabs,enumitem,microtype,needspace}
+\usepackage[colorlinks,linkcolor=MidnightBlue,citecolor=MidnightBlue,urlcolor=MidnightBlue]{hyperref}
+\usepackage[capitalise,nameinlink]{cleveref}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}[theorem]{Lemma}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{Remark}
+\newcommand{\leanname}[1]{\texttt{\detokenize{#1}}}
+\newenvironment{leanblock}[1]
+  {\par\smallskip\Needspace{4\baselineskip}\noindent{\footnotesize\textsf{#1}}\par\nopagebreak\vspace{2pt}}
+  {\par\medskip}
+\fvset{breaklines=true,breakanywhere=true,fontsize=\footnotesize,frame=leftline,
+  framerule=0.8pt,rulecolor=\color{gray!60},xleftmargin=4pt,framesep=6pt}
+\usepackage{longtable}
+\newcommand{\unverified}{\quad\textup{\small[not machine-verified]}}
+
+\newcommand{\Gm}{G_c(\mathfrak{m})}
+\newcommand{\wt}{\widetilde{w}}
+\newcommand{\Cx}{\mathbb{C}^{\times}}
+
+\title{The factorization $G(\mathfrak{m}) = HU$ of the Monster group $G(\mathfrak{m})$}
+\date{}
+\begin{document}
+\maketitle
+\begin{abstract}
+We give a self-contained account of a machine-checked proof that the group $G(\mathfrak{m})$, defined by generators and relations attached to the Monster Lie algebra, is the product $HU$ of its toral subgroup $H$ and its unipotent subgroup $U$. This is Theorem 3.6 of the source. The formal version replaces the coefficients of the modular function $J$ by an arbitrary function $c\colon\mathbb{N}\to\mathbb{N}$ and imposes no hypothesis on it. The proof shows that $HU$ is a subgroup containing the images of all generators, using that $H$ normalizes $U$ (Theorem 3.4 and Lemma 3.5 of the source). All results presented here, including these auxiliary ones, are machine-verified.
+\end{abstract}
+
+\begin{center}\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+Source & Carbone et al., G-Simple (draft), GSimple\_Theorem\_3\_6 \\
+Status & proof machine-verified (Lean 4, Mathlib) \\
+Lemmas & 6 \\
+Text & written by claude-opus-5-5, checked against the Lean source \\
+Run & \texttt{srv\_20261006\_173044\_GSimple\_Theorem\_3\_6} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\tableofcontents
+
+\section{Setting}
+
+Throughout, $\mathbb{N}=\{0,1,2,\dots\}$, $\Cx$ is the group of nonzero complex numbers, and $c\colon \mathbb{N}\to\mathbb{N}$ is an arbitrary function. In the source, $c(j)$ is the coefficient of $q^j$ in $J(q)$.
+
+\begin{definition}[Index set]
+Let
+\[
+E_c=\{(\ell,j,k)\in\mathbb{N}^3 \mid \ell<j,\ 1\le k\le c(j)\}.
+\]
+For $\ell,j\in\mathbb{N}$, put
+\[
+c_{\ell j}=(-1)^{\ell+1}\binom{j-1}{\ell}(\ell+1)(j-\ell)\in\mathbb{C}.
+\]
+\end{definition}
+
+\begin{definition}[Generators]
+Let $\mathcal{X}$ be the set of symbols
+\[
+H_1(s),\quad H_2(s),\quad X_{-1}(u),\quad Y_{-1}(u),\quad X_{\ell,jk}(u),\quad Y_{\ell,jk}(u),
+\]
+where $s\in\Cx$, $u\in\mathbb{C}$ and $(\ell,j,k)\in E_c$. Let $F(\mathcal{X})$ be the free group on $\mathcal{X}$. In $F(\mathcal{X})$ define, for $s\in\Cx$ and $(\ell,j,k)\in E_c$,
+\begin{align*}
+\wt_{-1}(s)&=X_{-1}(s)\,Y_{-1}(-s^{-1})\,X_{-1}(s), & \wt_{-1}&=\wt_{-1}(1),\\
+\wt_{\ell,jk}(s)&=X_{\ell,jk}(s)\,Y_{\ell,jk}\!\left(\tfrac{-s^{-1}}{c_{\ell j}}\right)X_{\ell,jk}(s), & \wt_{\ell,jk}&=\wt_{\ell,jk}(1).
+\end{align*}
+The commutator is $(a,b)=aba^{-1}b^{-1}$.
+\end{definition}
+
+\begin{definition}[The group $\Gm$]
+Let $\mathcal{R}\subseteq F(\mathcal{X})$ consist of the following relators. An equation $a=b$ stands for the relator $ab^{-1}$, and a commutator $(a,b)$ stands for itself. The relators are taken for all $s,t\in\Cx$, $u,v\in\mathbb{C}$ and all indices satisfying the stated membership conditions.
+\begin{align*}
+&\text{(H:1a)}\ H_1(s)H_1(t)=H_1(st), \qquad \text{(H:1b)}\ H_2(s)H_2(t)=H_2(st),\qquad \text{(H:2)}\ H_1(s)H_2(t)=H_2(t)H_1(s),\\
+&\text{(Re:1a)}\ X_{-1}(u)X_{-1}(v)=X_{-1}(u+v),\qquad \text{(Re:1b)}\ Y_{-1}(u)Y_{-1}(v)=Y_{-1}(u+v),\\
+&\text{(Re:2)}\ Y_{-1}(-t)X_{-1}(s)Y_{-1}(t)=X_{-1}(-t^{-1})Y_{-1}(-t^2s)X_{-1}(t^{-1}),\\
+&\text{(Re:3)}\ \wt_{-1}(s)\wt_{-1}=H_1(-s)H_2(-s^{-1}),\\
+&\text{(Re:4a)}\ \wt_{-1}X_{-1}(u)\wt_{-1}^{-1}=Y_{-1}(-u),\qquad \text{(Re:4b)}\ \wt_{-1}Y_{-1}(u)\wt_{-1}^{-1}=X_{-1}(-u),\\
+&\text{(Re:5a)}\ \wt_{-1}H_1(s)\wt_{-1}^{-1}=H_2(s),\qquad \text{(Re:5b)}\ \wt_{-1}H_2(s)\wt_{-1}^{-1}=H_1(s),\\
+&\text{(Re:6a)}\ H_1(s)X_{-1}(u)H_1(s)^{-1}=X_{-1}(su),\qquad \text{(Re:6b)}\ H_2(s)X_{-1}(u)H_2(s)^{-1}=X_{-1}(s^{-1}u),\\
+&\text{(Re:6c)}\ H_1(s)Y_{-1}(u)H_1(s)^{-1}=Y_{-1}(s^{-1}u),\qquad \text{(Re:6d)}\ H_2(s)Y_{-1}(u)H_2(s)^{-1}=Y_{-1}(su).
+\end{align*}
+For $(\ell,j,k)\in E_c$, writing $X=X_{\ell,jk}$, $Y=Y_{\ell,jk}$, $\wt=\wt_{\ell,jk}$ and $\gamma=c_{\ell j}$:
+\begin{align*}
+&\text{(Im:1a)}\ X(u)X(v)=X(u+v),\qquad \text{(Im:1b)}\ Y(u)Y(v)=Y(u+v),\\
+&\text{(Im:2)}\ Y(-t)X(s)Y(t)=X\!\left(\tfrac{-t^{-1}}{\gamma}\right)Y(-\gamma t^2 s)\,X\!\left(\tfrac{t^{-1}}{\gamma}\right),\\
+&\text{(Im:3)}\ \wt\!\left(s^{(\ell+1)(j-\ell)}\right)\wt=H_1\!\left((-s)^{j-\ell}\right)H_2\!\left((-s)^{\ell+1}\right),\\
+&\text{(Im:4a)}\ \wt X(u)\wt^{-1}=Y(-u/\gamma),\qquad \text{(Im:4b)}\ \wt Y(u)\wt^{-1}=X(-\gamma u),\\
+&\text{(Im:5a)}\ \wt H_1(s^{j-\ell})\wt^{-1}=H_2\!\left((s^{\ell+1})^{-1}\right),\qquad \text{(Im:5b)}\ \wt H_2(s^{\ell+1})\wt^{-1}=H_1\!\left((s^{j-\ell})^{-1}\right),\\
+&\text{(Im:6a)}\ H_1(s)X(u)H_1(s)^{-1}=X(s^{\ell+1}u),\qquad \text{(Im:6b)}\ H_2(s)X(u)H_2(s)^{-1}=X(s^{j-\ell}u),\\
+&\text{(Im:6c)}\ H_1(s)Y(u)H_1(s)^{-1}=Y\!\left((s^{\ell+1})^{-1}u\right),\qquad \text{(Im:6d)}\ H_2(s)Y(u)H_2(s)^{-1}=Y\!\left((s^{j-\ell})^{-1}u\right).
+\end{align*}
+The relations among the unipotent generators are:
+\begin{align*}
+&\text{(U:1a)}\ (X_{-1}(u),X_{j-1,jk}(v))=1,\quad \text{(U:1b)}\ (Y_{-1}(u),Y_{j-1,jk}(v))=1 \quad\text{for }(j-1,j,k)\in E_c,\\
+&\text{(U:1c)}\ (Y_{-1}(u),X_{0,jk}(v))=1,\quad \text{(U:1d)}\ (X_{-1}(u),Y_{0,jk}(v))=1 \quad\text{for }(0,j,k)\in E_c,\\
+&\text{(U:2)}\ (X_{\ell,jk}(u),Y_{m,pq}(v))=1 \quad\text{for }(\ell,j,k),(m,p,q)\in E_c \text{ with } j\ne p \text{ or } k\ne q \text{ or } |\ell-m|>1,\\
+&\text{(U:3a)}\ (X_{1,2k}(u),Y_{0,2k}(v))=X_{-1}(uv),\quad \text{(U:3b)}\ (X_{0,2k}(u),Y_{1,2k}(v))=Y_{-1}(uv) \quad\text{for }(0,2,k),(1,2,k)\in E_c,\\
+&\text{(U:4a)}\ \wt_{-1}X_{\ell,jk}(u)\wt_{-1}^{-1}=X_{j-1-\ell,jk}\!\left((-1)^{j-\ell-1}u\right),\\
+&\text{(U:4b)}\ \wt_{-1}Y_{\ell,jk}(u)\wt_{-1}^{-1}=Y_{j-1-\ell,jk}\!\left((-1)^{j-\ell-1}u\right) \quad\text{for }(\ell,j,k),(j-1-\ell,j,k)\in E_c.
+\end{align*}
+All exponents of $s$ and of $-1$ are natural numbers. Then
+\[
+\Gm=F(\mathcal{X})/N_{\mathcal{R}},
+\]
+where $N_{\mathcal{R}}$ is the normal closure of $\mathcal{R}$. We use the same symbols for the images of generators in $\Gm$.
+\end{definition}
+
+\begin{definition}[Toral and unipotent subgroups]
+Let $T_H\subseteq\Gm$ be the set of images of all $H_1(s)$ and $H_2(s)$, $s\in\Cx$. The \emph{toral subgroup} is $H=\langle T_H\rangle$.
+
+Let $T_U\subseteq \Gm$ be the set of images of all $X_{-1}(u)$, $Y_{-1}(u)$, $X_{\ell,jk}(u)$ and $Y_{\ell,jk}(u)$, for $u\in\mathbb{C}$ and $(\ell,j,k)\in E_c$. The \emph{unipotent subgroup} is $U=\langle T_U\rangle$.
+\end{definition}
+
+\begin{theorem}\label{thm:main}
+Let $c\colon\mathbb{N}\to\mathbb{N}$ be arbitrary. For every $g\in\Gm$ there exist $h\in H$ and $u\in U$ with $g=hu$.
+\end{theorem}
+
+The inclusion $HU\subseteq\Gm$ is trivial, so the theorem says exactly that $\Gm=HU$. The source states this for $c$ given by the coefficients of $J$. The formal statement holds for every $c$, in particular for that one, and needs no hypothesis such as $c(2)\ge 1$.
+
+\section{Lemmas}
+
+\subsection{The torus normalizes the unipotent subgroup}
+
+The listed lemmas rely on Theorem 3.4 and Lemma 3.5 of the source. Both are machine-checked in the same development, and we give their proofs here.
+
+\begin{lemma}[$H$ normalizes $U$; Theorem 3.4 of the source]
+For every $c$, every $h\in H$ and every $u\in U$, we have $huh^{-1}\in U$.
+\end{lemma}
+
+\begin{proof}
+\emph{Step 1: conjugating generators.} For $t\in T_H$ and $g\in T_U$ we have $tgt^{-1}\in T_U$. This is a case check using the defining relations. For $t=H_1(s)$:
+\begin{align*}
+H_1(s)X_{-1}(u)H_1(s)^{-1}&=X_{-1}(su) && \text{by (Re:6c's companion (Re:6a))},\\
+H_1(s)Y_{-1}(u)H_1(s)^{-1}&=Y_{-1}(s^{-1}u) && \text{by (Re:6c)},\\
+H_1(s)X_{\ell,jk}(u)H_1(s)^{-1}&=X_{\ell,jk}(s^{\ell+1}u) && \text{by (Im:6a)},\\
+H_1(s)Y_{\ell,jk}(u)H_1(s)^{-1}&=Y_{\ell,jk}\big((s^{\ell+1})^{-1}u\big) && \text{by (Im:6c)}.
+\end{align*}
+For $t=H_2(s)$ one uses (Re:6b), (Re:6d), (Im:6b) and (Im:6d) in the same way. In each case the result is again a unipotent generator.
+
+\emph{Step 2: from generators to $U$.} Fix $t\in T_H$ and let $V=\{u\in U \mid tut^{-1}\in U\}$. By Step 1, $T_U\subseteq V$, and $1\in V$. The set $V$ is closed under products and inverses, because
+\[
+t(ab)t^{-1}=(tat^{-1})(tbt^{-1}),\qquad ta^{-1}t^{-1}=(tat^{-1})^{-1}.
+\]
+Hence $V=U$, that is, $tUt^{-1}\subseteq U$.
+
+\emph{Step 3: $T_H$ is closed under inverses.}
+\begin{itemize}
+\item By (H:1a) with $s=t=1$ we get $H_1(1)^2=H_1(1)$, so $H_1(1)=1$.
+\item By (H:1a) again, $H_1(s)H_1(s^{-1})=H_1(1)=1$, so $H_1(s^{-1})=H_1(s)^{-1}$.
+\item By (Re:5a), $H_2(s)=\wt_{-1}H_1(s)\wt_{-1}^{-1}$. Therefore
+\[
+H_2(s^{-1})=\wt_{-1}H_1(s)^{-1}\wt_{-1}^{-1}=H_2(s)^{-1}.
+\]
+\end{itemize}
+
+\emph{Step 4: from $T_H$ to $H$.} By Step 3, every element of $H$ is either $1$ or a product $t\,y$ with $t\in T_H$ and $y\in H$ a shorter such product. We argue by induction on the length of the product. The claim is trivial for $1$. If $yUy^{-1}\subseteq U$, then for $u\in U$,
+\[
+(ty)u(ty)^{-1}=t\,(yuy^{-1})\,t^{-1}\in U
+\]
+by Step 2. This proves $hUh^{-1}\subseteq U$ for all $h\in H$.
+\end{proof}
+
+\begin{lemma}[Moving $U$ past $H$; Lemma 3.5 of the source]
+For every $c$, every $h\in H$ and every $u\in U$, there exists $u'\in U$ with $uh=hu'$.
+\end{lemma}
+
+\begin{proof}
+Take $u'=h^{-1}uh=h^{-1}u(h^{-1})^{-1}$. Since $h^{-1}\in H$, the preceding lemma (Theorem 3.4 of the source) gives $u'\in U$. Clearly $hu'=uh$.
+\end{proof}
+
+\subsection{The set $HU$ is a subgroup}
+
+\begin{lemma}[Closure under products]\label{lem:hu_mul}
+Let $a,b\in\Gm$. Suppose $a=h_1u_1$ and $b=h_2u_2$ with $h_1,h_2\in H$ and $u_1,u_2\in U$. Then there exist $h\in H$ and $u\in U$ with $ab=hu$.
+\end{lemma}
+
+\begin{proof}
+By Lemma 3.5 of the source (proved above) applied to $h_2$ and $u_1$, there is $u_1'\in U$ with $u_1h_2=h_2u_1'$. Then
+\[
+ab=h_1(u_1h_2)u_2=h_1(h_2u_1')u_2=(h_1h_2)(u_1'u_2).
+\]
+Here $h_1h_2\in H$ and $u_1'u_2\in U$.
+\end{proof}
+
+\begin{lemma}[Closure under inverses]\label{lem:hu_inv}
+Let $a\in\Gm$ with $a=hu$, where $h\in H$ and $u\in U$. Then there exist $h'\in H$ and $u'\in U$ with $a^{-1}=h'u'$.
+\end{lemma}
+
+\begin{proof}
+We have $h^{-1}\in H$ and $u^{-1}\in U$. By Lemma 3.5 of the source (proved above) applied to $h^{-1}$ and $u^{-1}$, there is $u'\in U$ with $u^{-1}h^{-1}=h^{-1}u'$. Hence
+\[
+a^{-1}=u^{-1}h^{-1}=h^{-1}u'.
+\]
+Take $h'=h^{-1}$.
+\end{proof}
+
+\begin{lemma}[Identity]\label{lem:hu_one}
+There exist $h\in H$ and $u\in U$ with $1=hu$ in $\Gm$.
+\end{lemma}
+
+\begin{proof}
+Take $h=1\in H$ and $u=1\in U$.
+\end{proof}
+
+\subsection{Elements of $H$, of $U$, and generators lie in $HU$}
+
+\begin{lemma}[Toral elements]\label{lem:hu_of_torus}
+If $x\in H$, then there exist $h\in H$ and $u\in U$ with $x=hu$.
+\end{lemma}
+
+\begin{proof}
+Take $h=x$ and $u=1$.
+\end{proof}
+
+\begin{lemma}[Unipotent elements]\label{lem:hu_of_unip}
+If $x\in U$, then there exist $h\in H$ and $u\in U$ with $x=hu$.
+\end{lemma}
+
+\begin{proof}
+Take $h=1$ and $u=x$.
+\end{proof}
+
+\begin{lemma}[Generators]\label{lem:hu_gen}
+For every symbol $g\in\mathcal{X}$, the image of $g$ in $\Gm$ can be written as $hu$ with $h\in H$ and $u\in U$.
+\end{lemma}
+
+\begin{proof}
+We distinguish the type of the symbol.
+\begin{itemize}
+\item If $g=H_1(s)$ or $g=H_2(s)$, its image lies in $T_H\subseteq H$. Write it as $g\cdot 1$.
+\item If $g$ is one of $X_{-1}(u)$, $Y_{-1}(u)$, $X_{\ell,jk}(u)$, $Y_{\ell,jk}(u)$, its image lies in $T_U\subseteq U$. Write it as $1\cdot g$. \qedhere
+\end{itemize}
+\end{proof}
+
+\section{Proof of the theorem}
+
+\begin{proof}[Proof of \cref{thm:main}]
+Let $S=\{x\in\Gm \mid x=hu \text{ for some } h\in H,\ u\in U\}$. Then:
+\begin{itemize}
+\item $S$ contains $1$ by \cref{lem:hu_one};
+\item $S$ is closed under products by \cref{lem:hu_mul};
+\item $S$ is closed under inverses by \cref{lem:hu_inv}.
+\end{itemize}
+Hence $S$ is a subgroup of $\Gm$. By \cref{lem:hu_gen}, $S$ contains the image of every generator in $\mathcal{X}$. The group $\Gm=F(\mathcal{X})/N_{\mathcal{R}}$ is generated by these images, since every element is the image of a word in the generators. Hence the subgroup $S$ is all of $\Gm$, and every $g\in\Gm$ has the form $g=hu$ with $h\in H$ and $u\in U$.
+\end{proof}
+
+\paragraph{Relation to the source.}
+The argument is the source proof: show that $HU$ is a subgroup and that it contains all generators. The formalization deviates only in the following points.
+\begin{itemize}
+\item It also checks that $1\in HU$ (\cref{lem:hu_one}).
+\item It makes explicit that $\Gm$ is generated by the images of its generators.
+\item It works with an arbitrary $c\colon\mathbb{N}\to\mathbb{N}$ instead of the coefficients of $J$.
+\item It proves Lemma 3.5 of the source from Theorem 3.4 of the source (both stated and proved above). Theorem 3.4 is in turn established from the relations (Re:6a)--(Re:6d), (Im:6a)--(Im:6d), (H:1a) and (Re:5a).
+\end{itemize}
+\Cref{lem:hu_of_torus,lem:hu_of_unip} are verified but not needed in the final argument.
+
+\appendix
+\section{Correspondence with the formal proof}
+Each lemma of the text and the Lean declaration that states it; \cref{thm:main} is \texttt{gsimple\_g\_m\_eq\_h\_u}.
+
+\begin{longtable}{@{}lll@{}}
+\toprule
+Lemma & Lean declaration & Status \\
+\midrule
+\endhead
+\cref{lem:hu_mul} & \texttt{hu\_mul} & verified \\
+\cref{lem:hu_inv} & \texttt{hu\_inv} & verified \\
+\cref{lem:hu_one} & \texttt{hu\_one} & verified \\
+\cref{lem:hu_of_torus} & \texttt{hu\_of\_torus} & verified \\
+\cref{lem:hu_of_unip} & \texttt{hu\_of\_unip} & verified \\
+\cref{lem:hu_gen} & \texttt{hu\_gen} & verified \\
+\bottomrule
+\end{longtable}
+\end{document}

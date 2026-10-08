@@ -1,0 +1,15 @@
+\contentsline {section}{\numberline {1}Statement}{1}{section.1}%
+\contentsline {section}{\numberline {2}Formalization}{3}{section.2}%
+\contentsline {paragraph}{The coefficient function.}{3}{section*.78}%
+\contentsline {paragraph}{The library.}{3}{section*.79}%
+\contentsline {paragraph}{Library results used in this proof.}{8}{section*.80}%
+\contentsline {paragraph}{The target statement.}{9}{section*.81}%
+\contentsline {section}{\numberline {3}Proof}{9}{section.3}%
+\contentsline {subsection}{\numberline {3.1}Overview}{9}{subsection.3.1}%
+\contentsline {subsection}{\numberline {3.2}Proof of the theorem}{12}{subsection.3.2}%
+\contentsline {section}{\numberline {4}Independent review}{13}{section.4}%
+\contentsline {paragraph}{Definitions.}{13}{section*.82}%
+\contentsline {paragraph}{Statement.}{14}{section*.83}%
+\contentsline {paragraph}{Proof.}{14}{section*.84}%
+\contentsline {paragraph}{Concerns.}{14}{section*.85}%
+\contentsline {section}{\numberline {A}Complete Lean file}{14}{appendix.A}%

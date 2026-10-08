@@ -1,0 +1,477 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[varqu,scaled=0.95]{zi4}
+\usepackage{amsmath,amssymb,amsthm,mathtools}
+\usepackage[dvipsnames]{xcolor}
+\usepackage{fvextra}
+\usepackage{booktabs,enumitem,microtype,needspace}
+\usepackage[colorlinks,linkcolor=MidnightBlue,citecolor=MidnightBlue,urlcolor=MidnightBlue]{hyperref}
+\usepackage[capitalise,nameinlink]{cleveref}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}[theorem]{Lemma}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{Remark}
+\newcommand{\leanname}[1]{\texttt{\detokenize{#1}}}
+\newenvironment{leanblock}[1]
+  {\par\smallskip\Needspace{4\baselineskip}\noindent{\footnotesize\textsf{#1}}\par\nopagebreak\vspace{2pt}}
+  {\par\medskip}
+\fvset{breaklines=true,breakanywhere=true,fontsize=\footnotesize,frame=leftline,
+  framerule=0.8pt,rulecolor=\color{gray!60},xleftmargin=4pt,framesep=6pt}
+\usepackage{longtable}
+\newcommand{\unverified}{\quad\textup{\small[not machine-verified]}}
+
+\newcommand{\C}{\mathbb{C}}
+\newcommand{\N}{\mathbb{N}}
+\newcommand{\Cx}{\mathbb{C}^{\times}}
+\newcommand{\wt}{\widetilde{w}}
+\newcommand{\comm}{(G,G)}
+
+\title{The group $G(\mathfrak m)$ is perfect: an exposition of a machine-checked proof}
+\date{}
+\begin{document}
+\maketitle
+\begin{abstract}
+We give a self-contained account of a formal proof that the group $G(\mathfrak m)$ is perfect, i.e. equals its commutator subgroup (Theorem 3.3, label \texttt{thm: gsimple g m perfect}). $G(\mathfrak m)$ is defined by generators and relations attached to the coefficients $c(j)$ of the modular function $J$. In the formalization $c\colon\mathbb N\to\mathbb N$ is an arbitrary parameter, and the only hypothesis is $c(2)\ge 1$. The proof shows that each generator lies in the commutator subgroup, in this order: the real-root unipotents $X_{-1}(u)$ and $Y_{-1}(u)$, then the imaginary-root unipotents $X_{\ell,jk}(u)$ and $Y_{\ell,jk}(u)$, then $H_1(s)$, and finally $H_2(s)$. Every lemma and the main theorem are machine-verified.
+\end{abstract}
+
+\begin{center}\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+Source & Carbone et al., G-Simple (draft), GSimple\_Theorem\_3\_3 \\
+Status & proof machine-verified (Lean 4, Mathlib) \\
+Lemmas & 26 \\
+Text & written by claude-opus-5-5, checked against the Lean source \\
+Run & \texttt{srv\_20261004\_123235\_GSimple\_Theorem\_3\_3} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\tableofcontents
+
+\section{Setting}
+
+\paragraph{Parameters and index set.}
+Fix a function $c\colon \N\to\N$, where $\N=\{0,1,2,\dots\}$. The intended $c$ is the coefficient function of $J(q)$, restricted to $j\ge 0$. Put
+\[
+E=E_c=\{(\ell,j,k)\in\N^3 \;:\; \ell<j,\ 1\le k\le c(j)\}.
+\]
+Note that $(\ell,j,k)\in E$ forces $j\ge 1$ and $j-\ell\ge 1$. For $\ell,j\in\N$ with $\ell<j$ put
+\[
+c_{\ell j}=(-1)^{\ell+1}\binom{j-1}{\ell}(\ell+1)(j-\ell)\in\C .
+\]
+Since $0\le\ell\le j-1$, every factor is nonzero, so $c_{\ell j}\neq 0$ whenever $(\ell,j,k)\in E$. All divisions by $c_{\ell j}$ below are therefore genuine.
+
+\paragraph{Generators.}
+Let $\mathcal X$ be the set of symbols
+\[
+H_1(s),\ H_2(s)\ (s\in\Cx),\qquad X_{-1}(u),\ Y_{-1}(u)\ (u\in\C),\qquad X_{\ell,jk}(u),\ Y_{\ell,jk}(u)\ ((\ell,j,k)\in E,\ u\in\C).
+\]
+Let $F=F(\mathcal X)$ be the free group on $\mathcal X$. The commutator is $(a,b)=aba^{-1}b^{-1}$. In $F$ we define the abbreviations
+\[
+\wt_{-1}(s)=X_{-1}(s)\,Y_{-1}(-s^{-1})\,X_{-1}(s),\qquad
+\wt_{\ell,jk}(s)=X_{\ell,jk}(s)\,Y_{\ell,jk}\!\Big(\frac{-s^{-1}}{c_{\ell j}}\Big)\,X_{\ell,jk}(s),
+\]
+for $s\in\Cx$ and $(\ell,j,k)\in E$. We also set $\wt_{-1}=\wt_{-1}(1)$ and $\wt_{\ell,jk}=\wt_{\ell,jk}(1)$.
+
+\paragraph{Relations.}
+The following equations are imposed for all $s,t\in\Cx$, $u,v\in\C$ and all indicated triples in $E$. An equation $a=b$ is imposed through the relator $ab^{-1}$. An equation $(a,b)=1$ is imposed through the relator $(a,b)$.
+\begin{align*}
+H_1(s)H_1(t)&=H_1(st), \tag{H:1a}\\
+H_2(s)H_2(t)&=H_2(st), \tag{H:1b}\\
+H_1(s)H_2(t)&=H_2(t)H_1(s), \tag{H:2}\\
+X_{-1}(u)X_{-1}(v)&=X_{-1}(u+v), \tag{Re:1a}\\
+Y_{-1}(u)Y_{-1}(v)&=Y_{-1}(u+v), \tag{Re:1b}\\
+Y_{-1}(-t)X_{-1}(s)Y_{-1}(t)&=X_{-1}(-t^{-1})\,Y_{-1}(-t^2s)\,X_{-1}(t^{-1}), \tag{Re:2}\\
+\wt_{-1}(s)\,\wt_{-1}&=H_1(-s)\,H_2(-s^{-1}), \tag{Re:3}\\
+\wt_{-1}X_{-1}(u)\wt_{-1}^{-1}&=Y_{-1}(-u),\qquad
+\wt_{-1}Y_{-1}(u)\wt_{-1}^{-1}=X_{-1}(-u), \tag{Re:4a,b}\\
+\wt_{-1}H_1(s)\wt_{-1}^{-1}&=H_2(s),\qquad
+\wt_{-1}H_2(s)\wt_{-1}^{-1}=H_1(s), \tag{Re:5a,b}\\
+H_1(s)X_{-1}(u)H_1(s)^{-1}&=X_{-1}(su),\qquad
+H_2(s)X_{-1}(u)H_2(s)^{-1}=X_{-1}(s^{-1}u), \tag{Re:6a,b}\\
+H_1(s)Y_{-1}(u)H_1(s)^{-1}&=Y_{-1}(s^{-1}u),\qquad
+H_2(s)Y_{-1}(u)H_2(s)^{-1}=Y_{-1}(su). \tag{Re:6c,d}
+\end{align*}
+For every $(\ell,j,k)\in E$:
+\begin{align*}
+X_{\ell,jk}(u)X_{\ell,jk}(v)&=X_{\ell,jk}(u+v),\qquad
+Y_{\ell,jk}(u)Y_{\ell,jk}(v)=Y_{\ell,jk}(u+v), \tag{Im:1a,b}\\
+Y_{\ell,jk}(-t)X_{\ell,jk}(s)Y_{\ell,jk}(t)&=X_{\ell,jk}\Big(\tfrac{-t^{-1}}{c_{\ell j}}\Big)\,Y_{\ell,jk}(-c_{\ell j}t^2s)\,X_{\ell,jk}\Big(\tfrac{t^{-1}}{c_{\ell j}}\Big), \tag{Im:2}\\
+\wt_{\ell,jk}\big(s^{(\ell+1)(j-\ell)}\big)\,\wt_{\ell,jk}&=H_1\big((-s)^{j-\ell}\big)\,H_2\big((-s)^{\ell+1}\big), \tag{Im:3}\\
+\wt_{\ell,jk}X_{\ell,jk}(u)\wt_{\ell,jk}^{-1}&=Y_{\ell,jk}\Big(\tfrac{-u}{c_{\ell j}}\Big),\qquad
+\wt_{\ell,jk}Y_{\ell,jk}(u)\wt_{\ell,jk}^{-1}=X_{\ell,jk}(-c_{\ell j}u), \tag{Im:4a,b}\\
+\wt_{\ell,jk}H_1(s^{j-\ell})\wt_{\ell,jk}^{-1}&=H_2(s^{-(\ell+1)}),\qquad
+\wt_{\ell,jk}H_2(s^{\ell+1})\wt_{\ell,jk}^{-1}=H_1(s^{-(j-\ell)}), \tag{Im:5a,b}\\
+H_1(s)X_{\ell,jk}(u)H_1(s)^{-1}&=X_{\ell,jk}(s^{\ell+1}u),\qquad
+H_2(s)X_{\ell,jk}(u)H_2(s)^{-1}=X_{\ell,jk}(s^{j-\ell}u), \tag{Im:6a,b}\\
+H_1(s)Y_{\ell,jk}(u)H_1(s)^{-1}&=Y_{\ell,jk}(s^{-(\ell+1)}u),\qquad
+H_2(s)Y_{\ell,jk}(u)H_2(s)^{-1}=Y_{\ell,jk}(s^{-(j-\ell)}u). \tag{Im:6c,d}
+\end{align*}
+Relations among the unipotent generators:
+\begin{align*}
+(X_{-1}(u),X_{j-1,jk}(v))&=1,\quad (Y_{-1}(u),Y_{j-1,jk}(v))=1 &&\text{whenever }(j-1,j,k)\in E, \tag{U:1a,b}\\
+(Y_{-1}(u),X_{0,jk}(v))&=1,\quad (X_{-1}(u),Y_{0,jk}(v))=1 &&\text{whenever }(0,j,k)\in E, \tag{U:1c,d}\\
+(X_{\ell,jk}(u),Y_{m,pq}(v))&=1 &&\text{if } j\ne p \text{ or } k\ne q \text{ or } |\ell-m|>1, \tag{U:2}\\
+(X_{1,2k}(u),Y_{0,2k}(v))&=X_{-1}(uv) &&\text{whenever }(1,2,k),(0,2,k)\in E, \tag{U:3a}\\
+(X_{0,2k}(u),Y_{1,2k}(v))&=Y_{-1}(uv) &&\text{whenever }(0,2,k),(1,2,k)\in E, \tag{U:3b}\\
+\wt_{-1}X_{\ell,jk}(u)\wt_{-1}^{-1}&=X_{j-1-\ell,jk}\big((-1)^{j-\ell-1}u\big) &&\text{whenever }(\ell,j,k),(j-1-\ell,j,k)\in E, \tag{U:4a}\\
+\wt_{-1}Y_{\ell,jk}(u)\wt_{-1}^{-1}&=Y_{j-1-\ell,jk}\big((-1)^{j-\ell-1}u\big) &&\text{whenever }(\ell,j,k),(j-1-\ell,j,k)\in E. \tag{U:4b}
+\end{align*}
+In (U:2) the triples $(\ell,j,k)$ and $(m,p,q)$ range over $E$.
+
+\paragraph{The group.}
+Let $\mathcal R\subseteq F$ be the set of all relators above, and let $N_{\mathcal R}$ be its normal closure. Define
+\[
+G=G_c=G(\mathfrak m)=F/N_{\mathcal R},
+\]
+with quotient homomorphism $\pi\colon F\to G$. Write $\comm$ for the commutator subgroup of $G$, i.e. the subgroup generated by all $(g,h)$ with $g,h\in G$. It is a normal subgroup. From \cref{lem:cm_mem_commutator} onward we use the same symbol for an element of $F$ (a generator, $\wt_{-1}(s)$, $\wt_{\ell,jk}(s)$, \dots) and for its image under $\pi$, whenever no confusion can arise.
+
+\begin{theorem}\label{thm:main}
+Let $c\colon\N\to\N$ satisfy $c(2)\ge 1$. Then the commutator subgroup of $G_c$ is all of $G_c$:
+\[
+(G_c,G_c)=G_c .
+\]
+\end{theorem}
+
+The source statement concerns the specific $c$ given by the coefficients of $J$. There $c(2)=21493760\ge 1$, so the source theorem is the special case of \cref{thm:main} for that $c$. The formal theorem is stated for every $c$ with $c(2)\ge 1$, which is exactly the property of $c$ that the proof uses.
+
+\section{Lemmas}
+
+Throughout, $c\colon\N\to\N$ is arbitrary and $G=G_c$. The hypothesis $c(2)\ge 1$ is stated explicitly in each lemma where it is assumed.
+
+\subsection{Generalities on the presentation}
+
+\begin{lemma}[Relators are trivial]\label{lem:mk_rel_one}
+For every $r\in\mathcal R$ one has $\pi(r)=1$ in $G$.
+\end{lemma}
+\begin{proof}
+We have $r\in\mathcal R\subseteq N_{\mathcal R}=\ker\pi$.
+\end{proof}
+
+\begin{lemma}[Relations hold in $G$]\label{lem:mk_eqr}
+Let $a,b\in F$ be such that $ab^{-1}\in\mathcal R$. Then $\pi(a)=\pi(b)$.
+\end{lemma}
+\begin{proof}
+We have $ab^{-1}\in N_{\mathcal R}=\ker\pi$. Hence $\pi(a)\pi(b)^{-1}=1$, that is, $\pi(a)=\pi(b)$.
+\end{proof}
+
+\begin{lemma}[A subgroup containing the generators is everything]\label{lem:subgroup_top_of_gens}
+Let $K\le G$ be a subgroup with $\pi(x)\in K$ for every $x\in\mathcal X$. Then $K=G$.
+\end{lemma}
+\begin{proof}
+$F$ is generated by $\mathcal X$ and $\pi$ is surjective, so $G$ is generated by $\pi(\mathcal X)$. Since $K$ contains $\pi(\mathcal X)$, it contains the subgroup this set generates, namely $G$.
+\end{proof}
+
+\begin{lemma}[Images of commutators]\label{lem:cm_mem_commutator}
+For all $a,b\in F$, $\pi((a,b))\in\comm$.
+\end{lemma}
+\begin{proof}
+Since $\pi$ is a homomorphism, $\pi(aba^{-1}b^{-1})=(\pi(a),\pi(b))$. This is a commutator of two elements of $G$, hence lies in $\comm$.
+\end{proof}
+
+\subsection{Unipotent generators of the real root and the elements $\wt$}
+
+\begin{lemma}[$X_{-1}(u)$ is a commutator]\label{lem:xm_mem}
+Assume $c(2)\ge 1$. Then $X_{-1}(u)\in\comm$ for every $u\in\C$.
+\end{lemma}
+\begin{proof}
+Since $1<2$, $0<2$ and $1\le 1\le c(2)$, both $(1,2,1)$ and $(0,2,1)$ lie in $E$. Apply (U:3a) with $k=1$ and parameters $u$ and $v=1$, using \cref{lem:mk_eqr}. This gives
+\[
+X_{-1}(u)=X_{-1}(u\cdot 1)=\big(X_{1,21}(u),\,Y_{0,21}(1)\big)\quad\text{in } G .
+\]
+The right-hand side is a commutator, hence in $\comm$.
+\end{proof}
+
+\begin{lemma}[$Y_{-1}(u)$ is a commutator]\label{lem:ym_mem}
+Assume $c(2)\ge 1$. Then $Y_{-1}(u)\in\comm$ for every $u\in\C$.
+\end{lemma}
+\begin{proof}
+As before, $(0,2,1),(1,2,1)\in E$. By (U:3b) with $k=1$, parameters $u$ and $v=1$, and \cref{lem:mk_eqr}, we get
+\[
+Y_{-1}(u)=Y_{-1}(u\cdot1)=\big(X_{0,21}(u),\,Y_{1,21}(1)\big).
+\]
+This element lies in $\comm$ by \cref{lem:cm_mem_commutator}.
+\end{proof}
+
+\begin{lemma}[$\wt_{-1}(s)$ lies in the commutator subgroup]\label{lem:wm_mem}
+Assume $c(2)\ge 1$. Then $\wt_{-1}(s)\in\comm$ for every $s\in\Cx$.
+\end{lemma}
+\begin{proof}
+Since $\pi$ is a homomorphism, the image of $\wt_{-1}(s)$ is $X_{-1}(s)\,Y_{-1}(-s^{-1})\,X_{-1}(s)$. Each factor lies in $\comm$ by \cref{lem:xm_mem,lem:ym_mem}. Since $\comm$ is a subgroup, so does the product.
+\end{proof}
+
+\subsection{Unipotent generators of imaginary roots}
+
+\begin{lemma}[A unit whose power is not $1$]\label{lem:exists_unit_pow_ne_one}
+For every integer $d>0$ there exists $s\in\Cx$ with $s^d\ne 1$.
+\end{lemma}
+\begin{proof}
+Take $s=2$. If $2^d=1$, then taking squared absolute values gives $4^d=|2^d|^2=1$. But $4^d>1$ because $d\neq 0$, a contradiction.
+\end{proof}
+
+\begin{lemma}[Additivity of $X_{\ell,jk}$]\label{lem:xx_add_mk}
+Let $(\ell,j,k)\in E$ and $u,v\in\C$. Then $X_{\ell,jk}(u+v)=X_{\ell,jk}(u)X_{\ell,jk}(v)$ in $G$.
+\end{lemma}
+\begin{proof}
+This is relation (Im:1a), via \cref{lem:mk_eqr}, together with $\pi(ab)=\pi(a)\pi(b)$.
+\end{proof}
+
+\begin{lemma}[Additivity of $Y_{\ell,jk}$]\label{lem:yy_add_mk}
+Let $(\ell,j,k)\in E$ and $u,v\in\C$. Then $Y_{\ell,jk}(u+v)=Y_{\ell,jk}(u)Y_{\ell,jk}(v)$ in $G$.
+\end{lemma}
+\begin{proof}
+This is relation (Im:1b), via \cref{lem:mk_eqr}.
+\end{proof}
+
+\begin{lemma}[Differences for $X_{\ell,jk}$]\label{lem:xx_sub_mk}
+Let $(\ell,j,k)\in E$ and $a,b\in\C$. Then $X_{\ell,jk}(a-b)=X_{\ell,jk}(a)\,X_{\ell,jk}(b)^{-1}$ in $G$.
+\end{lemma}
+\begin{proof}
+Write $X=X_{\ell,jk}$.
+\begin{enumerate}
+\item By (Im:1a) with $u=v=0$, $X(0)X(0)=X(0)$. The corresponding relator reduces in $F$ to $X(0)$, so $X(0)=1$ in $G$.
+\item For $u\in\C$, \cref{lem:xx_add_mk} gives $X(u)X(-u)=X(u+(-u))=X(0)=1$. Hence $X(-u)=X(u)^{-1}$.
+\item Finally, by \cref{lem:xx_add_mk},
+\[
+X(a-b)=X(a+(-b))=X(a)X(-b)=X(a)X(b)^{-1}. \qedhere
+\]
+\end{enumerate}
+\end{proof}
+
+\begin{lemma}[Differences for $Y_{\ell,jk}$]\label{lem:yy_sub_mk}
+Let $(\ell,j,k)\in E$ and $a,b\in\C$. Then $Y_{\ell,jk}(a-b)=Y_{\ell,jk}(a)\,Y_{\ell,jk}(b)^{-1}$ in $G$.
+\end{lemma}
+\begin{proof}
+Write $Y=Y_{\ell,jk}$. Relation (Im:1b) with arguments $a-b$ and $b$ gives $Y(a-b)Y(b)=Y((a-b)+b)=Y(a)$. Therefore
+\[
+Y(a-b)=\big(Y(a-b)Y(b)\big)Y(b)^{-1}=Y(a)Y(b)^{-1}. \qedhere
+\]
+\end{proof}
+
+\begin{lemma}[A commutator from the torus action on $X_{\ell,jk}$]\label{lem:xx_conj_mem}
+Let $(\ell,j,k)\in E$, $s\in\Cx$ and $v\in\C$. Then
+\[
+X_{\ell,jk}(s^{j-\ell}v)\,X_{\ell,jk}(v)^{-1}\in\comm .
+\]
+\end{lemma}
+\begin{proof}
+By (Im:6b) and \cref{lem:mk_eqr}, $X_{\ell,jk}(s^{j-\ell}v)=H_2(s)X_{\ell,jk}(v)H_2(s)^{-1}$ in $G$. Hence
+\[
+X_{\ell,jk}(s^{j-\ell}v)\,X_{\ell,jk}(v)^{-1}=H_2(s)X_{\ell,jk}(v)H_2(s)^{-1}X_{\ell,jk}(v)^{-1}=\big(H_2(s),X_{\ell,jk}(v)\big),
+\]
+which is a commutator.
+\end{proof}
+
+\begin{lemma}[A commutator from the torus action on $Y_{\ell,jk}$]\label{lem:yy_conj_mem}
+Let $(\ell,j,k)\in E$, $s\in\Cx$ and $v\in\C$. Then
+\[
+Y_{\ell,jk}\big((s^{j-\ell})^{-1}v\big)\,Y_{\ell,jk}(v)^{-1}\in\comm .
+\]
+\end{lemma}
+\begin{proof}
+By (Im:6d) and \cref{lem:mk_eqr}, $Y_{\ell,jk}((s^{j-\ell})^{-1}v)=H_2(s)Y_{\ell,jk}(v)H_2(s)^{-1}$ in $G$. So the element in question equals $(H_2(s),Y_{\ell,jk}(v))$, a commutator.
+\end{proof}
+
+\begin{lemma}[$X_{\ell,jk}(u)$ lies in the commutator subgroup]\label{lem:xx_mem}
+Let $(\ell,j,k)\in E$ and $u\in\C$. Then $X_{\ell,jk}(u)\in\comm$.
+\end{lemma}
+\begin{proof}
+Put $d=j-\ell$; then $d>0$ because $\ell<j$.
+\begin{enumerate}
+\item By \cref{lem:exists_unit_pow_ne_one} choose $s\in\Cx$ with $s^d\ne 1$.
+\item Set $v=u/(s^d-1)$. Then $u=(s^d-1)v=s^dv-v$.
+\item By \cref{lem:xx_sub_mk},
+\[
+X_{\ell,jk}(u)=X_{\ell,jk}(s^dv)\,X_{\ell,jk}(v)^{-1},
+\]
+which lies in $\comm$ by \cref{lem:xx_conj_mem}. \qedhere
+\end{enumerate}
+\end{proof}
+
+\begin{lemma}[$Y_{\ell,jk}(u)$ lies in the commutator subgroup]\label{lem:yy_mem}
+Let $(\ell,j,k)\in E$ and $u\in\C$. Then $Y_{\ell,jk}(u)\in\comm$.
+\end{lemma}
+\begin{proof}
+Put $d=j-\ell>0$.
+\begin{enumerate}
+\item By \cref{lem:exists_unit_pow_ne_one} choose $s\in\Cx$ with $s^d\ne1$, and put $t=(s^d)^{-1}$. Then $t\ne 1$, since otherwise $s^d=1$.
+\item Set $v=u/(t-1)$. Then $tv-v=(t-1)v=u$.
+\item By \cref{lem:yy_sub_mk},
+\[
+Y_{\ell,jk}(u)=Y_{\ell,jk}(tv-v)=Y_{\ell,jk}(tv)\,Y_{\ell,jk}(v)^{-1},
+\]
+which lies in $\comm$ by \cref{lem:yy_conj_mem}. \qedhere
+\end{enumerate}
+\end{proof}
+
+\begin{lemma}[$\wt_{\ell,jk}(s)$ lies in the commutator subgroup]\label{lem:ww_mem}
+Let $(\ell,j,k)\in E$ and $s\in\Cx$. Then $\wt_{\ell,jk}(s)\in\comm$. No hypothesis on $c(2)$ is needed.
+\end{lemma}
+\begin{proof}
+In $G$ we have
+\[
+\wt_{\ell,jk}(s)=X_{\ell,jk}(s)\,Y_{\ell,jk}\big(-s^{-1}/c_{\ell j}\big)\,X_{\ell,jk}(s).
+\]
+By \cref{lem:xx_mem,lem:yy_mem}, each factor lies in $\comm$. Hence the product lies in $\comm$.
+\end{proof}
+
+\subsection{The torus generators}
+
+\begin{lemma}[$H_1(-s)H_2(-s^{-1})$ lies in the commutator subgroup]\label{lem:h1h2_neg_mem}
+Assume $c(2)\ge1$. Then $H_1(-s)H_2(-s^{-1})\in\comm$ for every $s\in\Cx$.
+\end{lemma}
+\begin{proof}
+By (Re:3) and \cref{lem:mk_eqr}, $H_1(-s)H_2(-s^{-1})=\wt_{-1}(s)\,\wt_{-1}(1)$ in $G$. Both factors lie in $\comm$ by \cref{lem:wm_mem}.
+\end{proof}
+
+\begin{lemma}[$H_1(x)H_2(x^{-1})$ lies in the commutator subgroup]\label{lem:h1h2_inv_mem}
+Assume $c(2)\ge1$. Then $H_1(x)H_2(x^{-1})\in\comm$ for every $x\in\Cx$.
+\end{lemma}
+\begin{proof}
+Apply (Re:3) with $s=-x$. Since $-(-x)=x$ and $-((-x)^{-1})=x^{-1}$, it reads $\wt_{-1}(-x)\,\wt_{-1}(1)=H_1(x)H_2(x^{-1})$. By \cref{lem:mk_eqr} this holds in $G$. The left side lies in $\comm$ by \cref{lem:wm_mem}.
+\end{proof}
+
+\begin{lemma}[Consequence of (Im:3)]\label{lem:im3_mem}
+Let $(\ell,j,k)\in E$ and $s\in\Cx$. Then $H_1\big((-s)^{j-\ell}\big)H_2\big((-s)^{\ell+1}\big)\in\comm$.
+\end{lemma}
+\begin{proof}
+By (Im:3) and \cref{lem:mk_eqr},
+\[
+H_1((-s)^{j-\ell})H_2((-s)^{\ell+1})=\wt_{\ell,jk}\big(s^{(\ell+1)(j-\ell)}\big)\,\wt_{\ell,jk}(1)
+\]
+in $G$. Both factors lie in $\comm$ by \cref{lem:ww_mem}.
+\end{proof}
+
+\begin{lemma}[$H_1(y^2)H_2(y)$ lies in the commutator subgroup]\label{lem:h1sq_h2_mem}
+Assume $c(2)\ge1$. Then $H_1(y^2)H_2(y)\in\comm$ for every $y\in\Cx$.
+\end{lemma}
+\begin{proof}
+Since $0<2$ and $1\le c(2)$, we have $(0,2,1)\in E$, with $j-\ell=2$ and $\ell+1=1$. Relation (Im:3) for this triple and $s=-y$ reads
+\[
+\wt_{0,21}\big((-y)^{2}\big)\,\wt_{0,21}(1)=H_1\big(y^{2}\big)\,H_2(y),
+\]
+using $(-(-y))^2=y^2$ and $(-(-y))^1=y$. Since $(-y)^2=y^2$, the left side is $\wt_{0,21}(y^2)\wt_{0,21}(1)$. By \cref{lem:mk_eqr} the identity holds in $G$. The left side lies in $\comm$ by \cref{lem:ww_mem}.
+\end{proof}
+
+\begin{lemma}[$H_1(z^3)$ as a quotient]\label{lem:h1_cube_eq}
+For every $z\in\Cx$, the following holds in $G$ (no hypothesis on $c$):
+\[
+H_1(z^3)=\big(H_1(z)H_2(z^{-1})\big)\big(H_1((z^{-1})^2)H_2(z^{-1})\big)^{-1}.
+\]
+\end{lemma}
+\begin{proof}
+First we show that $s\mapsto H_1(s)$ is a group homomorphism $\Cx\to G$.
+\begin{enumerate}
+\item By (H:1a) and \cref{lem:mk_eqr}, $H_1(st)=H_1(s)H_1(t)$ in $G$ for all $s,t\in\Cx$.
+\item Taking $s=t=1$ gives $H_1(1)H_1(1)=H_1(1)$, hence $H_1(1)=1$.
+\item Taking $t=s^{-1}$ gives $H_1(s)H_1(s^{-1})=H_1(1)=1$, hence $H_1(s^{-1})=H_1(s)^{-1}$.
+\item By induction on $n$, $H_1(x^n)=H_1(x)^n$ for all $n\in\N$.
+\end{enumerate}
+In particular $H_1((z^{-1})^2)=H_1(z)^{-2}$. Therefore the right-hand side equals
+\[
+H_1(z)\,H_2(z^{-1})\,H_2(z^{-1})^{-1}\,H_1(z)^{2}=H_1(z)^3=H_1(z^3). \qedhere
+\]
+\end{proof}
+
+\begin{lemma}[Cube roots in $\Cx$]\label{lem:exists_unit_cube}
+For every $s\in\Cx$ there is $z\in\Cx$ with $z^3=s$.
+\end{lemma}
+\begin{proof}
+Since $\C$ is algebraically closed, there is $w\in\C$ with $w^3=s$. Then $w\ne 0$, because otherwise $s=0^3=0$. Take $z=w$.
+\end{proof}
+
+\begin{lemma}[$H_1(s)$ lies in the commutator subgroup]\label{lem:h1_mem}
+Assume $c(2)\ge1$. Then $H_1(s)\in\comm$ for every $s\in\Cx$.
+\end{lemma}
+\begin{proof}
+\begin{enumerate}
+\item By \cref{lem:exists_unit_cube} write $s=z^3$ with $z\in\Cx$.
+\item By \cref{lem:h1h2_inv_mem}, $H_1(z)H_2(z^{-1})\in\comm$.
+\item By \cref{lem:h1sq_h2_mem} with $y=z^{-1}$, $H_1((z^{-1})^2)H_2(z^{-1})\in\comm$.
+\item Since $\comm$ is a subgroup, the product of the first element with the inverse of the second lies in $\comm$. By \cref{lem:h1_cube_eq} this product is $H_1(z^3)=H_1(s)$. \qedhere
+\end{enumerate}
+\end{proof}
+
+\begin{lemma}[$H_2(s)$ as a conjugate of $H_1(s)$]\label{lem:h2_eq_conj}
+For every $s\in\Cx$ one has $H_2(s)=\wt_{-1}\,H_1(s)\,\wt_{-1}^{-1}$ in $G$.
+\end{lemma}
+\begin{proof}
+This is relation (Re:5a), via \cref{lem:mk_eqr}.
+\end{proof}
+
+\begin{lemma}[$H_2(s)$ lies in the commutator subgroup]\label{lem:h2_mem}
+Assume $c(2)\ge1$. Then $H_2(s)\in\comm$ for every $s\in\Cx$.
+\end{lemma}
+\begin{proof}
+By \cref{lem:h2_eq_conj}, $H_2(s)$ is a conjugate of $H_1(s)$, and $H_1(s)\in\comm$ by \cref{lem:h1_mem}. Since $\comm$ is normal in $G$, it contains every conjugate of its elements. (That $\wt_{-1}$ itself lies in $\comm$, by \cref{lem:wm_mem}, is not needed.)
+\end{proof}
+
+\section{Proof of the theorem}
+
+\begin{proof}[Proof of \cref{thm:main}]
+Assume $c(2)\ge 1$. By \cref{lem:subgroup_top_of_gens} it suffices to show that the image of every symbol in $\mathcal X$ lies in $\comm$. We distinguish the six kinds of symbols:
+\begin{itemize}
+\item $H_1(s)$, $s\in\Cx$: \cref{lem:h1_mem};
+\item $H_2(s)$, $s\in\Cx$: \cref{lem:h2_mem};
+\item $X_{-1}(u)$, $u\in\C$: \cref{lem:xm_mem};
+\item $Y_{-1}(u)$, $u\in\C$: \cref{lem:ym_mem};
+\item $X_{\ell,jk}(u)$, $(\ell,j,k)\in E$, $u\in\C$: \cref{lem:xx_mem};
+\item $Y_{\ell,jk}(u)$, $(\ell,j,k)\in E$, $u\in\C$: \cref{lem:yy_mem}.
+\end{itemize}
+Hence $\comm=G$.
+\end{proof}
+
+\paragraph{Relation to the source proof.}
+The argument follows the source proof step by step: first $X_{-1}$ and $Y_{-1}$ via (U:3a,b); then $X_{\ell,jk}$ and $Y_{\ell,jk}$ via (Im:6b,d); then the elements $\wt$; then $H_1$ via (Re:3), (Im:3) for the triple $(0,2,k)$, and cube roots; finally $H_2$ via (Re:5a). The deviations are minor.
+\begin{itemize}
+\item \emph{The parameter $c$.} The coefficient function $c$ is an arbitrary parameter, subject only to $c(2)\ge 1$, instead of the coefficients of $J$.
+\item \emph{Concrete choices.} For $X_{-1}$ and $Y_{-1}$ the proof takes $k=1$ and $v=1$, writing $z=z\cdot 1$. This also bypasses a misprint in the source's displayed formula for $Y_{-1}$. The unit with $s^{j-\ell}\ne1$ is $s=2$.
+\item \emph{Elementary facts made explicit.} The facts used implicitly in the source are proved: $X_{\ell,jk}(0)=1$, $X_{\ell,jk}(-u)=X_{\ell,jk}(u)^{-1}$, and that $s\mapsto H_1(s)$ is a homomorphism (\cref{lem:xx_sub_mk,lem:yy_sub_mk,lem:h1_cube_eq}).
+\item \emph{The step for $H_2$.} It uses only normality of the commutator subgroup, not the membership $\wt_{-1}\in\comm$ invoked in the source.
+\item \emph{Relations used.} The proof uses only (H:1a), (Re:3), (Re:5a), (Im:1a,b), (Im:3), (Im:6b,d) and (U:3a,b).
+\item \emph{Unused lemmas.} \cref{lem:mk_rel_one,lem:yy_add_mk,lem:h1h2_neg_mem,lem:im3_mem} are proved but not needed for the main theorem.
+\end{itemize}
+
+\appendix
+\section{Correspondence with the formal proof}
+Each lemma of the text and the Lean declaration that states it; \cref{thm:main} is \texttt{gsimple\_g\_m\_perfect}.
+
+\begin{longtable}{@{}lll@{}}
+\toprule
+Lemma & Lean declaration & Status \\
+\midrule
+\endhead
+\cref{lem:mk_rel_one} & \texttt{mk\_rel\_one} & verified \\
+\cref{lem:mk_eqr} & \texttt{mk\_eqr} & verified \\
+\cref{lem:subgroup_top_of_gens} & \texttt{subgroup\_top\_of\_gens} & verified \\
+\cref{lem:cm_mem_commutator} & \texttt{cm\_mem\_commutator} & verified \\
+\cref{lem:xm_mem} & \texttt{xm\_mem} & verified \\
+\cref{lem:ym_mem} & \texttt{ym\_mem} & verified \\
+\cref{lem:wm_mem} & \texttt{wm\_mem} & verified \\
+\cref{lem:ww_mem} & \texttt{ww\_mem} & verified \\
+\cref{lem:exists_unit_pow_ne_one} & \texttt{exists\_unit\_pow\_ne\_one} & verified \\
+\cref{lem:xx_add_mk} & \texttt{xx\_add\_mk} & verified \\
+\cref{lem:yy_add_mk} & \texttt{yy\_add\_mk} & verified \\
+\cref{lem:xx_sub_mk} & \texttt{xx\_sub\_mk} & verified \\
+\cref{lem:yy_sub_mk} & \texttt{yy\_sub\_mk} & verified \\
+\cref{lem:xx_conj_mem} & \texttt{xx\_conj\_mem} & verified \\
+\cref{lem:yy_conj_mem} & \texttt{yy\_conj\_mem} & verified \\
+\cref{lem:xx_mem} & \texttt{xx\_mem} & verified \\
+\cref{lem:yy_mem} & \texttt{yy\_mem} & verified \\
+\cref{lem:h1h2_neg_mem} & \texttt{h1h2\_neg\_mem} & verified \\
+\cref{lem:h1h2_inv_mem} & \texttt{h1h2\_inv\_mem} & verified \\
+\cref{lem:im3_mem} & \texttt{im3\_mem} & verified \\
+\cref{lem:h1sq_h2_mem} & \texttt{h1sq\_h2\_mem} & verified \\
+\cref{lem:h1_cube_eq} & \texttt{h1\_cube\_eq} & verified \\
+\cref{lem:exists_unit_cube} & \texttt{exists\_unit\_cube} & verified \\
+\cref{lem:h1_mem} & \texttt{h1\_mem} & verified \\
+\cref{lem:h2_eq_conj} & \texttt{h2\_eq\_conj} & verified \\
+\cref{lem:h2_mem} & \texttt{h2\_mem} & verified \\
+\bottomrule
+\end{longtable}
+\end{document}
