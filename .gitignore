@@ -1,0 +1,25 @@
+# Lean build output and generated library modules
+.lake/
+*.olean
+orchestration_workspace/Definitions/*.lean
+orchestration_workspace/Theorems/*.lean
+orchestration_workspace/Solutions/*.lean
+orchestration_workspace/.lake_build.lock
+
+# Library database, scratch space and logs
+data/
+temp/
+logs/
+*.log
+
+CLAUDE.md
+
+# Python
+__pycache__/
+*.pyc
+.venv*/
+
+# Editor and OS
+.vscode/
+.idea/
+.DS_Store
