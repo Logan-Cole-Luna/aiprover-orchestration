@@ -112,6 +112,10 @@ Results
   in the current sketch; `cobhamF_length_bound` was proved on such a retry.
   Make retries an explicit per-lemma attempt budget instead.
 - Stop the remaining AIProver samples of a lemma once one sample verifies.
+- Upstream the AIProver branch `resume-interrupted-sessions` (`aiprover
+  resume`, automatic resumption after infrastructure faults, target statement
+  check) to `PrithwishJana/AIProver` with the repository owner, then point the
+  submodule at the merged commit.
 
 ## Issues
 
@@ -267,6 +271,12 @@ Results
 - Query server with run queue, live progress and Claude call budget.
 - Per-run model choice for orchestrator and subagent (Claude model and
   reasoning level, or AIProver trained/base) on the query server page.
+
+## 2026-10-08: Resume fallback
+
+- `AIProverAgent.supports_resume` probes the installed CLI for `aiprover
+  resume`. Without it, a resumable job is logged as not resumable and its
+  lemma gets a new job.
 
 ## 2026-10-08: Model backends over provider APIs
 
