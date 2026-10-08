@@ -18,6 +18,7 @@ Usage:
 import argparse
 import html
 import json
+import os
 import re
 from pathlib import Path
 
@@ -137,7 +138,9 @@ def render(trace_path: Path, output_dir: Path) -> list[Path]:
             .replace(DATA_MARKER, payloads[output_name == "trace_replay.html"])
         )
         output_path = output_dir / output_name
-        output_path.write_text(page)
+        temporary = output_path.with_name(f".{output_name}.{os.getpid()}.tmp")
+        temporary.write_text(page)
+        os.replace(temporary, output_path)
         written.append(output_path)
     return written
 
