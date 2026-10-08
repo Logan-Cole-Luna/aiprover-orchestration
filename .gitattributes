@@ -1,0 +1,5 @@
+*.json filter=lfs diff=lfs merge=lfs -text
+*.html filter=lfs diff=lfs merge=lfs -text
+*.json !text !filter !merge !diff
+*.html !text !filter !merge !diff
+*.gz !text !filter !merge !diff
