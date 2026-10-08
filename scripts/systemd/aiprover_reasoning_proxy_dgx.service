@@ -1,0 +1,18 @@
+# systemd user unit for the reasoning proxy (aiprover_orchestration/server/reasoning_proxy.py), which
+# records the AIProver model's reasoning for served runs.
+# Install next to aiprover_query_server.service:
+#   cp scripts/systemd/aiprover_reasoning_proxy.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now aiprover_reasoning_proxy
+[Unit]
+Description=AIProver reasoning proxy for the persistent server cic-dgx-01
+After=network-online.target
+
+[Service]
+WorkingDirectory=/home/loganluna/workspace/aiprover_orchestration
+ExecStart=/home/loganluna/lean_env/bin/python3 -m aiprover_orchestration.server.reasoning_proxy --listen 18566 --upstream http://cic-dgx-01.tacc.cloud:8040 --model aip-leanstral --max-reply-tokens 16384
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

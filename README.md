@@ -1,72 +1,109 @@
 # AIProver orchestration
 
-A library of Lean 4 definitions and theorems that AI agents and
-mathematicians formalize, decompose and prove. Every proof is verified
-locally (Lean v4.23.0, Mathlib v4.23.0, `autoImplicit false`) before it is
-recorded.
+Tools for mathematicians to direct AI agents at their problems in Lean 4. An
+orchestrator formalizes a problem, has the formalization audited blind,
+decomposes the proof into lemmas and proves them with Claude and the AIProver
+model; a theorem library records what is formalized and proved; a query
+server exposes both over HTTP. All verification is local (Lean v4.23.0,
+Mathlib v4.23.0, `autoImplicit false`).
 
 ```mermaid
 flowchart LR
-    U[Agent or mathematician] --> I[CLI / HTTP API<br/>interface/]
-    I --> L[Library<br/>core/library.py]
-    L --> S[(SQLite store<br/>data/library.db)]
-    L --> B[lake build<br/>core/lean.py]
-    B --> W[Lean workspace<br/>orchestration_workspace/]
+    M[Mathematician] --> S[Query server<br/>server/]
+    S --> O[Orchestrator<br/>orchestrator/]
+    S --> L[Theorem library<br/>library/]
+    O -->|captain, auditor,<br/>reviewer, writer| C[Model APIs<br/>agents/]
+    O -->|solvers| A[AIProver harness<br/>AIProver/]
+    A --> V[AIProver model<br/>TACC Vista / DGX]
+    O --> W[Lean workspace<br/>orchestration_workspace/]
+    L --> W
 ```
 
 ## Layout
 
 ```
-├── aiprover_orchestration/
-│   ├── core/          # Lean checks and builds, module layout, store, library
-│   ├── interface/     # CLI and FastAPI router
-│   ├── agents/        # Model access
-│   ├── prompts/       # Captain, auditor and solver prompts; agent guide
-│   └── utils/         # Smoke test
-└── orchestration_workspace/   # Lake project holding the library modules
+├── aiprover_orchestration/     # Python package
+│   ├── paths.py                #   repository locations
+│   ├── lean/                   #   Lean checks, module builds, source parsing
+│   ├── agents/                 #   model backends (Claude, OpenAI-compatible,
+│   │                           #   AIProver) and the routing pool
+│   ├── library/                #   theorem library: store, verifier, CLI, HTTP API
+│   ├── orchestrator/           #   formalize → audit → sketch → prove → assemble
+│   │   ├── stages/             #     one module per stage
+│   │   ├── prompts/            #     system prompts and templates (.md)
+│   │   ├── reports/            #     LaTeX report and informalization
+│   │   └── trace_view/         #     trace walkthrough and replay pages
+│   ├── server/                 #   query server, job worker, Vista jobs, proxy
+│   ├── roles/                  #   captain, auditor and solver role guides
+│   └── utils/                  #   smoke test
+├── configs/                    # orchestrator runs, AIProver harness, server tokens
+├── orchestration_workspace/    # Lake project of library and run modules
+├── scripts/                    # systemd units, Vista and local model serving
+├── AIProver/                   # AIProver harness and prover (submodule)
+├── aiprover/                   # AIProver runtime: venvs, ripgrep, jobs
+├── data/ libraries/            # problem datasets; single-file result libraries
+├── results/ analysis/          # run outputs (traces, Lean, reports); analyses
+└── state/                      # databases of the server and the library
 ```
 
-## Model
-
-| Object | Lean module | Status |
-|---|---|---|
-| Definition `foo` | `Definitions.Def_foo` | Definition |
-| Theorem `foo` | `Theorems.Thm_foo`, ending in `:= by sorry` | Open, Proved, Disproved |
-| Submission `n` for `foo` | `Solutions.Sol_foo_n`, declaring `theorem solution` | ACCEPTED, SKETCH_ACCEPTED, REJECTED, ERROR |
-
-A submission is checked against its target in a separate module
-(`example : type_of% @foo := @solution`), so it never imports its own
-target. A submission that imports Open theorems is a sketch: the imported
-theorems become its children, and the target is proved once all children
-are. Gating rules and roles: [prompts/skill.md](aiprover_orchestration/prompts/skill.md).
+Documentation in `docs/`: `orchestration.md` (design and analysis),
+`AIProver_README.md` (orchestrator components), `aiprover_tacc.md`
+(deployment), `server.md` (query server); work log in
+[logbook.md](logbook.md).
 
 ## Usage
 
 ```bash
-python -m aiprover_orchestration add-definition NAME FILE
-python -m aiprover_orchestration add-theorem NAME FILE --statement "..."
-python -m aiprover_orchestration verify NAME FILE [--disprove]
-python -m aiprover_orchestration open-leaves NAME
-uvicorn aiprover_orchestration.interface.api:app --port 8443
-python -m aiprover_orchestration.utils.smoke        # end-to-end test (Haiku)
+# One orchestration run
+python -m aiprover_orchestration.orchestrator.run \
+    --config configs/orchestrator/claude.json \
+    --problem-uuid JiatuBook_BoundedArithmetic_000004
+
+# Query server (systemd unit: scripts/systemd/aiprover_query_server.service)
+uvicorn aiprover_orchestration.server.app:app --host 0.0.0.0 --port 8443
+
+# Theorem library
+python -m aiprover_orchestration.library add-theorem NAME FILE --statement "..."
+python -m aiprover_orchestration.library verify NAME FILE [--disprove]
+python -m aiprover_orchestration.library open-leaves NAME
+
+# Trace pages, report, informalization of a finished run
+python -m aiprover_orchestration.orchestrator.trace_view results/<run_id>/trace.json
+python -m aiprover_orchestration.orchestrator.reports.informal results/<run_id>
+
+# End-to-end test of the library (Claude Haiku)
+python -m aiprover_orchestration.utils.smoke
 ```
 
-Requirements: elan with Lean v4.23.0; Mathlib v4.23.0 built in
-`orchestration_workspace/.lake/packages` (linked from the AIProver Lean
-project); Python 3.10+ with `fastapi` and `httpx`; Claude access, for agents.
+Requirements: elan with Lean v4.23.0; Mathlib v4.23.0 in
+`~/workspace/lean_projects/TmpProjDir` (linked by `orchestration_workspace/`);
+Python 3.12 with `fastapi`, `httpx`, `uvicorn`, `aiohttp` and `pygments`;
+`pdflatex`; AIProver venvs and ripgrep from
+`AIPROVER_CONFIG=configs/aiprover/vista.toml AIProver/AIProver_plugin/setup.sh venvs rg`.
 
 ## Current results
 
-| Test | Result |
-|---|---|
-| Smoke test, Claude Haiku 4.5 (2026-10-08) | passed: publishing, gating, two direct proofs (2 attempts each), sketch resolution, HTTP graph |
+G-Simple (Carbone et al., draft, Section 3); captain Claude Opus 5.5,
+solvers AIProver. Every verified proof received reviewer verdict FAITHFUL.
+
+| Problem | Status | Wall (h) | Final lemmas |
+|---|---|---|---|
+| Lemma 3.1 | proved | 1.7 | 5 |
+| Corollary 3.2 | proved | 0.9 | 3 |
+| Theorem 3.3 | proved | 15.4 | 26 |
+| Theorem 3.4 | proved | 3.6 | 8 |
+| Lemma 3.5 | proved | 0.3 | 1 |
+| Theorem 3.6 | proved | 4.2 | 6 |
+| Theorem 3.7 | running | 16.3 | 10 (7 proved) |
+
+Theorem library smoke test (Claude Haiku 4.5): publishing, gating, direct
+proofs, sketch resolution and the HTTP interface pass.
 
 ## Future work
 
 - Project upload: import an existing Lean project (declaration graph,
   definition and theorem stubs, original proofs as sketches), so
   mathematicians can build on their own formalizations.
-- Orchestrator migration: the formalize, audit, sketch, prove and assemble
-  pipeline running on this library.
-- Authentication for the HTTP API; missions and milestones; several pinned
-  Lean environments.
+- Orchestrator runs that read and extend the theorem library in place of
+  the single-file libraries of `libraries/`.
+- Missions and milestones; several pinned Lean environments.
