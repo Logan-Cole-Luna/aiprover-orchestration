@@ -226,11 +226,16 @@ async function start() {
   if (!timers) timers = [setInterval(refreshRuns, 10000), setInterval(refreshHealth, 60000)];
 }
 
-// Provider choices: Claude (model and reasoning level follow) or an AIProver version.
+// Provider choices: Claude (model and reasoning level follow), a hosted
+// provider (model id follows) or an AIProver version.
 function providerOptions() {
-  return `<option value="claude">Claude</option>` + catalog.aiprover.map(v =>
+  return `<option value="claude">Claude</option>` + catalog.hosted.map(h =>
+    `<option value="${h.provider}">${escapeHtml(h.label)}</option>`).join("") +
+    catalog.aiprover.map(v =>
     `<option value="aiprover:${v.model}">${escapeHtml(v.label)}</option>`).join("");
 }
+
+function isHosted(provider) { return catalog.hosted.some(h => h.provider === provider); }
 
 function buildPickers() {
   ROLES = catalog.roles.map(r => r.role);
@@ -241,21 +246,26 @@ function buildPickers() {
     box.innerHTML = `<select aria-label="${role} model" data-field="provider">${providerOptions()}</select>
       <select aria-label="${role} Claude model" data-field="model">${catalog.claude.map(m =>
         `<option value="${m.model}">${escapeHtml(m.label)}</option>`).join("")}</select>
+      <input aria-label="${role} model id" data-field="model-id" placeholder="model id">
       <select aria-label="${role} reasoning level" data-field="effort"></select>`;
     box.addEventListener("change", () => syncPicker(role));
     const wanted = catalog.default[role];
     box.querySelector('[data-field="provider"]').value =
-      wanted.provider === "claude" ? "claude" : `aiprover:${wanted.model}`;
+      wanted.provider === "aiprover" ? `aiprover:${wanted.model}` : wanted.provider;
     if (wanted.provider === "claude") box.querySelector('[data-field="model"]').value = wanted.model;
+    if (isHosted(wanted.provider)) box.querySelector('[data-field="model-id"]').value = wanted.model;
     syncPicker(role, wanted.effort);
   }
 }
 
-// Show the Claude model and reasoning level only for Claude; a model without
-// reasoning levels has no level to choose.
+// Show the Claude model and reasoning level only for Claude, and the model id
+// only for a hosted provider; a model without reasoning levels has no level
+// to choose.
 function syncPicker(role, effort) {
   const box = $("pick-" + role);
-  const claude = box.querySelector('[data-field="provider"]').value === "claude";
+  const provider = box.querySelector('[data-field="provider"]').value;
+  const claude = provider === "claude";
+  box.querySelector('[data-field="model-id"]').classList.toggle("hidden", !isHosted(provider));
   const model = box.querySelector('[data-field="model"]');
   const level = box.querySelector('[data-field="effort"]');
   const efforts = claude ? catalog.claude.find(m => m.model === model.value).efforts : [];
@@ -271,6 +281,9 @@ function selection(role) {
   const box = $("pick-" + role);
   const [provider, version] = box.querySelector('[data-field="provider"]').value.split(":");
   if (provider === "aiprover") return {provider, model: version, effort: ""};
+  if (isHosted(provider)) {
+    return {provider, model: box.querySelector('[data-field="model-id"]').value.trim(), effort: ""};
+  }
   return {provider, model: box.querySelector('[data-field="model"]').value,
           effort: box.querySelector('[data-field="effort"]').value};
 }
@@ -280,6 +293,8 @@ function modelLabel(choice) {
   if (choice.provider === "aiprover") {
     return (catalog?.aiprover.find(v => v.model === choice.model) || {label: choice.model}).label;
   }
+  const hosted = catalog?.hosted.find(h => h.provider === choice.provider);
+  if (hosted) return `${hosted.label} ${choice.model}`;
   const label = (catalog?.claude.find(m => m.model === choice.model) || {label: choice.model}).label;
   return choice.effort ? `${label}, ${choice.effort}` : label;
 }
