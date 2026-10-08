@@ -8,8 +8,8 @@ class Completion:
     """Result of one model call.
 
     `usage` maps each model id that served the call to a dict with the keys
-    `inputTokens`, `outputTokens` and `costUSD` (one naming, kept
-    for all backends so that traces are uniform).
+    `inputTokens`, `outputTokens` and `costUSD` (one naming for all
+    backends, so that traces are uniform).
     """
 
     text: str = ""

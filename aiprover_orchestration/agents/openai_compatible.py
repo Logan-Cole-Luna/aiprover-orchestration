@@ -7,14 +7,25 @@ import urllib.request
 
 from .base import Agent, Completion
 
+# Hosted providers: base URL and the environment variable holding the key.
+PROVIDERS = {
+    "openai": ("https://api.openai.com/v1", "OPENAI_API_KEY"),
+    "huggingface": ("https://router.huggingface.co/v1", "HF_TOKEN"),
+    "openrouter": ("https://openrouter.ai/api/v1", "OPENROUTER_API_KEY"),
+}
+# Sampling defaults for a local server; hosted providers keep their own,
+# since some of their models reject explicit sampling parameters.
+LOCAL_SAMPLING = {"temperature": 0.6, "top_p": 0.95}
+
 
 class OpenAICompatibleAgent(Agent):
     """Model behind an OpenAI-compatible `/chat/completions` endpoint.
 
-    Options: `base_url`, `api_key_env` (name of the environment variable that
-    holds the key; omitted for a local server), `temperature`, `top_p`,
-    `max_tokens`, `timeout`, and `extra_body` (merged into the request, for
-    server-specific parameters).
+    Options: `provider` (a key of `PROVIDERS`, which sets `base_url` and
+    `api_key_env`), `base_url`, `api_key_env` (name of the environment
+    variable that holds the key; omitted for a local server), `temperature`,
+    `top_p`, `max_tokens`, `timeout`, and `extra_body` (merged into the
+    request, for server-specific parameters).
     """
 
     backend = "openai_compatible"
@@ -23,21 +34,32 @@ class OpenAICompatibleAgent(Agent):
     def __init__(
         self,
         model: str,
-        base_url: str,
+        base_url: str = "",
         api_key_env: str = "",
-        temperature: float = 0.6,
-        top_p: float = 0.95,
+        provider: str = "",
+        temperature: float | None = None,
+        top_p: float | None = None,
         max_tokens: int = 4096,
         timeout: int = 900,
         extra_body: dict | None = None,
         **options,
     ):
+        if provider:
+            default_url, default_key_env = PROVIDERS[provider]
+            base_url = base_url or default_url
+            api_key_env = api_key_env or default_key_env
+        sampling = {"temperature": temperature, "top_p": top_p}
+        if not provider:
+            sampling = {
+                key: LOCAL_SAMPLING[key] if value is None else value
+                for key, value in sampling.items()
+            }
         super().__init__(
             model,
             base_url=base_url,
             api_key_env=api_key_env,
-            temperature=temperature,
-            top_p=top_p,
+            provider=provider,
+            **sampling,
             max_tokens=max_tokens,
             timeout=timeout,
             extra_body=extra_body or {},
@@ -45,10 +67,13 @@ class OpenAICompatibleAgent(Agent):
         )
         self.url = base_url.rstrip("/") + "/chat/completions"
         self.api_key = os.environ.get(api_key_env, "") if api_key_env else ""
+        # OpenAI's reasoning models accept only `max_completion_tokens`.
+        token_limit = (
+            "max_completion_tokens" if provider == "openai" else "max_tokens"
+        )
         self.request_defaults = {
-            "temperature": temperature,
-            "top_p": top_p,
-            "max_tokens": max_tokens,
+            **{k: v for k, v in sampling.items() if v is not None},
+            token_limit: max_tokens,
             **(extra_body or {}),
         }
         self.timeout = timeout

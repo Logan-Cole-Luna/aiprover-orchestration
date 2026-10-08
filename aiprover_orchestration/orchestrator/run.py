@@ -21,7 +21,6 @@ import time
 from dataclasses import fields
 from pathlib import Path
 
-from ..agents.claude import get_account_status
 from ..paths import CONFIG_DIR, DATA_DIR, LOGS_DIR, RESULTS_DIR, TEMP_DIR
 from .config import Config
 from .pipeline import Orchestration
@@ -177,11 +176,6 @@ def main() -> None:
     # A terminated process unwinds normally, so the trace records the outcome.
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
 
-    backends = {spec["backend"] for spec in config.agents.values()}
-    if "claude" in backends and get_account_status() is None:
-        raise SystemExit(
-            "Claude access is not configured."
-        )
     roles = " | ".join(
         f"{role} {spec['backend']}/{spec.get('model')}"
         for role, spec in config.agents.items()
