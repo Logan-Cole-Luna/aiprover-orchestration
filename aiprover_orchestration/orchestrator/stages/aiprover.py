@@ -243,18 +243,15 @@ class AIProverStage:
                 raise AgentCallError(
                     f"AIProver endpoint unavailable during {lemma.name}"
                 )
-            # A job whose sessions all failed on infrastructure (endpoint,
-            # model name, cancellation) says nothing about the lemma and does
-            # not count as an attempt.
-            if job.samples and all(
-                sample.status in STOPPED_STATES for sample in job.samples
-            ):
+            # A job with sessions cut off by infrastructure (endpoint, model
+            # name) or a cancellation is incomplete, not a failed attempt: the
+            # run stops and its resume continues those sessions.
+            if any(sample.status in STOPPED_STATES for sample in job.samples):
                 endings = sorted(
                     {sample.ending for sample in job.samples if sample.ending}
                 )
                 raise AgentCallError(
-                    f"AIProver job {job.job} on {lemma.name}: every session "
-                    f"failed on infrastructure "
+                    f"AIProver job {job.job} on {lemma.name}: sessions cut off "
                     f"({'; '.join(endings)[:300]})"
                 )
             lemma.attempts += 1

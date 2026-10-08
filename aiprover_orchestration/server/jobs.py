@@ -52,8 +52,12 @@ CONFIG = CONFIG_DIR / "orchestrator" / "aiprover_vista_served.json"
 
 POLL_SECONDS = 5
 BACKEND_RETRY_SECONDS = 60
-IDLE_SECONDS = 15 * 60
+# Idle time after which a group's server jobs are cancelled; 0 keeps them
+# until their wall time.
+IDLE_SECONDS = int(os.environ.get("QUERY_SERVER_IDLE_SECONDS", str(30 * 60)))
 MAX_CONCURRENT_RUNS = int(os.environ.get("QUERY_SERVER_MAX_RUNS", "2"))
+# Minimum interval between renders of a running run's trace pages.
+PAGE_REFRESH_SECONDS = 60
 # A run that loses its model server is requeued and resumed without limit;
 # it ends only after this many resumptions in a row with no progress.
 MAX_STALLED_RESUMPTIONS = 3
@@ -208,6 +212,25 @@ def process_alive(pid: int | None, run_id: str) -> bool:
     return state != "Z" and run_id.encode() in cmdline
 
 
+def run_process_alive(run_id: str) -> bool:
+    """True if any live orchestrator process belongs to run `run_id`."""
+    return any(
+        process_alive(int(entry.name), run_id)
+        for entry in Path("/proc").iterdir()
+        if entry.name.isdigit()
+    )
+
+
+def trace_pages_command(trace_path: Path) -> list[str]:
+    """Command that renders a run's trace pages next to its trace."""
+    return [
+        sys.executable,
+        "-m",
+        "aiprover_orchestration.orchestrator.trace_view",
+        str(trace_path),
+    ]
+
+
 def read_summary(run_id: str) -> dict:
     path = RESULTS_DIR / run_id / "summary.json"
     return json.loads(path.read_text()) if path.exists() else {}
@@ -321,6 +344,8 @@ class Worker(threading.Thread):
         self.vista_messages: dict[str, str] = {}
         self.idle_since: dict[str, float] = {}
         self.serving: dict[str, str] = {}
+        # Run id -> the process rendering its trace pages.
+        self.page_renders: dict[str, subprocess.Popen] = {}
 
     @property
     def vista_message(self) -> str:
@@ -344,6 +369,7 @@ class Worker(threading.Thread):
 
     def _step(self) -> None:
         self._reap()
+        self._refresh_pages()
         queued = self.store.in_states("queued")
         running = [self.store.get(run_id) for run_id in self.running]
         busy_groups = {job_group(job).name for job in queued + running}
@@ -385,6 +411,9 @@ class Worker(threading.Thread):
                 job
             ):
                 continue
+            # A run still shutting down would share its trace with a resume.
+            if run_process_alive(job["run_id"]):
+                continue
             checkpoint = job_checkpoint(job)
             if checkpoint is None:
                 return job
@@ -413,6 +442,30 @@ class Worker(threading.Thread):
             if done:
                 del self.running[run_id]
                 self._finish(self.store.get(run_id))
+
+    def _refresh_pages(self) -> None:
+        """Render the trace pages of running runs whose trace has steps the
+        pages lack, so a run can be viewed in progress: one render per run at
+        a time, at most every PAGE_REFRESH_SECONDS."""
+        for run_id in list(self.running):
+            render = self.page_renders.get(run_id)
+            if render is not None and render.poll() is None:
+                continue
+            trace = RESULTS_DIR / run_id / "trace.json"
+            page = RESULTS_DIR / run_id / "trace.html"
+            if not trace.exists():
+                continue
+            rendered = page.stat().st_mtime if page.exists() else 0.0
+            if (
+                trace.stat().st_mtime > rendered
+                and time.time() - rendered >= PAGE_REFRESH_SECONDS
+            ):
+                self.page_renders[run_id] = subprocess.Popen(
+                    trace_pages_command(trace),
+                    cwd=ROOT,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
 
     # Vista servers --------------------------------------------------------
 
@@ -503,7 +556,7 @@ class Worker(threading.Thread):
         """Cancel the server jobs this worker submitted for `group` after
         IDLE_SECONDS without queued or running jobs in the group."""
         managed = list(self.store.vista_job_checkpoints(group.name))
-        if not managed:
+        if not managed or not IDLE_SECONDS:
             self.idle_since.pop(group.name, None)
             return
         since = self.idle_since.setdefault(group.name, time.time())
@@ -643,15 +696,7 @@ class Worker(threading.Thread):
             )
         trace_path = RESULTS_DIR / run_id / "trace.json"
         if trace_path.exists():
-            run_command(
-                [
-                    sys.executable,
-                    "-m",
-                    "aiprover_orchestration.orchestrator.trace_view",
-                    str(trace_path),
-                ],
-                timeout=300,
-            )
+            run_command(trace_pages_command(trace_path), timeout=300)
         state = "cancelled" if job["state"] == "cancelling" else "finished"
         status = summary.get("status") or "no_summary"
         self.store.update(
