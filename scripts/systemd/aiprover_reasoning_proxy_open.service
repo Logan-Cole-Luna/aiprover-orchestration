@@ -1,0 +1,19 @@
+# systemd user unit for the reasoning proxy of GPU group "open"
+# (aiprover_orchestration/server/vista.py GPU_GROUPS): listens on 18568 and forwards to the group's
+# tunnel on 18558 (configs/aiprover/vista_open.toml).
+# Install next to aiprover_reasoning_proxy.service:
+#   cp scripts/systemd/aiprover_reasoning_proxy_open.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now aiprover_reasoning_proxy_open
+[Unit]
+Description=AIProver reasoning proxy (GPU group open)
+After=network-online.target
+
+[Service]
+WorkingDirectory=/home/loganluna/workspace/aiprover_orchestration
+ExecStart=/home/loganluna/lean_env/bin/python3 -m aiprover_orchestration.server.reasoning_proxy --listen 18568 --upstream http://127.0.0.1:18558
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

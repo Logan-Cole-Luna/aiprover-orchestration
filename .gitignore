@@ -1,0 +1,48 @@
+# Credentials
+credentials.json
+configs/server/tokens.json
+
+# Lean build output and generated library modules
+.lake/
+*.olean
+orchestration_workspace/Definitions/*.lean
+orchestration_workspace/Theorems/*.lean
+orchestration_workspace/Solutions/*.lean
+orchestration_workspace/.lake_build.lock
+
+# Generated Lean outputs of orchestration runs
+results/**/*.lean
+
+# Databases of the theorem library and the query server
+state/
+
+# AIProver runtime state, environments and binaries
+aiprover/bin/
+aiprover/work/
+aiprover/work_*/
+aiprover/venv_*/
+
+# Scratch space and logs
+temp/
+logs/
+*.log
+*.out
+*.err
+results/
+libraries/
+data/
+analysis/
+
+# Python
+__pycache__/
+*.pyc
+.venv*/
+
+# Editor and OS
+.vscode/
+.idea/
+.DS_Store
+
+# Misc
+CLAUDE.md
+docs/

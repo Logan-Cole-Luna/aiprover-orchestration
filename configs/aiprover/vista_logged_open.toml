@@ -1,0 +1,54 @@
+# GPU group "open": the harness reaches its model server through the
+# reasoning proxy on 127.0.0.1:18568 (forwarding to the tunnel on 18558).
+# Sessions share work_root with the main group, so max_parallel bounds the
+# Lean sessions of both groups on this machine.
+# AIProver harness configuration: the harness reaches the model through the
+# reasoning proxy (server/reasoning_proxy.py, 127.0.0.1:18565), which records
+# the model's reasoning per session and forwards to the model server: the
+# persistent server cic-dgx-01.tacc.cloud:8040 (`aip-leanstral`), or the SSH
+# tunnel of vista.toml to a Vista server job (`aiprover tunnel up`),
+# as the proxy's `--upstream` sets.
+
+[endpoint]
+mode = "direct"
+ssh_host = "vista.tacc.utexas.edu"
+ssh_user = "loganluna"
+ssh_port = 22
+control_socket = "~/.ssh/vista.sock"
+ssh_options = []
+server_handoff = "/scratch/11757/loganluna/servers/aiprover_server_open.txt"
+# Fallback address when the handoff file is unreadable (empty = none).
+remote_host = ""
+remote_port = 8060
+local_port = 18558
+# The proxy; ssh_* and port keys above are unused in direct mode.
+api_base = "http://127.0.0.1:18568/v1"
+api_key = "EMPTY"
+# Served model id; empty = the first id /v1/models reports.
+model = ""
+
+[runtime]
+work_root = "~/workspace/aiprover_orchestration/aiprover/work"
+# Concurrent rollouts on this machine, across all runs; each holds a Lean
+# server (~1.5 GB) and peaks near 5 GB while compiling (VM: 32 cores, 125 GB).
+max_parallel = 16
+# Champion measurement settings (100 turns / 5400 s); the harness derives its
+# time fences from timeout_sec.
+timeout_sec = 5400
+max_turns = 100
+
+[paths]
+# Lean v4.23.0 + Mathlib v4.23.0 (37df177) + REPL + cslib.
+lean_project = "~/workspace/lean_projects/TmpProjDir"
+elan_home = "~/.elan"
+vibe_venv = "~/workspace/aiprover_orchestration/aiprover/venv_vibe"
+mcp_venv = "~/workspace/aiprover_orchestration/aiprover/venv_mcp"
+rg_dir = "~/workspace/aiprover_orchestration/aiprover/bin"
+
+[helpers]
+# expand / backtranslate / ask: "auto" selects the helper model from the
+# calling environment (see AIProver_plugin/README.md).
+backend = "auto"
+claude_model = ""
+codex_sandbox = "read-only"
+timeout_sec = 900
