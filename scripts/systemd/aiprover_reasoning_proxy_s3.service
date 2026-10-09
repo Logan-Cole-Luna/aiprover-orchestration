@@ -1,0 +1,18 @@
+# systemd user unit for the reasoning proxy of the Stampede3 server: listens on 18570 and forwards
+# to the tunnel on 18560 (configs/aiprover/s3.toml, s3_logged.toml).
+# Install next to aiprover_reasoning_proxy.service:
+#   cp scripts/systemd/aiprover_reasoning_proxy_s3.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now aiprover_reasoning_proxy_s3
+[Unit]
+Description=AIProver reasoning proxy (Stampede3)
+After=network-online.target
+
+[Service]
+WorkingDirectory=/home/loganluna/workspace/aiprover_orchestration
+ExecStart=/home/loganluna/lean_env/bin/python3 -m aiprover_orchestration.server.reasoning_proxy --listen 18570 --upstream http://127.0.0.1:18560
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target

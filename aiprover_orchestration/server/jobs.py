@@ -11,9 +11,12 @@ builds its Lean modules under the workspace's build lock).
 The worker keeps each group's model server in step with demand: it submits a
 Vista server job for the group when an approved run of it is waiting and none
 is queued or running, and cancels the server jobs it submitted for the group
-after IDLE_SECONDS without work there. A run that loses its model server stops
-as an infrastructure failure and is put back at the head of the queue, to
-resume on the next server job of its group.
+after IDLE_SECONDS without work there. A group may borrow the servers of
+other groups (`GpuGroup.borrows`): its runs use every server of the pool
+that serves their checkpoint, and the borrowed servers stay up while it has
+work. A run that loses all its model servers stops as an infrastructure
+failure and is put back at the head of the queue, to resume on the next
+server job of its group.
 
 Runs are started in their own session, so a server restart does not end
 them; on start, the worker adopts a run whose process is still alive and
@@ -23,12 +26,14 @@ resumes (`--resume`) one whose process is gone.
 import json
 import logging
 import os
+import re
 import signal
 import sqlite3
 import subprocess
 import sys
 import threading
 import time
+import tomllib
 import urllib.request
 from pathlib import Path
 
@@ -56,6 +61,8 @@ BACKEND_RETRY_SECONDS = 60
 # until their wall time.
 IDLE_SECONDS = int(os.environ.get("QUERY_SERVER_IDLE_SECONDS", str(30 * 60)))
 MAX_CONCURRENT_RUNS = int(os.environ.get("QUERY_SERVER_MAX_RUNS", "2"))
+MAINTAIN_SECONDS = 300  # interval of the server checks for running runs
+SUCCESSOR_RETRY_SECONDS = 600  # between successor submissions of a group
 # Minimum interval between renders of a running run's trace pages.
 PAGE_REFRESH_SECONDS = 60
 # A run that loses its model server is requeued and resumed without limit;
@@ -160,6 +167,28 @@ def endpoint_status(
     return code == 0, message
 
 
+def tunnel_job(group: vista.GpuGroup) -> str | None:
+    """Server job the group's open tunnel leads to (the harness records it
+    in <work_root>/tunnel.json); None if no tunnel is recorded."""
+    with open(group.tunnel_config, "rb") as config_file:
+        work_root = tomllib.load(config_file)["runtime"]["work_root"]
+    state = Path(work_root).expanduser() / "tunnel.json"
+    try:
+        source = json.loads(state.read_text()).get("source", "")
+    except (OSError, ValueError):
+        return None
+    match = re.search(r"\(job (\d+)\)", source)
+    return match.group(1) if match else None
+
+
+def tunnel_down(group: vista.GpuGroup) -> None:
+    run_command(
+        [str(AIPROVER_CLI), "tunnel", "down"],
+        timeout=60,
+        aiprover_config=group.tunnel_config,
+    )
+
+
 def job_group(job: dict) -> vista.GpuGroup:
     """GPU group of a job; jobs without one belong to the default group."""
     return vista.GPU_GROUPS.get(
@@ -169,8 +198,17 @@ def job_group(job: dict) -> vista.GpuGroup:
 
 
 def group_config(config: dict, group: vista.GpuGroup) -> dict:
-    """A run config whose AIProver agents use the group's model server."""
+    """A run config whose AIProver agents use the group's model server;
+    agents of a persistent version keep their own server."""
+    persistent = set(models.HARNESS_CONFIGS.values()) | set(
+        models.VERSION_ENDPOINTS.values()
+    )
     for spec in config["agents"].values():
+        if (
+            spec.get("config") in persistent
+            or spec.get("base_url") in persistent
+        ):
+            continue
         if spec.get("backend") == "aiprover":
             spec["config"] = group.solver_config
         elif (
@@ -355,6 +393,8 @@ class Worker(threading.Thread):
         self.vista_messages: dict[str, str] = {}
         self.idle_since: dict[str, float] = {}
         self.serving: dict[str, str] = {}
+        self.maintained = 0.0  # last _maintain_servers pass
+        self.successor_tried: dict[str, float] = {}  # per group
         # Run id -> the process rendering its trace pages.
         self.page_renders: dict[str, subprocess.Popen] = {}
 
@@ -383,7 +423,11 @@ class Worker(threading.Thread):
         self._refresh_pages()
         queued = self.store.in_states("queued")
         running = [self.store.get(run_id) for run_id in self.running]
-        busy_groups = {job_group(job).name for job in queued + running}
+        busy_groups = {
+            member.name
+            for job in queued + running
+            for member in vista.server_pool(job_group(job))
+        }
         for name, group in vista.GPU_GROUPS.items():
             if name in busy_groups:
                 self.idle_since.pop(name, None)
@@ -395,11 +439,16 @@ class Worker(threading.Thread):
             if candidate is None:
                 continue
             checkpoint = job_checkpoint(candidate)
-            if checkpoint is None or self._serving(
+            if checkpoint is not None and not self._pool_serving(
                 checkpoint, job_group(candidate)
             ):
+                # A run that needs no model server does not wait for
+                # another run's server.
+                candidate = self._serverless_job(name, queued)
+            if candidate is not None:
                 self._execute(candidate)
                 started = True
+        self._maintain_servers(running)
         if not started:
             time.sleep(POLL_SECONDS)
 
@@ -434,6 +483,19 @@ class Worker(threading.Thread):
                 return job
             held_back = True
         return None
+
+    def _serverless_job(self, group: str, queued: list[dict]) -> dict | None:
+        """The group's first queued job that needs no model server."""
+        return next(
+            (
+                job
+                for job in queued
+                if job_group(job).name == group
+                and job_checkpoint(job) is None
+                and not self._waiting_for_dependency(job)
+            ),
+            None,
+        )
 
     def _waiting_for_dependency(self, job: dict) -> bool:
         """True until the run named by `after` has finished; a cancelled or
@@ -537,23 +599,11 @@ class Worker(threading.Thread):
                     "server job submission failed (see server log)"
                 )
             return False
+        if not self._tunnel_current(group, jobs):
+            return False
         endpoint_up, message = endpoint_status(bring_up=True, group=group)
         if endpoint_up:
-            # A further job of this checkpoint would take over the handoff file
-            # when it starts and leave this one idle, so pending ones are
-            # cancelled.
-            if any(state == "RUNNING" for state in jobs.values()):
-                for job_id, state in jobs.items():
-                    if (
-                        state == "PENDING"
-                        and job_id in checkpoints
-                        and vista.cancel_server(job_id)
-                    ):
-                        logger.info(
-                            f"cancelled pending server job {job_id}; another serves "
-                            f"{checkpoint} for {group.name}"
-                        )
-                        self.store.remove_vista_job(job_id)
+            self._keep_successor(checkpoint, group, jobs, checkpoints)
             self.serving[group.name] = checkpoint
             self.vista_messages[group.name] = message
             return True
@@ -562,6 +612,95 @@ class Worker(threading.Thread):
         )
         self.vista_messages[group.name] = f"waiting for server job {summary}"
         return False
+
+    def _tunnel_current(self, group: vista.GpuGroup, jobs: dict) -> bool:
+        """Point the group's tunnel at the server job its handoff file names,
+        once that job's server answers; False if the handoff names no
+        running job. The handoff of an ended job still names its node, where
+        another job's server may answer, and an open tunnel is not moved by
+        `tunnel up`."""
+        running = [
+            job_id for job_id, state in jobs.items() if state == "RUNNING"
+        ]
+        named = vista.handoff(group)
+        current = tunnel_job(group)
+        if named is None or named["job"] not in running:
+            if current is not None:
+                logger.info(
+                    f"{group.name}: closing tunnel to ended job {current}"
+                )
+                tunnel_down(group)
+            self.vista_messages[group.name] = (
+                "handoff names no running server job; waiting for "
+                + (", ".join(f"{i} {s}" for i, s in jobs.items()) or "none")
+            )
+            return False
+        if current == named["job"]:
+            return True
+        if current in running and not vista.server_answers(
+            named["node"], named["port"]
+        ):
+            return True  # the new job's server is loading; keep the old one
+        logger.info(
+            f"{group.name}: moving tunnel from job {current} to {named['job']}"
+        )
+        tunnel_down(group)
+        for job_id in running:
+            if job_id != named[
+                "job"
+            ] and job_id in self.store.vista_job_checkpoints(group.name):
+                logger.info(f"{group.name}: cancelling superseded job {job_id}")
+                if vista.cancel_server(job_id):
+                    self.store.remove_vista_job(job_id)
+        return True
+
+    def _keep_successor(
+        self,
+        checkpoint: str,
+        group: vista.GpuGroup,
+        jobs: dict,
+        checkpoints: dict,
+    ) -> None:
+        """Keep one server job queued behind the running one, so that the
+        group's server is replaced without a wait in the Slurm queue; at
+        most one submission per group every SUCCESSOR_RETRY_SECONDS."""
+        if any(state == "PENDING" for state in jobs.values()):
+            return
+        if time.time() - self.successor_tried.get(group.name, 0.0) < (
+            SUCCESSOR_RETRY_SECONDS
+        ):
+            return
+        self.successor_tried[group.name] = time.time()
+        job_id = vista.submit_server(checkpoint, group)
+        if job_id:
+            logger.info(f"{group.name}: queued successor server job {job_id}")
+            self.store.add_vista_job(job_id, checkpoint, group.name)
+
+    def _pool_serving(self, checkpoint: str, group: vista.GpuGroup) -> bool:
+        """True if a model server of the group's pool serves `checkpoint`;
+        every server of the pool is brought in line with it."""
+        return any(
+            [
+                self._serving(checkpoint, member)
+                for member in vista.server_pool(group)
+            ]
+        )
+
+    def _maintain_servers(self, running: list[dict]) -> None:
+        """Every MAINTAIN_SECONDS, bring the server pools of running runs in
+        line, so that a server lost under a run that has others to use is
+        replaced."""
+        if time.time() - self.maintained < MAINTAIN_SECONDS:
+            return
+        self.maintained = time.time()
+        pools = {(job_checkpoint(job), job_group(job).name) for job in running}
+        for checkpoint, group in pools:
+            if checkpoint is None:
+                continue
+            # Recheck the server jobs and handoffs, not the cached state.
+            for member in vista.server_pool(vista.GPU_GROUPS[group]):
+                self.serving.pop(member.name, None)
+            self._pool_serving(checkpoint, vista.GPU_GROUPS[group])
 
     def _release_idle_servers(self, group: vista.GpuGroup) -> None:
         """Cancel the server jobs this worker submitted for `group` after
