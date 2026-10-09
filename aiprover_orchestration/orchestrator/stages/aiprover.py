@@ -72,12 +72,14 @@ class AIProverStage:
         def weight(lemma: Lemma) -> int:
             return 1 + lemma.attempts
 
-        def allocate(lemma: Lemma) -> int:
+        def allocate(lemma: Lemma, servers: int) -> int:
             """Sessions for the next job on `lemma`: its weighted share of the
-            free slots against the lemmas that could start alongside it."""
+            free slots, `aiprover_session_slots` per model server, against
+            the lemmas that could start alongside it."""
             slots = self.config.aiprover_session_slots
             if not slots:
                 return self.config.workers
+            slots *= servers
             free = slots - sum(sessions_in_flight.values())
             waiting = sorted(
                 (
@@ -141,8 +143,9 @@ class AIProverStage:
                 maybe_handback(lemma)
                 if lemma.proved or lemma.attempts >= max_attempts:
                     break
+                servers = solver.servers()
                 with sketch_lock:
-                    samples = allocate(lemma)
+                    samples = allocate(lemma, servers)
                     sessions_in_flight[lemma.name] = samples
                 try:
                     one_job(lemma, samples)

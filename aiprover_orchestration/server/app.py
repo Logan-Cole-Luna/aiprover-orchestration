@@ -69,8 +69,14 @@ LIBRARY_NAME = re.compile(r"^[A-Za-z0-9_.-]+\.lean$")
 RESULT_PAGES = ("trace.html", "trace_replay.html", "summary.json")
 TERMINAL_STATES = ("finished", "cancelled", "rejected")
 
+LOGS_DIR.mkdir(exist_ok=True)
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+    handlers=[
+        logging.StreamHandler(),
+        logging.FileHandler(LOGS_DIR / "query_server.log"),
+    ],
 )
 store = JobStore()
 worker = Worker(store)
@@ -224,10 +230,16 @@ def health(user: str = Depends(current_user)) -> dict:
         endpoint_up, endpoint_message = endpoint_status(
             bring_up=False, group=group
         )
+        server_jobs = vista.server_job_details(group)
         groups[name] = {
             "endpoint_up": endpoint_up,
             "endpoint": endpoint_message,
-            "vista_jobs": vista.server_jobs(group),
+            "server_jobs": server_jobs,
+            "vista_jobs": (
+                None
+                if server_jobs is None
+                else {job["id"]: job["state"] for job in server_jobs}
+            ),
             "vista": worker.vista_messages.get(name, "not checked"),
         }
     main = groups[vista.DEFAULT_GROUP]

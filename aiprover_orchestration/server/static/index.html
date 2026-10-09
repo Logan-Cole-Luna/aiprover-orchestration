@@ -88,6 +88,16 @@ label.show-hidden { display: inline-flex; gap: 6px; align-items: center; font-we
                     font-size: 0.85rem; color: var(--muted); margin: 0 0 12px; cursor: pointer; }
 label.show-hidden input { width: auto; }
 .table-wrap { overflow-x: auto; }
+/* Model server jobs on Vista, one row per job, grouped by GPU group. */
+table.servers { min-width: 640px; font-size: 13px; margin-top: 6px; }
+table.servers th, table.servers td { padding: 5px 10px; vertical-align: top; }
+table.servers td.group { font-weight: 600; }
+table.servers .note { color: var(--muted); }
+.pill { display: inline-block; padding: 1px 8px; border-radius: 10px;
+        font-size: 12px; font-weight: 600; background: var(--code-bg);
+        color: var(--muted); border: 1px solid var(--border); }
+.pill.RUNNING { color: var(--ok); border-color: var(--ok); }
+.pill.PENDING { color: var(--accent); border-color: var(--accent); }
 pre#log {
   background: var(--code-bg); padding: 12px; border: 1px solid var(--border);
   border-radius: 8px; margin: 0; max-height: 420px; overflow: auto;
@@ -96,6 +106,12 @@ pre#log {
 a { color: var(--accent); }
 .links a { margin-right: 12px; }
 .error { color: var(--bad); }
+.head { display: flex; justify-content: space-between; align-items: center;
+        gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+.head h2 { margin: 0; }
+details { margin-top: 12px; }
+summary { cursor: pointer; font-weight: 600; }
+summary .note { color: var(--muted); font-weight: 400; font-size: 0.85rem; margin-left: 8px; }
 </style>
 </head>
 <body>
@@ -120,12 +136,17 @@ a { color: var(--accent); }
           <button class="plain hidden" id="approver-login">Approver sign-in</button>
           <button class="plain" id="logout">Sign out</button></div>
       </div>
-      <div class="sub" id="vista" style="margin:8px 0 0"></div>
-      </div>
+      <details>
+        <summary>Model servers on Vista</summary>
+        <div class="table-wrap" id="vista"></div>
+      </details>
     </section>
 
-    <section>
-      <h2>New run</h2>
+    <section id="new-run" class="hidden">
+      <div class="head">
+        <h2>New run</h2>
+        <button class="plain" id="close-new-run">Close</button>
+      </div>
       <div class="row tabs">
         <button id="tab-text" class="on">Informal problem</button>
         <button id="tab-uuid">Dataset problem</button>
@@ -140,28 +161,37 @@ a { color: var(--accent); }
         <label for="uuid">JiatuBook problem</label>
         <select id="uuid"></select>
       </div>
-      <label for="library">Library of verified results (optional)</label>
-      <div class="row">
-        <select id="library"><option value="">none</option></select>
-        <input type="file" id="library-file" accept=".lean" aria-label="Upload a library file">
-      </div>
-      <label class="check"><input type="checkbox" id="extend-library"> Add the result to the library once proved and reviewed</label>
-      <small class="models-note">A library is a Lean file that compiles on its own, without <code>sorry</code>. The run uses its definitions and may cite its theorems instead of proving them again.</small>
-      <div class="models" id="models"></div>
-      <small class="models-note" id="models-note">Roles that use AIProver must use the same version.</small>
-      <label for="gpu-group">GPU group</label>
-      <select id="gpu-group" style="max-width:240px"><option value="main">main</option></select>
-      <small class="models-note">Each group has its own model server on Vista; runs of a group share it.</small>
-      <div class="row" style="margin-top:12px">
+      <details>
+        <summary>Library<span class="note" id="library-summary">none</span></summary>
+        <label for="library">Library of verified results (optional)</label>
+        <div class="row">
+          <select id="library"><option value="">none</option></select>
+          <input type="file" id="library-file" accept=".lean" aria-label="Upload a library file">
+        </div>
+        <label class="check"><input type="checkbox" id="extend-library"> Add the result to the library once proved and reviewed</label>
+        <small class="models-note">A library is a Lean file that compiles on its own, without <code>sorry</code>. The run uses its definitions and may cite its theorems instead of proving them again.</small>
+      </details>
+      <details>
+        <summary>Models and GPU group<span class="note" id="models-summary"></span></summary>
+        <div class="models" id="models"></div>
+        <small class="models-note" id="models-note">Roles that use AIProver must use the same version.</small>
+        <label for="gpu-group">GPU group</label>
+        <select id="gpu-group" style="max-width:240px"><option value="main">main</option></select>
+        <small class="models-note">Each group has its own model server on Vista; runs of a group share it.</small>
+      </details>
+      <div class="row" style="margin-top:16px">
         <button id="submit">Submit</button>
         <span id="submit-message"></span>
       </div>
     </section>
 
     <section>
-      <div class="row" style="justify-content:space-between">
+      <div class="head">
         <h2>Runs</h2>
-        <label class="show-hidden"><input type="checkbox" id="show-hidden"> <span id="show-hidden-label">Show hidden</span></label>
+        <div class="row">
+          <label class="show-hidden" style="margin:0"><input type="checkbox" id="show-hidden"> <span id="show-hidden-label">Show hidden</span></label>
+          <button id="open-new-run">New run</button>
+        </div>
       </div>
       <div class="table-wrap">
         <table>
@@ -172,7 +202,10 @@ a { color: var(--accent); }
     </section>
 
     <section id="detail" class="hidden">
-      <h2 id="detail-title"></h2>
+      <div class="head">
+        <h2 id="detail-title"></h2>
+        <button class="plain" id="close-detail">Close</button>
+      </div>
       <div class="links" id="detail-links"></div>
       <pre id="log"></pre>
     </section>
@@ -220,6 +253,7 @@ async function start() {
       $("gpu-group").innerHTML = (catalog.gpu_groups || ["main"]).map(g =>
         `<option value="${escapeHtml(g)}">${escapeHtml(g)}</option>`).join("");
       $("gpu-group").value = catalog.default_gpu_group || "main";
+      summarizeSettings();
     }
     catch (e) { $("models-note").innerHTML = `<span class="error">Model choices unavailable: ${escapeHtml(e.message)}</span>`; }
   }
@@ -306,12 +340,70 @@ function modelsHTML(agents) {
   return order.map(role => `${role}: ${escapeHtml(modelLabel(agents[role]))}`).join("<br>");
 }
 
+function summarizeSettings() {
+  const upload = $("library-file").files[0];
+  $("library-summary").textContent = upload ? upload.name : $("library").value || "none";
+  if (!catalog) return;
+  const models = ROLES.map(role => `${role}: ${modelLabel(selection(role))}`);
+  $("models-summary").textContent = [...models, `GPU group: ${$("gpu-group").value}`].join(" · ");
+}
+
 function escapeHtml(text) {
   return String(text).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 }
 
 function indicator(ok, text) {
   return `<span><i class="dot ${ok ? "ok" : "bad"}"></i>${escapeHtml(text)}</span>`;
+}
+
+// Slurm's reasons for a pending job, in words.
+const PENDING_REASONS = {
+  Priority: "queued behind higher-priority jobs",
+  Resources: "waiting for free nodes",
+  QOSMaxJobsPerUserLimit: "held by the per-user job limit",
+  Dependency: "waiting for another job",
+};
+
+function untilText(epoch) {
+  const minutes = Math.round((epoch * 1000 - Date.now()) / 60000);
+  const size = Math.abs(minutes);
+  const span = size >= 60 ? `${Math.floor(size / 60)} h ${size % 60} min` : `${size} min`;
+  return minutes >= 0 ? `in ${span}` : `${span} ago`;
+}
+
+function startText(job) {
+  if (job.start_epoch == null) {
+    return job.state === "PENDING" ? "no estimate yet" : "–";
+  }
+  const time = new Date(job.start_epoch * 1000).toLocaleString([],
+    {weekday: "short", hour: "2-digit", minute: "2-digit"});
+  const estimate = job.state === "PENDING" ? "est. " : "";
+  return `${estimate}${time} (${untilText(job.start_epoch)})`;
+}
+
+// Rows of one GPU group: a row per server job, or one row saying why none
+// is listed; the group cell carries the worker's last status.
+function serverRows(name, group) {
+  const status = group.vista && group.vista !== "not checked" ? group.vista : "";
+  const jobs = group.server_jobs;
+  const groupCell = (span) => `<td class="group" rowspan="${span}">${escapeHtml(name)}</td>`;
+  if (!jobs || !jobs.length) {
+    const text = jobs ? "no server job" : "Vista unreachable";
+    return `<tr>${groupCell(1)}<td colspan="5" class="note">${text}</td>`
+      + `<td class="note">${escapeHtml(status)}</td></tr>`;
+  }
+  return jobs.map((job, index) => {
+    const reason = job.state === "PENDING"
+      ? (PENDING_REASONS[job.reason] || job.reason) : "";
+    const note = [reason, index === 0 ? status : ""].filter(Boolean).join(" · ");
+    return `<tr>${index === 0 ? groupCell(jobs.length) : ""}`
+      + `<td>${escapeHtml(job.id)}</td>`
+      + `<td><span class="pill ${escapeHtml(job.state)}">${escapeHtml(job.state.toLowerCase())}</span></td>`
+      + `<td>${escapeHtml(startText(job))}</td>`
+      + `<td>${escapeHtml(job.elapsed)} / ${escapeHtml(job.time_limit)}</td>`
+      + `<td>${escapeHtml(job.nodes)}</td>`
+      + `<td class="note">${escapeHtml(note)}</td></tr>`;
+  }).join("");
 }
 
 async function refreshHealth() {
@@ -323,12 +415,11 @@ async function refreshHealth() {
       + `<span>awaiting approval ${h.awaiting_approval}</span>`
       + `<span>queued ${h.queued}</span>`
       + `<span>running ${h.running ? escapeHtml(h.running) : "none"}</span>`;
-    // One line per GPU group: its server jobs and the worker's last status.
-    $("vista").innerHTML = groups.map(([name, g]) => {
-      const jobs = Object.entries(g.vista_jobs || {}).map(([id, state]) => `${id} ${state}`);
-      return escapeHtml(`GPU group ${name}: server jobs ${jobs.length ? jobs.join(", ") : "none"}`
-        + (g.vista && g.vista !== "not checked" ? ` · ${g.vista}` : ""));
-    }).join("<br>");
+    $("vista").innerHTML = `<table class="servers"><thead><tr>
+        <th>GPU group</th><th>Server job</th><th>State</th><th>Start</th>
+        <th>Elapsed / limit</th><th>Nodes</th><th>Note</th></tr></thead>
+        <tbody>${groups.map(([name, g]) => serverRows(name, g)).join("")}</tbody>
+      </table>`;
   } catch (e) { $("health").textContent = e.message; }
 }
 
@@ -385,6 +476,18 @@ function renderLinks(run) {
     `<a href="/api/runs/${run.run_id}/files/${name}" target="_blank">${name}</a>`).join("");
 }
 
+function showNewRun(visible) {
+  $("new-run").classList.toggle("hidden", !visible);
+  if (visible) { $("submit-message").textContent = ""; $("new-run").scrollIntoView({behavior: "smooth"}); }
+}
+
+function closeRun() {
+  selected = null;
+  if (stream) stream.close();
+  $("detail").classList.add("hidden");
+  refreshRuns();
+}
+
 function openRun(runId) {
   selected = runId;
   $("detail").classList.remove("hidden");
@@ -400,6 +503,7 @@ function openRun(runId) {
   };
   stream.addEventListener("end", () => { stream.close(); refreshRuns(); });
   refreshRuns();
+  $("detail").scrollIntoView({behavior: "smooth"});
 }
 
 $("runs").addEventListener("click", async event => {
@@ -431,6 +535,10 @@ function selectTab(textMode) {
   $("form-uuid").classList.toggle("hidden", textMode);
 }
 $("show-hidden").onchange = refreshRuns;
+$("open-new-run").onclick = () => showNewRun(true);
+$("close-new-run").onclick = () => showNewRun(false);
+$("close-detail").onclick = closeRun;
+$("new-run").addEventListener("change", summarizeSettings);
 $("tab-text").onclick = () => selectTab(true);
 $("tab-uuid").onclick = () => selectTab(false);
 
@@ -448,7 +556,7 @@ $("submit").onclick = async () => {
     else if ($("library").value) body.library = $("library").value;
     body.extend_library = $("extend-library").checked;
     const result = await api("/api/runs", {method: "POST", body: JSON.stringify(body)});
-    $("submit-message").textContent = `Submitted ${result.run_id}; awaiting approval.`;
+    showNewRun(false);
     openRun(result.run_id);
   } catch (e) {
     $("submit-message").innerHTML = `<span class="error">${escapeHtml(e.message)}</span>`;
