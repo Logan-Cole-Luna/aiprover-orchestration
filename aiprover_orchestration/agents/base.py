@@ -8,8 +8,8 @@ class Completion:
     """Result of one model call.
 
     `usage` maps each model id that served the call to a dict with the keys
-    `inputTokens`, `outputTokens` and `costUSD` (one naming, kept
-    for all backends so that traces are uniform).
+    `inputTokens`, `outputTokens` and `costUSD` (one naming for all
+    backends, so that traces are uniform).
     """
 
     text: str = ""
@@ -32,6 +32,8 @@ class Agent:
     """
 
     backend = "abstract"
+    # Prometheus metrics of the model server, where the backend has one.
+    metrics_url: str | None = None
 
     def __init__(self, model: str, max_retries: int = 5, **options):
         self.model = model

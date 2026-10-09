@@ -13,16 +13,21 @@ and extracts the lemma's proof and any helper declarations from each sample.
 """
 
 import json
+import logging
 import os
 import subprocess
+import threading
 import time
 import tomllib
 from dataclasses import dataclass, field
+from functools import cached_property
 from pathlib import Path
 from typing import Callable
 
 from ..paths import ROOT
 from .base import Agent
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -161,6 +166,20 @@ def lean_check_summary(check: dict | None) -> dict:
     }
 
 
+class Terminated(BaseException):
+    """The run was terminated while an AIProver job was pending."""
+
+
+# Set when the run is terminated (`stop_jobs`): pending jobs are cancelled
+# within one poll interval and no new job starts. Solver threads would
+# otherwise keep waiting on their jobs and hold the process open.
+STOPPING = threading.Event()
+
+
+def stop_jobs() -> None:
+    STOPPING.set()
+
+
 @dataclass
 class AIProverJob:
     job: str
@@ -205,8 +224,11 @@ class AIProverAgent(Agent):
         self.config_path = (ROOT / config).resolve()
         self.cli = (ROOT / cli).resolve()
         with open(self.config_path, "rb") as config_file:
-            runtime = tomllib.load(config_file)["runtime"]
-        self.work_root = Path(runtime["work_root"]).expanduser()
+            harness = tomllib.load(config_file)
+        self.work_root = Path(harness["runtime"]["work_root"]).expanduser()
+        # The model server's Prometheus metrics, beside its OpenAI API.
+        api_base = harness["endpoint"]["api_base"].rstrip("/")
+        self.metrics_url = api_base.removesuffix("/v1") + "/metrics"
         self.timeout = timeout
         self.max_turns = max_turns
         self.poll_seconds = poll_seconds
@@ -239,6 +261,14 @@ class AIProverAgent(Agent):
         except subprocess.TimeoutExpired:
             return False
 
+    @cached_property
+    def supports_resume(self) -> bool:
+        """True if the installed AIProver CLI provides `aiprover resume`."""
+        try:
+            return self._cli("resume", "--help", timeout=60).returncode == 0
+        except subprocess.TimeoutExpired:
+            return False
+
     def solve(
         self,
         *,
@@ -258,9 +288,18 @@ class AIProverAgent(Agent):
         lost model server, an interrupted run) continue where they stopped,
         under this agent's timeout and turn budget, instead of a new job being
         submitted. `on_start` receives the job id once the job runs, so that an
-        interruption can still find it."""
+        interruption can still find it. If the installed CLI cannot resume, a
+        new job is submitted instead."""
+        if STOPPING.is_set():
+            raise Terminated
         work_dir.mkdir(parents=True, exist_ok=True)
         start = time.time()
+        if resume_job and not self.supports_resume:
+            logger.warning(
+                f"Cannot resume AIProver job {resume_job}: the installed "
+                "AIProver CLI has no `resume` command. Submitting a new job."
+            )
+            resume_job = None
         if resume_job:
             submitted = self._cli(
                 "resume",
@@ -323,7 +362,8 @@ class AIProverAgent(Agent):
             on_start(job)
         try:
             while (
-                self._cli(
+                not STOPPING.is_set()
+                and self._cli(
                     "wait",
                     job,
                     "--timeout",
@@ -333,6 +373,8 @@ class AIProverAgent(Agent):
                 == 3
             ):
                 pass
+            if STOPPING.is_set():
+                raise Terminated
         except BaseException:
             self._cli("cancel", job, timeout=60)
             raise
