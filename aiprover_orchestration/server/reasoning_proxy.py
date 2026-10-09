@@ -43,16 +43,39 @@ harness's configured name need not match the server's. Each chat request's
 `max_tokens` is reduced, if needed, so that the prompt (counted by the
 server's `/tokenize`) plus the reply fits the server's context length; a
 request that exceeds it would be rejected.
+
+A server started without a tool-call parser returns the model's tool calls
+as text in the Mistral format (`[TOOL_CALLS]name[ARGS]{...}`, or
+`[TOOL_CALLS][{"name": ..., "arguments": ...}]`). The proxy converts such
+text into structured `tool_calls`, so the harness behaves the same with or
+without the server's parser. In a streamed reply the content is held back
+until the reply ends and released with the calls in its final chunk; the
+reasoning still streams as it arrives.
+
+With several `--upstream` servers of the same model, the proxy pools them
+(`Upstreams`): each session stays on one server, new sessions go to the
+least loaded healthy one, and a server that stops answering is skipped until
+it answers again. `GET /upstreams` reports the servers and how many are
+healthy; `GET /metrics` concatenates the healthy servers' metrics.
 """
 
 import argparse
+import asyncio
 import json
 import logging
+import random
 import re
+import string
 import time
 from pathlib import Path
 
-from aiohttp import ClientSession, ClientTimeout, web
+from aiohttp import (
+    ClientConnectionError,
+    ClientError,
+    ClientSession,
+    ClientTimeout,
+    web,
+)
 
 # The task message names the session's project by its absolute path,
 # <work>/jobs/<job>/s<k>/proj/..., in whichever workspace runs the job.
@@ -68,6 +91,9 @@ MAX_REPLY_TOKENS = 16384
 CONTEXT_MARGIN = 64  # tokens kept free below the context length
 TOOL_NAME = re.compile(r"^[a-zA-Z0-9_-]{1,64}$")
 EMPTY_REPLY = "(reply stopped at the token limit)"
+HEALTH_SECONDS = 30  # interval of the upstream health checks
+TOOL_CALLS_MARK = "[TOOL_CALLS]"
+ARGUMENTS_MARK = "[ARGS]"
 
 logger = logging.getLogger("reasoning_proxy")
 
@@ -133,6 +159,123 @@ def fill_empty_replies(request_body: dict) -> int:
     return filled
 
 
+def tool_call_id() -> str:
+    """A call id of the form Mistral's chat template accepts: nine
+    alphanumeric characters."""
+    return "".join(random.choices(string.ascii_letters + string.digits, k=9))
+
+
+def parse_tool_calls(content: str) -> tuple[str, list[dict]]:
+    """Split a reply's content into its text and the tool calls written
+    after it in the Mistral format; (content, []) when there are none."""
+    text, *parts = content.split(TOOL_CALLS_MARK)
+    calls = []
+    for part in parts:
+        part = part.strip()
+        if part.startswith("["):
+            try:
+                listed = [
+                    (call["name"], json.dumps(call.get("arguments", {})))
+                    for call in json.loads(part)
+                ]
+            except (json.JSONDecodeError, TypeError, KeyError):
+                listed = []
+            calls.extend(listed)
+        elif part:
+            name, _, arguments = part.partition(ARGUMENTS_MARK)
+            calls.append((name.strip(), arguments.strip() or "{}"))
+    if not calls:
+        return content, []
+    return text.strip(), [
+        {
+            "index": index,
+            "id": tool_call_id(),
+            "type": "function",
+            "function": {"name": name, "arguments": arguments},
+        }
+        for index, (name, arguments) in enumerate(calls)
+    ]
+
+
+def release(target: dict, content: str, choice: dict) -> None:
+    """Set `content` on `target` (a message or a delta), as text and
+    structured tool calls, and adjust the choice's finish reason."""
+    text, calls = parse_tool_calls(content)
+    target["content"] = text
+    if calls:
+        target["tool_calls"] = calls
+        if choice.get("finish_reason") == "stop":
+            choice["finish_reason"] = "tool_calls"
+
+
+def convert_completion(body: bytes) -> bytes:
+    """A non-streamed chat completion with text tool calls made structured."""
+    try:
+        completion = json.loads(body)
+        choices = completion["choices"]
+    except (json.JSONDecodeError, KeyError, TypeError):
+        return body
+    changed = False
+    for choice in choices:
+        message = choice.get("message") or {}
+        content = message.get("content") or ""
+        if TOOL_CALLS_MARK in content and not message.get("tool_calls"):
+            release(message, content, choice)
+            for call in message.get("tool_calls") or []:
+                call.pop("index")
+            changed = True
+    return json.dumps(completion).encode() if changed else body
+
+
+class ToolCallStream:
+    """Rewrites a streamed (SSE) chat completion: content is held back and
+    released, with the tool calls it contains, in the chunk that carries
+    the finish reason."""
+
+    def __init__(self):
+        self.buffer = b""
+        self.held: dict[int, list[str]] = {}
+
+    def feed(self, chunk: bytes) -> bytes:
+        self.buffer += chunk
+        events = []
+        while b"\n" in self.buffer:
+            line, self.buffer = self.buffer.split(b"\n", 1)
+            line = line.strip()
+            if not line.startswith(b"data:"):
+                continue
+            data = line[5:].strip()
+            try:
+                event = json.loads(data)
+            except json.JSONDecodeError:
+                events.append(data)
+                continue
+            self.convert(event)
+            events.append(json.dumps(event).encode())
+        return b"".join(b"data: " + event + b"\n\n" for event in events)
+
+    def convert(self, event: dict) -> None:
+        for choice in event.get("choices") or []:
+            delta = choice.setdefault("delta", {})
+            held = self.held.setdefault(choice.get("index", 0), [])
+            held.append(delta.pop("content", None) or "")
+            if choice.get("finish_reason"):
+                release(delta, "".join(held), choice)
+                held.clear()
+
+    def flush(self) -> bytes:
+        """Held content of a stream that ended without a finish reason."""
+        choices = [
+            {"index": index, "delta": {"content": "".join(held)}}
+            for index, held in self.held.items()
+            if "".join(held)
+        ]
+        self.held.clear()
+        if not choices:
+            return b""
+        return b"data: " + json.dumps({"choices": choices}).encode() + b"\n\n"
+
+
 def record(
     directory: Path,
     turn: int,
@@ -140,7 +283,10 @@ def record(
     content: str,
     tool_calls: int,
     truncated: bool,
+    metrics: dict,
 ) -> None:
+    """Append a turn to the session's reasoning.jsonl; `metrics` holds the
+    turn's prompt tokens, seconds and requests in flight at its start."""
     if not directory.is_dir():
         return
     entry = {
@@ -150,6 +296,7 @@ def record(
         "content_chars": len(content),
         "tool_calls": tool_calls,
         "truncated": truncated,
+        **metrics,
     }
     with open(directory / "reasoning.jsonl", "a") as f:
         f.write(json.dumps(entry, ensure_ascii=False) + "\n")
@@ -190,10 +337,59 @@ class Accumulator:
                     self.tool_call_ids.add(call.get("index", call.get("id")))
 
 
+class Upstreams:
+    """The model servers behind the proxy, with their health and load. A
+    session stays on one server, which holds its prompt prefix in cache; a
+    new session goes to the healthy server with the fewest requests in
+    flight. A server that fails a health check or refuses a connection
+    receives no requests until it passes a check again."""
+
+    def __init__(self, urls: list[str]):
+        self.urls = urls
+        self.healthy = set(urls)
+        self.in_flight = dict.fromkeys(urls, 0)
+        self.assigned: dict[Path, str] = {}
+
+    def choose(self, session: Path | None) -> str:
+        current = self.assigned.get(session)
+        if current in self.healthy:
+            return current
+        candidates = [url for url in self.urls if url in self.healthy]
+        choice = min(candidates or self.urls, key=self.in_flight.get)
+        if session is not None:
+            self.assigned[session] = choice
+        return choice
+
+    def down(self, url: str, error: Exception) -> None:
+        if url in self.healthy:
+            logger.warning(f"upstream {url} unreachable ({error})")
+        self.healthy.discard(url)
+
+    def describe(self) -> dict:
+        return {
+            "healthy": len(self.healthy),
+            "upstreams": [
+                {
+                    "url": url,
+                    "healthy": url in self.healthy,
+                    "in_flight": self.in_flight[url],
+                }
+                for url in self.urls
+            ],
+        }
+
+
 async def forward(request: web.Request) -> web.StreamResponse:
-    upstream = request.app["upstream"]
+    app = request.app
+    upstreams: Upstreams = app["upstreams"]
+    if request.path == "/upstreams":
+        return web.json_response(upstreams.describe())
+    if request.path == "/metrics":
+        return web.Response(text=await gather_metrics(app))
     body = await request.read()
     session = None
+    start = time.time()
+    metrics = {"in_flight": app["in_flight"][0] + 1}
     if request.method == "POST" and request.path.endswith("/chat/completions"):
         try:
             payload = json.loads(body)
@@ -213,13 +409,18 @@ async def forward(request: web.Request) -> web.StreamResponse:
                 payload.get("max_tokens")
                 or payload.get("max_completion_tokens")
             ):
-                payload["max_tokens"] = request.app["max_reply_tokens"]
+                payload["max_tokens"] = app["max_reply_tokens"]
                 changed = True
-            model = request.app["model"]
+            model = app["model"]
             if model and payload.get("model") != model:
                 payload["model"] = model
                 changed = True
-            changed = await fit_context(request.app, payload) or changed
+            fitted, metrics["prompt_tokens"] = await fit_context(
+                app,
+                upstreams.choose(session[0] if session else None),
+                payload,
+            )
+            changed = fitted or changed
             if changed:
                 body = json.dumps(payload).encode()
         except (json.JSONDecodeError, AttributeError):
@@ -227,10 +428,25 @@ async def forward(request: web.Request) -> web.StreamResponse:
     headers = {
         k: v for k, v in request.headers.items() if k.lower() not in HOP_HEADERS
     }
-    client: ClientSession = request.app["client"]
-    async with client.request(
-        request.method, upstream + request.path_qs, data=body, headers=headers
-    ) as reply:
+    client: ClientSession = app["client"]
+    reply = None
+    for _ in upstreams.urls:
+        upstream = upstreams.choose(session[0] if session else None)
+        try:
+            reply = await client.request(
+                request.method,
+                upstream + request.path_qs,
+                data=body,
+                headers=headers,
+            )
+            break
+        except ClientConnectionError as error:
+            upstreams.down(upstream, error)
+    if reply is None:
+        return web.Response(status=502, text="no model server reachable")
+    app["in_flight"][0] += 1
+    upstreams.in_flight[upstream] += 1
+    try:
         response = web.StreamResponse(
             status=reply.status,
             headers={
@@ -241,15 +457,32 @@ async def forward(request: web.Request) -> web.StreamResponse:
         )
         await response.prepare(request)
         streamed = "text/event-stream" in reply.headers.get("content-type", "")
+        chat = request.path.endswith("/chat/completions")
+        stream = ToolCallStream() if streamed and chat else None
         accumulator = Accumulator()
         whole = b""
         async for chunk in reply.content.iter_any():
-            await response.write(chunk)
-            if session and streamed:
-                accumulator.feed(chunk)
-            elif session:
+            if not streamed:
                 whole += chunk
+                continue
+            if stream:
+                chunk = stream.feed(chunk)
+            await response.write(chunk)
+            accumulator.feed(chunk)
+        if stream:
+            chunk = stream.flush()
+            await response.write(chunk)
+            accumulator.feed(chunk)
+        if not streamed:
+            if chat and reply.status == 200:
+                whole = convert_completion(whole)
+            await response.write(whole)
         await response.write_eof()
+    finally:
+        reply.release()
+        app["in_flight"][0] -= 1
+        upstreams.in_flight[upstream] -= 1
+    metrics["seconds"] = round(time.time() - start, 2)
     if session and reply.status == 200:
         directory, turn = session
         if streamed:
@@ -260,6 +493,7 @@ async def forward(request: web.Request) -> web.StreamResponse:
                 "".join(accumulator.content),
                 len(accumulator.tool_call_ids),
                 accumulator.finish_reason == "length",
+                metrics,
             )
         else:
             try:
@@ -274,18 +508,35 @@ async def forward(request: web.Request) -> web.StreamResponse:
                     message.get("content") or "",
                     len(message.get("tool_calls") or []),
                     choice.get("finish_reason") == "length",
+                    metrics,
                 )
             except (json.JSONDecodeError, KeyError, IndexError):
                 pass
     return response
 
 
-async def fit_context(app: web.Application, payload: dict) -> bool:
-    """Reduce max_tokens so that prompt and reply fit the context length."""
+async def gather_metrics(app: web.Application) -> str:
+    """The Prometheus metrics of all healthy upstreams, concatenated; a
+    reader that sums over label sets obtains the pool's totals."""
+    texts = []
+    for url in app["upstreams"].healthy:
+        try:
+            async with app["client"].get(
+                url + "/metrics", timeout=ClientTimeout(total=10)
+            ) as reply:
+                texts.append(await reply.text())
+        except (ClientError, asyncio.TimeoutError):
+            continue
+    return "\n".join(texts)
+
+
+async def fit_context(
+    app: web.Application, upstream: str, payload: dict
+) -> tuple[bool, int | None]:
+    """Reduce max_tokens so that prompt and reply fit the context length;
+    returns whether the payload changed and the prompt's token count."""
     limit = app["max_model_len"]
     key = "max_tokens" if payload.get("max_tokens") else "max_completion_tokens"
-    if not limit or not payload.get(key):
-        return False
     query = {
         "model": payload.get("model"),
         "messages": payload.get("messages") or [],
@@ -295,19 +546,53 @@ async def fit_context(app: web.Application, payload: dict) -> bool:
         query["tools"] = payload["tools"]
     try:
         async with app["client"].post(
-            app["upstream"] + "/tokenize", json=query
+            upstream + "/tokenize", json=query
         ) as reply:
             prompt_tokens = (await reply.json())["count"]
     except Exception:  # Counting is best effort; the request goes as it is.
-        return False
+        return False, None
+    if not limit or not payload.get(key):
+        return False, prompt_tokens
     room = limit - prompt_tokens - CONTEXT_MARGIN
     if payload[key] <= room:
-        return False
+        return False, prompt_tokens
     payload[key] = max(room, 1)
     logger.info(
         f"max_tokens reduced to {payload[key]} ({prompt_tokens} prompt tokens)"
     )
-    return True
+    return True, prompt_tokens
+
+
+async def check_upstreams(app: web.Application) -> None:
+    """Probe each upstream's model list; record which answer and the
+    smallest context length among them."""
+    upstreams: Upstreams = app["upstreams"]
+    contexts = []
+    for url in upstreams.urls:
+        try:
+            async with app["client"].get(
+                url + "/v1/models", timeout=ClientTimeout(total=10)
+            ) as reply:
+                models = (await reply.json())["data"]
+        except (ClientError, asyncio.TimeoutError, KeyError, ValueError) as e:
+            upstreams.down(url, e)
+            continue
+        if url not in upstreams.healthy:
+            logger.info(f"upstream {url} reachable")
+        upstreams.healthy.add(url)
+        served = next((m for m in models if m["id"] == app["model"]), models[0])
+        if served.get("max_model_len"):
+            contexts.append(served["max_model_len"])
+    context = min(contexts, default=None) or app["max_model_len"]
+    if context != app["max_model_len"]:
+        logger.info(f"context length {context}")
+    app["max_model_len"] = context
+
+
+async def monitor_upstreams(app: web.Application) -> None:
+    while True:
+        await asyncio.sleep(HEALTH_SECONDS)
+        await check_upstreams(app)
 
 
 async def start(app: web.Application) -> None:
@@ -316,28 +601,24 @@ async def start(app: web.Application) -> None:
         timeout=ClientTimeout(total=None, sock_connect=30)
     )
     app["max_model_len"] = None
-    try:
-        async with app["client"].get(app["upstream"] + "/v1/models") as reply:
-            models = (await reply.json())["data"]
-        served = next((m for m in models if m["id"] == app["model"]), models[0])
-        app["max_model_len"] = served.get("max_model_len")
-        logger.info(
-            f"upstream serves {served['id']}, context {app['max_model_len']}"
-        )
-    except Exception as error:
-        logger.warning(
-            f"upstream context length unknown ({error}); not enforced"
-        )
+    await check_upstreams(app)
+    app["monitor"] = asyncio.create_task(monitor_upstreams(app))
 
 
 async def stop(app: web.Application) -> None:
+    app["monitor"].cancel()
     await app["client"].close()
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--listen", type=int, default=18565)
-    parser.add_argument("--upstream", default="http://127.0.0.1:18555")
+    parser.add_argument(
+        "--upstream",
+        action="append",
+        help="model server URL; repeat to pool several "
+        "(default: http://127.0.0.1:18555)",
+    )
     parser.add_argument(
         "--max-reply-tokens",
         type=int,
@@ -354,9 +635,15 @@ def main() -> None:
         level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
     )
     app = web.Application(client_max_size=256 * 1024**2)
-    app["upstream"] = arguments.upstream.rstrip("/")
+    app["upstreams"] = Upstreams(
+        [
+            url.rstrip("/")
+            for url in arguments.upstream or ["http://127.0.0.1:18555"]
+        ]
+    )
     app["max_reply_tokens"] = arguments.max_reply_tokens
     app["model"] = arguments.model
+    app["in_flight"] = [0]  # chat requests being forwarded
     app.on_startup.append(start)
     app.on_cleanup.append(stop)
     app.router.add_route("*", "/{tail:.*}", forward)

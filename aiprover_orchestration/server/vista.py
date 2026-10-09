@@ -14,7 +14,9 @@ import os
 import re
 import shlex
 import subprocess
+import traceback
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from ..paths import CONFIG_DIR
@@ -52,6 +54,9 @@ class GpuGroup:
         str  # AIProver config of the group's runs (through the proxy)
     )
     proxy_port: int  # reasoning proxy (server/reasoning_proxy.py)
+    # Groups whose model servers this group's runs also use: its reasoning
+    # proxy pools their tunnels with its own (`--upstream`).
+    borrows: tuple[str, ...] = ()
 
     @property
     def endpoint(self) -> str:
@@ -60,10 +65,11 @@ class GpuGroup:
 
 DEFAULT_GROUP = "main"
 GPU_GROUPS = {
-    # `aiprover_srv` is `#SBATCH -J` in scripts/serve_aiprover_vista.sbatch.
+    # Jobs of group "main" are named aiprover_srv_main: jobs named
+    # aiprover_srv are cancelled by a process outside this server.
     "main": GpuGroup(
         "main",
-        "aiprover_srv",
+        "aiprover_srv_main",
         "$SCRATCH/servers/aiprover_server.txt",
         AIPROVER_CONFIGS / "vista.toml",
         "configs/aiprover/vista_logged.toml",
@@ -77,9 +83,23 @@ GPU_GROUPS = {
         "configs/aiprover/vista_logged_open.toml",
         18568,
     ),
+    "openai": GpuGroup(
+        "openai",
+        "aiprover_srv_openai",
+        "$SCRATCH/servers/aiprover_server_openai.txt",
+        AIPROVER_CONFIGS / "vista_openai.toml",
+        "configs/aiprover/vista_logged_openai.toml",
+        18569,
+        borrows=("main", "open"),
+    ),
 }
 
 logger = logging.getLogger(__name__)
+
+
+def server_pool(group: GpuGroup) -> list[GpuGroup]:
+    """The groups whose model servers the runs of `group` use."""
+    return [group] + [GPU_GROUPS[name] for name in group.borrows]
 
 
 def run_command(
@@ -123,30 +143,92 @@ def remote(command: str, timeout: float = 60) -> tuple[int, str]:
     )
 
 
-def server_jobs(group: GpuGroup) -> dict[str, str] | None:
-    """Job id → state of the group's model server jobs; None if Vista is
-    unreachable."""
+# Fields of a server job as `squeue -o` reports them (separated by "|"):
+# id, state, start (actual if running, Slurm's estimate if pending, "N/A"
+# without one), elapsed, time limit, nodes, pending reason, submission time,
+# partition.
+SQUEUE_FORMAT = "%i|%T|%S|%M|%l|%D|%r|%V|%P"
+SQUEUE_FIELDS = (
+    "id",
+    "state",
+    "start",
+    "elapsed",
+    "time_limit",
+    "nodes",
+    "reason",
+    "submitted",
+    "partition",
+)
+
+
+def server_job_details(group: GpuGroup) -> list[dict] | None:
+    """The group's model server jobs as squeue reports them; None if Vista
+    is unreachable. `start_epoch` is the (estimated) start in seconds since
+    the epoch, or None when Slurm gives no estimate."""
     code, output = remote(
-        f'squeue -u "$USER" -n {group.job_name} -h -o "%i %T"'
+        f'squeue -u "$USER" -n {group.job_name} -h -o "{SQUEUE_FORMAT}"'
     )
     if code != 0:
         return None
-    jobs = {}
+    jobs = []
     for line in output.splitlines():
-        fields = line.split()
-        if len(fields) == 2 and fields[0].isdigit():
-            jobs[fields[0]] = fields[1]
+        fields = line.split("|")
+        if len(fields) == len(SQUEUE_FIELDS) and fields[0].isdigit():
+            job = dict(zip(SQUEUE_FIELDS, fields))
+            job["start_epoch"] = slurm_epoch(job["start"])
+            jobs.append(job)
     return jobs
 
 
-def submit_server(checkpoint: str, group: GpuGroup) -> str | None:
+def slurm_epoch(timestamp: str) -> float | None:
+    """Seconds since the epoch of a Slurm timestamp (Vista and this machine
+    share the US Central time zone); None for "N/A" and similar."""
+    try:
+        return datetime.fromisoformat(timestamp).timestamp()
+    except ValueError:
+        return None
+
+
+def server_jobs(group: GpuGroup) -> dict[str, str] | None:
+    """Job id → state of the group's model server jobs; None if Vista is
+    unreachable."""
+    details = server_job_details(group)
+    if details is None:
+        return None
+    return {job["id"]: job["state"] for job in details}
+
+
+def handoff(group: GpuGroup) -> dict | None:
+    """Job id, node and port named in the group's handoff file; None if the
+    file is missing or Vista is unreachable."""
+    code, output = remote(f"cat {group.handoff}")
+    match = re.search(r"node=(\S+) port=(\d+) job=(\d+)", output)
+    if code != 0 or not match:
+        return None
+    return dict(zip(("node", "port", "job"), match.groups()))
+
+
+def server_answers(node: str, port: str) -> bool:
+    """True if the model server at node:port answers (from the login node)."""
+    code, output = remote(
+        f"curl -s -m 10 http://{node}:{port}/v1/models", timeout=30
+    )
+    return code == 0 and '"data"' in output
+
+
+def submit_server(
+    checkpoint: str,
+    group: GpuGroup,
+    partition: str = PARTITION,
+    wall_time: str = WALL_TIME,
+) -> str | None:
     """Submit a model server job of `group` for `checkpoint`; return its id,
     or None on failure. The job writes the group's handoff file (HANDOFF,
     exported to the job) and carries its name (SBATCH_JOB_NAME)."""
     code, output = remote(
         f"cd $WORK/aiprover_serve && HANDOFF={group.handoff} "
         f"SBATCH_JOB_NAME={group.job_name} scripts/submit_aiprover_vista.sh "
-        f"{checkpoint} {PARTITION} {NODES} {WALL_TIME}",
+        f"{checkpoint} {partition} {NODES} {wall_time}",
         timeout=120,
     )
     match = re.search(r"Submitted batch job (\d+)", output)
@@ -154,13 +236,15 @@ def submit_server(checkpoint: str, group: GpuGroup) -> str | None:
         logger.error(f"Vista submission failed: {output[-500:]}")
         return None
     logger.info(
-        f"submitted Vista server job {match.group(1)} ({group.name}) for {checkpoint} "
-        f"({PARTITION}, {NODES} nodes, {WALL_TIME})"
+        f"submitted Vista server job {match.group(1)} ({group.name}) for "
+        f"{checkpoint} ({partition}, {NODES} nodes, {wall_time})"
     )
     return match.group(1)
 
 
 def cancel_server(job_id: str) -> bool:
+    caller = traceback.extract_stack(limit=3)[0]
+    logger.info(f"scancel {job_id} (from {caller.name}:{caller.lineno})")
     code, output = remote(f"scancel {job_id}")
     if code != 0:
         logger.error(f"scancel {job_id} failed: {output[-300:]}")

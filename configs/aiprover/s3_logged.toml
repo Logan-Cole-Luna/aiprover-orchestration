@@ -1,0 +1,50 @@
+# GPU group "s3": the harness reaches the model on Stampede3
+# (scripts/stampede3/serve_aiprover_s3.sbatch) through the reasoning proxy on
+# 127.0.0.1:18570, which forwards to the tunnel of s3.toml on 18560.
+# Sessions share work_root with the Vista groups, so max_parallel bounds the
+# Lean sessions of all groups on this machine.
+
+[endpoint]
+mode = "direct"
+ssh_host = "stampede3.tacc.utexas.edu"
+ssh_user = "loganluna"
+ssh_port = 22
+control_socket = "~/.ssh/stampede3.sock"
+ssh_options = []
+server_handoff = "/scratch/11757/loganluna/servers/aiprover_server_s3.txt"
+# Fallback address when the handoff file is unreadable (empty = none).
+remote_host = ""
+remote_port = 8060
+local_port = 18560
+# The proxy; ssh_* and port keys above are unused in direct mode.
+api_base = "http://127.0.0.1:18570/v1"
+api_key = "EMPTY"
+# Served model id; empty = the first id /v1/models reports.
+model = ""
+
+[runtime]
+work_root = "~/workspace/aiprover_orchestration/aiprover/work"
+# Concurrent rollouts on this machine, across all runs; each holds a Lean
+# server (~2 GB measured at 16 sessions) and peaks near 5 GB while compiling
+# (VM: 32 cores, 125 GB).
+max_parallel = 28
+# Champion measurement settings (100 turns / 5400 s); the harness derives its
+# time fences from timeout_sec.
+timeout_sec = 5400
+max_turns = 100
+
+[paths]
+# Lean v4.23.0 + Mathlib v4.23.0 (37df177) + REPL + cslib.
+lean_project = "~/workspace/lean_projects/TmpProjDir"
+elan_home = "~/.elan"
+vibe_venv = "~/workspace/aiprover_orchestration/aiprover/venv_vibe"
+mcp_venv = "~/workspace/aiprover_orchestration/aiprover/venv_mcp"
+rg_dir = "~/workspace/aiprover_orchestration/aiprover/bin"
+
+[helpers]
+# expand / backtranslate / ask: "auto" selects the helper model from the
+# calling environment (see AIProver_plugin/README.md).
+backend = "auto"
+claude_model = ""
+codex_sandbox = "read-only"
+timeout_sec = 900

@@ -1,0 +1,59 @@
+# GPU group "openai" (server/vista.py GPU_GROUPS): its own Vista server job,
+# handoff file and tunnel port (18559). Used only to open and probe the
+# tunnel; its work_root holds only the tunnel state, so the forwards of the
+# other groups (vista.toml, vista_open.toml) are not cancelled by this one.
+# AIProver harness configuration: AIProver model served on TACC Vista.
+# Read by AIProver/AIProver_plugin (bin/aiprover) through $AIPROVER_CONFIG;
+# used by configs/orchestrator/aiprover_vista.json.
+#
+# The model runs on Vista compute nodes (scripts/vista/serve_aiprover_vista.sbatch);
+# the harness, Lean and the lean-lsp tools run on this machine. The tunnel
+# rides an SSH ControlMaster opened by hand (TACC requires MFA):
+#   ssh -fNM -S ~/.ssh/vista.sock -o ControlPersist=12h \
+#       -o ServerAliveInterval=60 loganluna@vista.tacc.utexas.edu
+# The compute node and port are read from the handoff file the server job
+# writes, so a resubmitted server is followed without editing this file.
+
+[endpoint]
+mode = "ssh"
+ssh_host = "vista.tacc.utexas.edu"
+ssh_user = "loganluna"
+ssh_port = 22
+control_socket = "~/.ssh/vista.sock"
+ssh_options = []
+server_handoff = "/scratch/11757/loganluna/servers/aiprover_server_openai.txt"
+# Fallback address when the handoff file is unreadable (empty = none).
+remote_host = ""
+remote_port = 8060
+local_port = 18559
+# Unused in ssh mode; present because the CLI reads every endpoint key.
+api_base = "http://127.0.0.1:18559/v1"
+api_key = "EMPTY"
+# Served model id; empty = the first id /v1/models reports.
+model = "aiprover"
+
+[runtime]
+work_root = "~/workspace/aiprover_orchestration/aiprover/work_tunnel_openai"
+# Concurrent rollouts on this machine, across all runs; each holds a Lean
+# server (~1.5 GB) and peaks near 5 GB while compiling (VM: 32 cores, 125 GB).
+max_parallel = 16
+# Champion measurement settings (100 turns / 5400 s); the harness derives its
+# time fences from timeout_sec.
+timeout_sec = 5400
+max_turns = 100
+
+[paths]
+# Lean v4.23.0 + Mathlib v4.23.0 (37df177) + REPL + cslib.
+lean_project = "~/workspace/lean_projects/TmpProjDir"
+elan_home = "~/.elan"
+vibe_venv = "~/workspace/aiprover_orchestration/aiprover/venv_vibe"
+mcp_venv = "~/workspace/aiprover_orchestration/aiprover/venv_mcp"
+rg_dir = "~/workspace/aiprover_orchestration/aiprover/bin"
+
+[helpers]
+# expand / backtranslate / ask: "auto" selects the helper model from the
+# calling environment (see AIProver_plugin/README.md).
+backend = "auto"
+claude_model = ""
+codex_sandbox = "read-only"
+timeout_sec = 900

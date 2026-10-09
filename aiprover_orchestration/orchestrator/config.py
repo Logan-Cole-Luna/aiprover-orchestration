@@ -109,7 +109,8 @@ class Config:
     # AIProver jobs per lemma statement that run to completion; jobs stopped
     # by a lost model server or an interruption do not count.
     aiprover_attempts_per_lemma: int = 1
-    # Sessions shared by the AIProver jobs in flight; 0 = `workers` per job.
+    # Sessions per model server shared by the AIProver jobs in flight; 0 =
+    # `workers` per job.
     # Each job takes a share weighted by its lemma's failed attempts.
     aiprover_session_slots: int = 0
     # Completed failed jobs after which a lemma is handed back to the captain

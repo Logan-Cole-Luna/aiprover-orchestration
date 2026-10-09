@@ -19,6 +19,7 @@ import subprocess
 import threading
 import time
 import tomllib
+import urllib.request
 from dataclasses import dataclass, field
 from functools import cached_property
 from pathlib import Path
@@ -226,9 +227,11 @@ class AIProverAgent(Agent):
         with open(self.config_path, "rb") as config_file:
             harness = tomllib.load(config_file)
         self.work_root = Path(harness["runtime"]["work_root"]).expanduser()
-        # The model server's Prometheus metrics, beside its OpenAI API.
+        # The model server's Prometheus metrics and, behind a reasoning
+        # proxy, its pool of servers, beside its OpenAI API.
         api_base = harness["endpoint"]["api_base"].rstrip("/")
         self.metrics_url = api_base.removesuffix("/v1") + "/metrics"
+        self.upstreams_url = api_base.removesuffix("/v1") + "/upstreams"
         self.timeout = timeout
         self.max_turns = max_turns
         self.poll_seconds = poll_seconds
@@ -260,6 +263,17 @@ class AIProverAgent(Agent):
             return self._cli("tunnel", "status", timeout=60).returncode == 0
         except subprocess.TimeoutExpired:
             return False
+
+    def servers(self) -> int:
+        """Model servers behind the endpoint that answer; 1 for an endpoint
+        that does not report them (a single server)."""
+        try:
+            with urllib.request.urlopen(
+                self.upstreams_url, timeout=10
+            ) as reply:
+                return max(1, json.load(reply)["healthy"])
+        except (OSError, ValueError, KeyError):
+            return 1
 
     @cached_property
     def supports_resume(self) -> bool:
