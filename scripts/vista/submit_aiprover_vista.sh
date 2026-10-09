@@ -24,7 +24,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 [ -f "$MODEL_DIR/params.json" ] || [ -f "$MODEL_DIR/config.json" ] \
     || { echo "no params.json (Mistral) or config.json (HF) in $MODEL_DIR" >&2; exit 1; }
 mkdir -p "$SCRATCH/joblogs"
-export MODEL_DIR
+export MODEL_DIR SCRIPTS_DIR="$ROOT/scripts"
 sbatch -p "$PARTITION" -N "$NODES" -t "$TIME" \
     -o "$SCRATCH/joblogs/%x_%j.out" -e "$SCRATCH/joblogs/%x_%j.err" \
     --export=ALL "$ROOT/scripts/serve_aiprover_vista.sbatch"
