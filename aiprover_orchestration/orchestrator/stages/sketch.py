@@ -10,7 +10,7 @@ import logging
 import re
 
 from ...lean.checker import forbidden_constructs
-from ...lean.text import drop_imports, indent, normalize, strip_leading_by
+from ...lean.text import drop_imports, indent, normalize
 from .. import prompts
 from ..config import MAIN_NAME
 from ..structures import (
@@ -18,6 +18,7 @@ from ..structures import (
     Sketch,
     dependency_order,
     extract_tag,
+    extract_tactics,
     failed_lemma_text,
     parse_lemmas,
 )
@@ -41,7 +42,7 @@ class SketchStage:
                 phase=f"sketch{repair}",
             )
             lemma_block = drop_imports(extract_tag(reply, "lemmas"))
-            main_proof = strip_leading_by(extract_tag(reply, "main_proof"))
+            main_proof = extract_tactics(reply, "main_proof")
             lemmas = parse_lemmas(lemma_block)
             names = [lemma.name for lemma in lemmas]
             problems = [

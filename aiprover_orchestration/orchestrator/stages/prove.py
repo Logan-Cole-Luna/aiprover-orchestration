@@ -16,10 +16,15 @@ from ...lean.text import (
     declaration_names,
     drop_imports,
     indent,
-    strip_leading_by,
 )
 from .. import prompts
-from ..structures import Formalization, Lemma, Sketch, extract_tag
+from ..structures import (
+    Formalization,
+    Lemma,
+    Sketch,
+    extract_tactics,
+    extract_tag,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +74,7 @@ class ProveStage:
                     round=repair,
                 )
                 helpers = drop_imports(extract_tag(reply, "helpers"))
-                proof = strip_leading_by(extract_tag(reply, "proof"))
+                proof = extract_tactics(reply, "proof")
                 attempt = f"{lemma.statement} := by\n{indent(proof)}"
                 problems = [
                     f"forbidden construct: {name}"
