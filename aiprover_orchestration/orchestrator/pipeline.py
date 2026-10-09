@@ -22,7 +22,7 @@ from pathlib import Path
 from ..agents import AgentCallError, AgentPool, build_agent
 from ..lean.checker import LeanChecker
 from ..paths import LOGS_DIR, RESULTS_DIR, TEMP_DIR, WORKSPACE
-from . import libraries, prompts
+from . import benchmark, libraries, prompts
 from .config import (
     ALGORITHM,
     FILE_HEADER,
@@ -256,6 +256,11 @@ class Orchestration(
         }
         state = self.state
         sketch = None
+        sampler = benchmark.MetricsSampler(
+            self.result_dir / "metrics.jsonl",
+            self.agents.agents["solver"].metrics_url,
+        )
+        sampler.start()
         if state.restored_steps:
             logger.info(
                 f"resuming from step {state.restored_steps}: "
@@ -358,7 +363,12 @@ class Orchestration(
             logger.error("run interrupted; resume with --resume")
             raise
         finally:
+            sampler.stop()
             self._write_summary(summary, sketch)
+            try:
+                benchmark.summarize(self.result_dir, self.trace.document)
+            except (OSError, ValueError, KeyError, TypeError) as error:
+                logger.warning(f"benchmark summary not written: {error}")
 
     def _extend_library(self, form: Formalization, standalone: str) -> dict:
         record = libraries.extend(

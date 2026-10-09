@@ -11,9 +11,10 @@ built from a specification in the run configuration:
      "cli": "AIProver/AIProver_plugin/bin/aiprover"}
     {"backend": "python", "class": "my_package.my_module:MyAgent", ...}
 
+`claude` calls the Anthropic API (key in `ANTHROPIC_API_KEY`).
 `openai_compatible` covers any server that implements the OpenAI chat
-completions schema: a local vLLM server, a hosted open-weights endpoint, or a
-proprietary model behind a compatible gateway. `aiprover` runs the AIProver
+completions schema: a local vLLM server, or a hosted provider named by
+`provider` (`openai`, `huggingface`, `openrouter`). `aiprover` runs the AIProver
 harness (a full agentic Lean session per call; solver role only) with the
 model named in its own configuration. `python` loads a user-defined
 subclass of `Agent`, so a custom agent can replace any role without changes
@@ -175,7 +176,7 @@ class AgentPool:
         )
 
     def claude_budget_left(self) -> int:
-        """Calls to claude agents left in the run's budget (large if
+        """Calls to Claude agents left in the run's budget (large if
         unlimited)."""
         return (
             self.max_claude_calls - self.claude_calls

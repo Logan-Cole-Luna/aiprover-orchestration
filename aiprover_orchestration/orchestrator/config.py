@@ -102,7 +102,7 @@ class Config:
     max_audit_rounds: int = 2  # formalization revisions after REVISE
     lean_parallel: int = 6
     lean_timeout: int = 300
-    max_claude_calls: int = 0  # claude calls per run; 0 = unlimited
+    max_claude_calls: int = 0  # Claude calls per run; 0 = unlimited
     # AIProver lemma jobs in flight at once; 0 = all pending lemmas. Each job
     # runs `workers` sessions that share one model server.
     aiprover_lemma_concurrency: int = 0

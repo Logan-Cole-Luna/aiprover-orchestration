@@ -4,8 +4,8 @@
 
 Uses a fresh database under temp/smoke/ and item names with a unique
 prefix, and removes the generated workspace modules afterwards (unless
---keep). Model calls go through the Claude backend
-(`agents/claude.py`).
+--keep). Model calls go through the `claude` backend (`agents/claude.py`,
+key in `ANTHROPIC_API_KEY`).
 """
 
 import argparse
@@ -17,7 +17,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from .. import roles
-from ..agents.claude import get_account_status, invoke_once
+from ..agents.pool import build_agent
 from ..library import api
 from ..library.store import Store
 from ..library.verifier import Library, Rejected
@@ -62,13 +62,14 @@ def prove_with_model(library: Library, name: str, model: str) -> dict:
     theorem = library.store.item(name, by="name")
     system_prompt = roles.load("solver") + "\n\n" + roles.load("skill")
     prompt = PROVE_TEMPLATE.format(name=name, module=theorem["lean"])
+    agent = build_agent({"backend": "claude", "model": model, "timeout": 300})
     submission = {}
     for attempt in range(1, MAX_ATTEMPTS + 1):
-        reply, _, error = invoke_once(prompt, model, system_prompt, timeout=300)
-        if error:
-            raise RuntimeError(f"model call failed: {error}")
-        match = _CODE_BLOCK_RE.search(reply)
-        content = match.group(1) if match else reply
+        completion = agent.complete_once(prompt, system_prompt)
+        if completion.error:
+            raise RuntimeError(f"model call failed: {completion.error}")
+        match = _CODE_BLOCK_RE.search(completion.text)
+        content = match.group(1) if match else completion.text
         submission = library.verify(
             name, content, explanation=f"{model}, attempt {attempt}"
         )
@@ -77,7 +78,7 @@ def prove_with_model(library: Library, name: str, model: str) -> dict:
             return submission
         prompt += (
             "\n\n"
-            + reply
+            + completion.text
             + "\n\n"
             + REPAIR_TEMPLATE.format(error=submission["error"][:3000])
         )
@@ -211,8 +212,6 @@ def main() -> None:
         help="keep the database and generated modules",
     )
     arguments = parser.parse_args()
-    if get_account_status() is None:
-        raise SystemExit("Claude access is not configured")
     prefix = f"smoke{int(time.time())}"
     SMOKE_DIR.mkdir(parents=True, exist_ok=True)
     try:

@@ -34,6 +34,7 @@ from ..structures import (
     Lemma,
     Sketch,
     extract_tag,
+    extract_tactics,
     failed_lemma_text,
     parse_lemmas,
 )
@@ -458,7 +459,7 @@ class AIProverStage:
             )
             diagnosis = extract_tag(reply, "diagnosis")
             helpers = drop_imports(extract_tag(reply, "helpers"))
-            proof = strip_leading_by(extract_tag(reply, "proof"))
+            proof = extract_tactics(reply, "proof")
             split_block = drop_imports(extract_tag(reply, "split"))
             restated = extract_tag(reply, "restate")
             problems = []
