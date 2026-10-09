@@ -67,6 +67,21 @@ Results
 
 ## Todo
 
+- Decode benchmark (Vista jobs 1060653 tune, 1060649 arms A-D, 1060650
+  arms E-G): tabulate with `scripts/vista/summarize_bench.py`; deploy
+  `serve_aiprover_vista.sbatch` and `submit_aiprover_vista.sh` (CUDA graphs
+  by default, the winning arm's settings) to `$WORK/aiprover_serve/scripts`
+  once the arms pass `doctor` and greedy agreement; then one served run
+  compared with `srv_20261007_211938_GSimple_S_Xm_model`.
+- Stampede3: launch check of `serve_aiprover_s3.sbatch` (TP=4, 2 h);
+  same loads as the Vista benchmark. Allocation `TG-CIS260432` holds 766
+  SUs (expires 2027-03-16); the H100 charge rate per node-hour bounds the
+  hours of server time this buys.
+- Generalize `server/vista.py` (control socket, host, submission script) to
+  a per-cluster setting so the query server can submit to Stampede3.
+
+- Runs on the OpenAI math bank (`data/openai_math.jsonl`), starting with
+  `OpenAIMath_332_MetricMarkovCotypeL1`.
 - Orchestrator runs read and extend the theorem library in place of the
   single-file libraries of `libraries/`.
 - On SIGTERM the orchestrator's main thread exits while its solver threads
@@ -119,6 +134,13 @@ Results
 
 ## Issues
 
+- Vista server jobs named `aiprover_srv` are cancelled by our account from
+  outside this server (1057849 at 00:58, 1060100 at 01:38 while pending,
+  1060124 at 02:14 while pending; none logged by the worker, no scancel in
+  the harness, the Vista scripts or the local sessions). Jobs of group
+  `main` are now named `aiprover_srv_main`. The source (another machine or
+  session using this account) is to be identified.
+
 - AIProver sessions receive the shared Lean project's path
   (`AGENT_MATHLIB`, `lean_projects/TmpProjDir`) and can build in it; its
   packages are linked into every session and into `orchestration_workspace`. A
@@ -159,6 +181,19 @@ Results
 
 ## Decisions
 
+- Decode settings are measured on one allocation per arm set
+  (`bench_serve_vista.sbatch`) before the serve defaults change; the
+  serve script deployed on Vista keeps eager mode until then. FP8 KV cache
+  stays opt-in (numerics differ); CUDA graphs, tuned MoE kernels and
+  prompt-lookup speculation preserve the output distribution.
+- MoE tuning uses the base checkpoint's `text_config` as a DeepseekV3
+  config (same expert shapes); the tuner does not read the Mistral3 wrapper.
+
+- OpenAI math release targets: families 332 (full proof), 011 (Theorem
+  1.1 conditional on Theorem 1.2), 164 (Corollary 1.2 from Theorem 1.1),
+  048 (statement only) and 259 (full proof, stretch), ranked by
+  significance and Mathlib feasibility among the 130 families without a
+  formalization (`docs/openai_math_problems.md`).
 - Claude roles use the Anthropic API with a per-deployment key; hosted
   open-weights and OpenAI models use the OpenAI-compatible backend.
 - Proxy reply cap below the harness client's read timeout (16,384 tokens
@@ -233,6 +268,15 @@ Results
 
 ## Done
 
+- Query server page organized around the run list: the new-run form opens
+  from a "New run" button, with library and model/GPU settings collapsed
+  behind summaries of the current choice; Vista server jobs are collapsed
+  under the health bar; run detail appears only for a selected run.
+- Query server page: Vista server jobs as a table per GPU group (state,
+  actual or Slurm-estimated start, elapsed and limit, nodes, pending
+  reason, worker status), from `squeue -o %S`.
+- OpenAI math problem bank `data/openai_math.jsonl` (five problems) and
+  reference `docs/openai_math_problems.md`.
 - `docs/orchestration.md` describes the whole system: deployment, GPU
   groups and model serving, run lifecycle, AIProver sessions and the
   reasoning proxy, traces, the theorem library, and the analysis.
@@ -271,6 +315,133 @@ Results
 - Query server with run queue, live progress and Claude call budget.
 - Per-run model choice for orchestrator and subagent (Claude model and
   reasoning level, or AIProver trained/base) on the query server page.
+
+## 2026-10-09: Decode speed of the Vista server
+
+- Diagnosis (job 1058807): eager mode (no CUDA graphs, no torch.compile),
+  untuned Triton FP8 MoE kernels (vLLM default configuration for
+  E=128, N=2048 on GH200), no speculative decoding. With ~6B active
+  parameters per token, 34 ms per decode step against ~2 ms of weight
+  reads, and per-request speed independent of batch size, place the
+  bottleneck in kernel launches and host overhead.
+- `scripts/vista/vllm_common.sh` (environment, Ray cluster, `vllm serve`
+  arguments) and `vllm_args.sh` (CUDA graphs, n-gram speculation, KV-cache
+  type, attention backend) factored out of `serve_aiprover_vista.sbatch`;
+  defaults `ENFORCE_EAGER=0`, `GPU_MEMORY_UTILIZATION=0.93`.
+- `tune_moe_vista.sbatch`, `bench_serve_vista.sbatch` (arms A-G, four
+  loads), `make_edit_dataset.py` (40 rewrites of session Lean files),
+  `summarize_bench.py`; `benchmark.json` reports speculative acceptance
+  (`spec_acceptance_rate`, `spec_tokens_per_step`).
+- Stampede3: `scripts/stampede3/serve_aiprover_s3.sbatch` (one node, TP
+  over its GPUs, `serve_aiprover.sh` with the settings of `vllm_args.sh`),
+  `configs/aiprover/s3.toml`, `s3_logged.toml`,
+  `aiprover_reasoning_proxy_s3.service` (ports 18560, 18570).
+- Stampede3 facts: `$WORK = /work2/11757/loganluna/stampede3`, `$SCRATCH =
+  /scratch/11757/loganluna` (separate from Vista's); `/work` (checkpoint,
+  `aiprover_serve/scripts`) is readable from Stampede3. GPU partitions:
+  `h100` (24 nodes, 4 x H100 each) and `pvc`; no H200 partition. vLLM
+  0.27.1 in `$WORK/venvs/vllm-0.27.1` (pip, CUDA 13 wheels).
+
+## 2026-10-09: Proxy tool-call parsing; server pools; prompt termination
+
+- The persistent server (vLLM 0.31.0, context 262,144 since 2026-10-08)
+  runs without a tool-call parser: tool calls arrive as text in the
+  Mistral format (`[TOOL_CALLS]name[ARGS]{...}`). The reasoning proxy now
+  converts such text into structured `tool_calls` (streamed and
+  non-streamed replies, parallel calls, ids in Mistral's 9-character form),
+  so sessions do not depend on the server's parser; replies already parsed
+  pass unchanged.
+- SIGTERM to a run (`DELETE /api/runs/<id>`) sets `agents.aiprover.
+  STOPPING`: pending AIProver jobs are cancelled within one poll interval
+  (60 s) and no new job starts.
+- `srv_20261008_233359_OpenAIMath_048_LipmanZariskiCounterexample` paused
+  (cancelled) in its prove stage; its 42 DGX sessions made no tool calls.
+  Restarted as `srv_20261009_001341_OpenAIMath_048_LipmanZariskiCounterexample`,
+  forked at the prove stage (formalization, audit and sketch kept).
+- Server pools: group `openai` borrows the server of `main`; its proxy pools
+  both tunnels and the run's session slots scale with the healthy servers.
+  `GSimple_Theorem_3_7` cancelled to free `main`'s server (job 1057849) for
+  `OpenAIMath_332_MetricMarkovCotypeL1`, which uses the `openai` server as
+  well once job 1059513 starts.
+- VM at 16 sessions: 31 GB used (about 2 GB per session; Mathlib .olean
+  files are shared), load about 2 on 32 cores. `max_parallel` raised to 28.
+- Session memory (Lean v4.23.0, Mathlib): the language server's watchdog
+  loads the reference index of every `.ilean` on the search path (213 MB on
+  disk, about 1.0 GB in memory with `LEAN_SRC_PATH` set; there is no option
+  to skip it); the file worker importing Mathlib holds about 0.37 GB private,
+  the .olean files (4.6 GB) being memory-mapped and shared. A search path
+  mirrored without `.ilean` files gives 0.71 GB per server instead of
+  1.72 GB, with the same diagnostics and go-to-definition into Mathlib.
+- Tactic blocks (`<main_proof>`, `<proof>`) keep the indentation of their
+  first line (`extract_tactics`); stripping it had misaligned every
+  multi-line block. `OpenAIMath_332` failed its sketch on this and was
+  relaunched as `srv_20261009_010221_OpenAIMath_332_MetricMarkovCotypeL1`
+  (forked at the sketch stage); 011 and 164 paused and requeued behind it.
+- Tunnels: the worker points a group's tunnel at the server job its handoff
+  names once that server answers, closes a tunnel whose handoff job has
+  ended, and cancels a superseded running job it submitted; a busy group
+  keeps one successor server job queued. Group `main`'s tunnel had stayed on
+  job 1059338 while its own job 1057849 ran (and failed at 00:58).
+- Group `openai` borrows `main` and `open`. Overnight watcher
+  (`temp/overnight/watch.py`, unit `aiprover_overnight_watch`): events in
+  `temp/overnight/events.log`, and a 2 h gh-dev job kept queued for `open`
+  until a 12 h gh job serves it.
+- Group `open`'s handoff named its ended job 1059258 while job 1059338 (of
+  `main`) served the same node and port; 1059338 was renamed
+  `aiprover_srv_open` and the handoff rewritten. The worker now requires the
+  handoff's job to be one of the group's running jobs and rechecks the
+  servers of running runs every 5 min.
+
+## 2026-10-08: Benchmark logging; 048 on the DGX server
+
+- `orchestrator/benchmark.py`: every run samples the solver endpoint's vLLM
+  metrics and this machine's load every 30 s (`metrics.jsonl`) and writes
+  `benchmark.json` at its end (server tokens, throughput, running and
+  waiting requests, KV-cache use, mean context length, queue time, time to
+  first token, request latency, preemptions, prefix-cache hit rate;
+  AIProver sessions and their turns; model calls and Lean checks by role;
+  machine load). The worker rewrites it when a served run ends;
+  `python -m aiprover_orchestration.orchestrator.benchmark results/<run_id>`
+  rewrites it by hand.
+- Reasoning proxy: each turn record carries `prompt_tokens` (context
+  length), `seconds` and `in_flight` (requests being forwarded).
+- Worker: a queued run that needs no model server starts when an earlier
+  run of its group waits for its Vista server; agents of a persistent
+  version (`dgx`) keep their own endpoint in every GPU group.
+- `OpenAIMath_048_LipmanZariskiCounterexample` (estimated quickest) moved
+  from the Vista queue to the persistent DGX server as
+  `srv_20261008_233359_OpenAIMath_048_LipmanZariskiCounterexample`, with
+  the complex-run settings and 4 AIProver sessions; it is the endpoint's
+  only client, so the server metrics describe this run.
+
+## 2026-10-08: OpenAI math runs in GPU group `openai`
+
+- GPU group `openai` with its own Vista server job (`aiprover_srv_openai`,
+  handoff `aiprover_server_openai.txt`), tunnel 18559 and reasoning proxy
+  18569 (`configs/aiprover/vista_openai.toml`,
+  `vista_logged_openai.toml`, unit `aiprover_reasoning_proxy_openai`).
+- The five problems of `data/openai_math.jsonl` queued in bank order (332,
+  011, 164, 048, 259) with the settings of the complex G-Simple runs: Opus
+  5.5 (high) captain, reviewer and writer, Sonnet 5.5 auditor, trained
+  AIProver solver, 5 attempts per lemma, 2 replans, 30 Claude calls. Server
+  job 1059513 submitted (pending).
+
+## 2026-10-08: OpenAI math problem bank
+
+- Source: openai/math at `fd4aeeb` (719 manuscripts, 372 families). 242
+  families have a Lean scope note or catalogued main result; 130 families
+  (244 manuscripts) have neither.
+- `data/openai_math.jsonl`: five rows in the `gsimple.jsonl` schema plus
+  `raw_source_path`. Statements are self-contained; proofs are the source
+  TeX (332, 011 Section 8, 164 Corollary 1.2, 259) or the source proof
+  outline (048).
+- `docs/openai_math_problems.md`: per family the OpenAI summary,
+  manuscripts with abstracts and citations, verbatim main results,
+  assessment (proof structure, external inputs, Mathlib notes, OpenAI Lean
+  status) and the bibliography.
+- Undocumented Lean in the release covers parts of families 201 (Kurosh,
+  conditional on its Lifting Theorem) and 138 (the low-space Subset Sum
+  companion); both were excluded.
 
 ## 2026-10-08: Resume fallback
 
