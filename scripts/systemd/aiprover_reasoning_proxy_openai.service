@@ -1,0 +1,21 @@
+# systemd user unit for the reasoning proxy of GPU group "openai"
+# (aiprover_orchestration/server/vista.py GPU_GROUPS): listens on 18569 and
+# pools the group's tunnel on 18559 (configs/aiprover/vista_openai.toml) with
+# the tunnels of groups "main" (18555) and "open" (18558), whose servers the
+# group borrows.
+# Install next to aiprover_reasoning_proxy.service:
+#   cp scripts/systemd/aiprover_reasoning_proxy_openai.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now aiprover_reasoning_proxy_openai
+[Unit]
+Description=AIProver reasoning proxy (GPU group openai)
+After=network-online.target
+
+[Service]
+WorkingDirectory=/home/loganluna/workspace/aiprover_orchestration
+ExecStart=/home/loganluna/lean_env/bin/python3 -m aiprover_orchestration.server.reasoning_proxy --listen 18569 --upstream http://127.0.0.1:18559 --upstream http://127.0.0.1:18555 --upstream http://127.0.0.1:18558
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
