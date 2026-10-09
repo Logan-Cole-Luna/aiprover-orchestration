@@ -21,6 +21,7 @@ import time
 from dataclasses import fields
 from pathlib import Path
 
+from ..agents.aiprover import stop_jobs
 from ..paths import CONFIG_DIR, DATA_DIR, LOGS_DIR, RESULTS_DIR, TEMP_DIR
 from .config import Config
 from .pipeline import Orchestration
@@ -95,6 +96,11 @@ def configure_logging(run_id: str) -> None:
     for handler in handlers:
         handler.setFormatter(formatter)
     logging.basicConfig(level=logging.INFO, handlers=handlers)
+
+
+def terminate(*_) -> None:
+    stop_jobs()
+    sys.exit(143)
 
 
 def main() -> None:
@@ -173,8 +179,9 @@ def main() -> None:
         or f"{time.strftime('%Y%m%d_%H%M%S')}_{row['uuid'].rsplit('_', 1)[-1]}"
     )
     configure_logging(run_id)
-    # A terminated process unwinds normally, so the trace records the outcome.
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+    # A terminated process unwinds normally, so the trace records the outcome;
+    # the solver threads cancel their AIProver jobs and end.
+    signal.signal(signal.SIGTERM, terminate)
 
     roles = " | ".join(
         f"{role} {spec['backend']}/{spec.get('model')}"
