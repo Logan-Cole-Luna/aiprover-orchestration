@@ -224,8 +224,11 @@ class AIProverAgent(Agent):
         self.config_path = (ROOT / config).resolve()
         self.cli = (ROOT / cli).resolve()
         with open(self.config_path, "rb") as config_file:
-            runtime = tomllib.load(config_file)["runtime"]
-        self.work_root = Path(runtime["work_root"]).expanduser()
+            harness = tomllib.load(config_file)
+        self.work_root = Path(harness["runtime"]["work_root"]).expanduser()
+        # The model server's Prometheus metrics, beside its OpenAI API.
+        api_base = harness["endpoint"]["api_base"].rstrip("/")
+        self.metrics_url = api_base.removesuffix("/v1") + "/metrics"
         self.timeout = timeout
         self.max_turns = max_turns
         self.poll_seconds = poll_seconds

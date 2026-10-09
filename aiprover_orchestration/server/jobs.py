@@ -221,6 +221,17 @@ def run_process_alive(run_id: str) -> bool:
     )
 
 
+def benchmark_command(result_dir: Path) -> list[str]:
+    """Command that writes a run's benchmark.json from its trace and
+    metrics samples."""
+    return [
+        sys.executable,
+        "-m",
+        "aiprover_orchestration.orchestrator.benchmark",
+        str(result_dir),
+    ]
+
+
 def trace_pages_command(trace_path: Path) -> list[str]:
     """Command that renders a run's trace pages next to its trace."""
     return [
@@ -697,6 +708,7 @@ class Worker(threading.Thread):
         trace_path = RESULTS_DIR / run_id / "trace.json"
         if trace_path.exists():
             run_command(trace_pages_command(trace_path), timeout=300)
+            run_command(benchmark_command(trace_path.parent), timeout=300)
         state = "cancelled" if job["state"] == "cancelling" else "finished"
         status = summary.get("status") or "no_summary"
         self.store.update(

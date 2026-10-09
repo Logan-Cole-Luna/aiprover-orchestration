@@ -32,6 +32,8 @@ class Agent:
     """
 
     backend = "abstract"
+    # Prometheus metrics of the model server, where the backend has one.
+    metrics_url: str | None = None
 
     def __init__(self, model: str, max_retries: int = 5, **options):
         self.model = model
