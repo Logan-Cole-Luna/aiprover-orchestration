@@ -3,7 +3,7 @@
 import re
 from dataclasses import dataclass
 
-from ..lean.text import file_scoped
+from ..lean.text import file_scoped, strip_leading_by
 
 
 @dataclass
@@ -46,13 +46,24 @@ class Sketch:
 
 def extract_tag(text: str, tag: str) -> str:
     """Content of the last <tag>...</tag> block, with Markdown fences removed."""
+    return extract_block(text, tag).strip()
+
+
+def extract_block(text: str, tag: str) -> str:
+    """Content of the last <tag>...</tag> block without Markdown fences and
+    surrounding blank lines; its first line keeps its indentation, to which
+    the indentation of the other lines is relative."""
     matches = re.findall(rf"<{tag}>(.*?)</{tag}>", text, flags=re.S)
     if not matches:
         return ""
-    body = matches[-1].strip()
-    body = re.sub(r"^```[a-zA-Z0-9]*\s*\n", "", body)
-    body = re.sub(r"\n?```\s*$", "", body)
-    return body.strip()
+    body = re.sub(r"\A\s*```[a-zA-Z0-9]*[ \t]*\n", "", matches[-1])
+    body = re.sub(r"\n?[ \t]*```\s*\Z", "", body)
+    return re.sub(r"\A(?:[ \t]*\n)+", "", body).rstrip()
+
+
+def extract_tactics(text: str, tag: str) -> str:
+    """The tactic block of <tag>, without a leading `by`."""
+    return strip_leading_by(extract_block(text, tag))
 
 
 _DECL_RE = re.compile(
