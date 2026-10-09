@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import subprocess
+import threading
 import time
 import tomllib
 from dataclasses import dataclass, field
@@ -165,6 +166,20 @@ def lean_check_summary(check: dict | None) -> dict:
     }
 
 
+class Terminated(BaseException):
+    """The run was terminated while an AIProver job was pending."""
+
+
+# Set when the run is terminated (`stop_jobs`): pending jobs are cancelled
+# within one poll interval and no new job starts. Solver threads would
+# otherwise keep waiting on their jobs and hold the process open.
+STOPPING = threading.Event()
+
+
+def stop_jobs() -> None:
+    STOPPING.set()
+
+
 @dataclass
 class AIProverJob:
     job: str
@@ -272,6 +287,8 @@ class AIProverAgent(Agent):
         submitted. `on_start` receives the job id once the job runs, so that an
         interruption can still find it. If the installed CLI cannot resume, a
         new job is submitted instead."""
+        if STOPPING.is_set():
+            raise Terminated
         work_dir.mkdir(parents=True, exist_ok=True)
         start = time.time()
         if resume_job and not self.supports_resume:
@@ -342,7 +359,8 @@ class AIProverAgent(Agent):
             on_start(job)
         try:
             while (
-                self._cli(
+                not STOPPING.is_set()
+                and self._cli(
                     "wait",
                     job,
                     "--timeout",
@@ -352,6 +370,8 @@ class AIProverAgent(Agent):
                 == 3
             ):
                 pass
+            if STOPPING.is_set():
+                raise Terminated
         except BaseException:
             self._cli("cancel", job, timeout=60)
             raise
