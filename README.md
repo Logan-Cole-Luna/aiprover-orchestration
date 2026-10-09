@@ -48,7 +48,8 @@ flowchart LR
 
 Documentation in `docs/`: `orchestration.md` (system, design and analysis),
 `AIProver_README.md` (orchestrator components), `aiprover_tacc.md`
-(deployment), `server.md` (query server); work log in
+(deployment), `server.md` (query server), `openai_math_problems.md`
+(OpenAI math release problems in `data/openai_math.jsonl`); work log in
 [logbook.md](logbook.md).
 
 ## Usage
