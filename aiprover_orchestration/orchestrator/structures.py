@@ -35,6 +35,7 @@ class Lemma:
     handed_back: bool = False  # handed back to the captain for this statement
     reviewed_at: int = 0  # attempts when the captain last asked for a retry
     knowledge: str = ""  # notes carried to the next jobs (knowledge.py)
+    generation: int = 0  # hand-back splits that led to this lemma
 
 
 @dataclass
