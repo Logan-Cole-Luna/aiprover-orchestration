@@ -116,6 +116,9 @@ class Config:
     # Completed failed jobs after which a lemma is handed back to the captain
     # (prove it, split it, restate it, or retry); 0 = never.
     aiprover_handback_after: int = 0
+    # Hand-backs per run; 0 = unlimited. A lemma from a split is handed back
+    # after `aiprover_handback_after` times (1 + its generation) failures.
+    max_handbacks: int = 0
     # Claude calls added to `max_claude_calls` for the final review and the
     # report, so a run that spent its budget on proving is still reviewed.
     final_claude_calls: int = 8

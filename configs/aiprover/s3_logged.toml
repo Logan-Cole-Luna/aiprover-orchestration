@@ -27,7 +27,7 @@ work_root = "~/workspace/aiprover_orchestration/aiprover/work"
 # Concurrent rollouts on this machine, across all runs; each holds a Lean
 # server (~2.5 GB measured at 13 sessions) and peaks near 5 GB while compiling
 # (VM: 32 cores, 125 GB).
-max_parallel = 44
+max_parallel = 48
 # Champion measurement settings (100 turns / 5400 s); the harness derives its
 # time fences from timeout_sec.
 timeout_sec = 5400

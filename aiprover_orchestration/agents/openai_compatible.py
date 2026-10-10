@@ -123,10 +123,17 @@ class OpenAICompatibleAgent(Agent):
             }
         }
         text = (message.get("content") or "").strip()
-        if not text:
-            reason = (
-                choices[0].get("finish_reason") if choices else "no choices"
+        reason = choices[0].get("finish_reason") if choices else "no choices"
+        refusal = message.get("refusal") or (
+            reason if reason == "content_filter" else ""
+        )
+        if refusal:
+            return Completion(
+                usage=completion_usage,
+                error=f"request declined (refusal): {refusal}"[:500],
+                refused=True,
             )
+        if not text:
             return Completion(
                 usage=completion_usage, error=f"empty reply ({reason})"
             )
