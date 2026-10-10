@@ -17,10 +17,17 @@ class Completion:
     error: str | None = None
     retryable: bool = False
     retry_after_s: float | None = None
+    # Declined by the provider's safety classifier. A refused call is billed
+    # and the same prompt is refused again, so it is never retried.
+    refused: bool = False
 
 
 class AgentCallError(RuntimeError):
     """A model call that failed after all retries (an infrastructure failure)."""
+
+
+class AgentRefusal(AgentCallError):
+    """A model call declined by the provider's safety classifier."""
 
 
 class Agent:

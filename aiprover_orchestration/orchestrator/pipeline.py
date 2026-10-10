@@ -19,7 +19,7 @@ from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
 
-from ..agents import AgentCallError, AgentPool, build_agent
+from ..agents import AgentCallError, AgentPool, AgentRefusal, build_agent
 from ..lean.checker import LeanChecker
 from ..paths import LOGS_DIR, RESULTS_DIR, TEMP_DIR, WORKSPACE
 from . import benchmark, libraries, prompts
@@ -350,6 +350,11 @@ class Orchestration(
                 summary["library_extension"] = self._extend_library(
                     form, standalone
                 )
+            return summary
+        except AgentRefusal as error:
+            # A resume would send the same prompt and be refused again.
+            summary.update(error=str(error), error_kind="refused")
+            logger.error(str(error))
             return summary
         except AgentCallError as error:
             summary.update(error=str(error), error_kind="infrastructure")
