@@ -50,9 +50,29 @@ class Agent:
         self.model = model
         self.max_retries = max_retries
         self.options = options
+        # Variant agents by phase-label prefix (the spec's `phases`).
+        self.phase_agents: dict[str, "Agent"] = {}
 
     def complete_once(self, prompt: str, system_prompt: str) -> Completion:
         raise NotImplementedError
 
+    def for_phase(self, phase: str) -> "Agent":
+        """The variant whose prefix is the longest match of `phase`, or this
+        agent."""
+        matches = [
+            prefix for prefix in self.phase_agents if phase.startswith(prefix)
+        ]
+        return self.phase_agents[max(matches, key=len)] if matches else self
+
     def describe(self) -> dict:
-        return {"backend": self.backend, "model": self.model, **self.options}
+        description = {
+            "backend": self.backend,
+            "model": self.model,
+            **self.options,
+        }
+        if self.phase_agents:
+            description["phases"] = {
+                prefix: agent.describe()
+                for prefix, agent in self.phase_agents.items()
+            }
+        return description
