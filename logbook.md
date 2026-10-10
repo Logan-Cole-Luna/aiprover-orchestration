@@ -91,6 +91,10 @@ Results
   keep polling their AIProver jobs, so a terminated run lives until those
   jobs end; the threads should cancel their jobs when the run is
   interrupted.
+- Library search, remaining items of `docs/proposed/mathlib_search.md`:
+  retrieval before each job, captain adjudication of stated gaps (closure
+  probe), coverage triage at sketch time; evaluate items 1, 2, 5, 6 against
+  the baseline table there.
 - Project upload with our own Lean meta-programs.
 - Authentication for the HTTP API.
 - Missions and milestones; several pinned Lean environments.
@@ -136,6 +140,20 @@ Results
   submodule at the merged commit.
 
 ## Issues
+
+- The shared Mathlib build (`lean_projects/TmpProjDir/.lake/packages`) is
+  writable by prover sessions. A session of 332 (job
+  `20261010-005428-5xxt`, s0) ran `lake exe cache get` at 01:03 on
+  2026-10-10; the cache's traces do not match the local build, so 5,239
+  of 6,864 Mathlib modules became stale and each session's
+  `lake setup-file` rebuilt them, about 15 builds in parallel (380 Lean
+  processes for 74 modules, free memory down to 3.4 GB, no swap). Lean
+  checks stalled until 07:40, when `lake build --no-build Mathlib`
+  reported all targets up to date. Remedy: the package tree read-only,
+  and the harness refuses `lake build|exe|update|clean` (`lake_refusal`).
+  Cost: 11 failed attempts of 332 and 28 of 048 ran mostly inside the
+  window, and 8 hand-backs of 048 were rejected because the Lean gate
+  timed out (300 s), leaving those lemmas handed back without review.
 
 - Vista server jobs named `aiprover_srv` are cancelled by our account from
   outside this server (1057849 at 00:58, 1060100 at 01:38 while pending,
@@ -328,6 +346,26 @@ Results
 - Per-run model choice for orchestrator and subagent (Claude model and
   reasoning level, or AIProver trained/base) on the query server page.
 
+## 2026-10-10: Hosted captains, trace repair, Lake commands refused
+
+- Hosted models (`Agent.hosted`: the Claude backends, and an
+  OpenAI-compatible agent with a `provider`) receive the carried notes
+  without the sessions' reasoning (`knowledge.without_reasoning`). The
+  captain's hand-back prompts carried it, and Opus's safeguards refused
+  17 of 72 hand-backs of 332 and 048 (`[reasoning_extraction]`), each
+  billed at about $0.4 to $0.6 with no reply. The last refused prompt,
+  resent without the reasoning, was answered.
+- A Lean check of a hand-back reply that times out stops the run as an
+  infrastructure failure instead of rejecting the reply.
+- `orchestrator.trace` repairs stopped runs: `--rewind N` (`rewound`)
+  drops the steps from N on and the AIProver jobs still running at N, and
+  `--refused-handbacks` drops refused hand-backs, so that a resume hands
+  those lemmas back again.
+- 048 rewound to step 254 (01:13, before the Mathlib rebuild; no proof
+  lost); 332's seven refused hand-backs removed. Both requeued. The
+  previous traces are in `temp/trace_backup/`.
+- The harness refuses `lake build|exe|update|clean` (`lake_refusal`).
+
 ## 2026-10-09: Knowledge carry, bounded subagents, DGX session limit
 
 - `orchestrator/knowledge.py`: a failed session is condensed into a note
@@ -369,6 +407,41 @@ Results
   `~/workspace/orchestration-results` (`completed_problems/` once finished,
   else `ip_problems/`), with the trace gzipped, the config as `config.json`
   and a README index with resume instructions.
+- Group `open` paused: its server jobs cancelled, and `main` and `openai`
+  no longer borrow it. DGX load test requested by its owners: 048 with 32
+  session slots (32 concurrent requests); `max_parallel` 44 in all harness
+  configs (sessions share one slot pool on the VM, about 2.5 GB each).
+- Decision: no lemma concurrency limit in served runs
+  (`aiprover_lemma_concurrency` 0): every open lemma runs, and the session
+  slots, which scale with the model servers, bound the work.
+- Page, "Model servers": per group, the requests in flight through its proxy,
+  healthy servers of its pool, and the groups it borrows from or lends to;
+  the persistent DGX shown by host as an always-on server.
+- Library search, experimental (`docs/proposed/mathlib_search.md`):
+  run-level Mathlib map in every job's guidance (`knowledge.MathlibMap`,
+  rebuilt from the trace); harness search fence (12 searches without an edit
+  or Lean check); stated `sorry` gaps listed in session notes; hand-back on
+  exhaustion with a retry granting `aiprover_handback_after` further
+  attempts. Session notes now match tool results to calls by tool name and
+  grep pattern (results had been paired with the wrong calls).
+- A captain hand-back refused by the model's safety classifier no longer
+  stops the run: the lemma continues without it (decision action
+  `refused`, restored on resume). Markov's `mc_cube_energy` hand-back was
+  refused at 18:43 and 21:11, each time ending the run for a resumption.
+- Semantic Mathlib index, experimental (`aiprover_orchestration/search/`,
+  service `aiprover_mathlib_index` on 127.0.0.1:18570): 259,660 declarations
+  of the pinned Mathlib, 247,785 with LeanSearch v2 descriptions; embeddings
+  (Qwen3-Embedding-0.6B) computed on Vista (job 1062259, gh-dev); harness
+  configs set `leanfinder_url`, and `lean_leanfinder` is described as the
+  first search. The installed lean_lsp_mcp skips its client rate limit for a
+  self-hosted Lean Finder (`tools/search.py`, original kept as `.orig`).
+- Decision: index text from LeanSearch v2's v4.28 corpus joined by name to
+  the v4.23 declarations, rather than informalizing v4.23 anew; 5% of
+  declarations (renamed or removed by v4.28) keep docstring and type only.
+- First hour after the relaunch (22:21-23:43, 69 sessions, mostly resumed
+  with their original instructions): 10 `lean_leanfinder` queries against
+  916 greps; the search fence fired 53 times. The fence message now points
+  to `lean_leanfinder` before grep.
 
 ## 2026-10-09: Decode speed of the Vista server
 
