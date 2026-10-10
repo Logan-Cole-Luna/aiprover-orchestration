@@ -10,7 +10,13 @@ from dataclasses import dataclass, field
 
 from . import prompts
 from ..lean.text import file_scoped, normalize
-from .structures import Formalization, Sketch, parse_lemmas, parse_statement
+from .structures import (
+    Formalization,
+    Sketch,
+    missing_lemmas,
+    parse_lemmas,
+    parse_statement,
+)
 
 
 @dataclass
@@ -93,6 +99,7 @@ def restore_state(document: dict) -> ResumeState:
         previous_status=(document.get("outcome") or {}).get("status"),
     )
     statement_of: dict[str, str] = {}  # lemma name -> statement, current sketch
+    names_seen: set[str] = set()  # lemma names of every sketch and split
     last_job: dict[str, dict] = {}  # lemma name -> its latest AIProver job
     for step in document.get("steps", []):
         if step["kind"] == "model_call" and step.get("backend") == "aiprover":
@@ -170,6 +177,7 @@ def restore_state(document: dict) -> ResumeState:
             ]
             state.sketch = Sketch(lemmas, step["main_proof"])
             statement_of = {lemma.name: lemma.statement for lemma in lemmas}
+            names_seen |= set(statement_of)
             state.failures = {}
             state.replan_pending = False
         elif event == "lemma_proved" and step["lemma"] in statement_of:
@@ -227,10 +235,12 @@ def restore_state(document: dict) -> ResumeState:
                         lemma.generation = target.generation + 1
                         state.sketch.lemmas.insert(position + offset, lemma)
                         statement_of[lemma.name] = lemma.statement
+                        names_seen.add(lemma.name)
         elif event == "replan":
             state.replans_started += 1
             state.replan_pending = True
     if state.sketch is not None:
+        present = {lemma.name for lemma in state.sketch.lemmas}
         for lemma in state.sketch.lemmas:
             key = (lemma.name, normalize(lemma.statement))
             lemma.attempts = state.attempts.get(key, 0)
@@ -240,7 +250,10 @@ def restore_state(document: dict) -> ResumeState:
             proof = state.proofs.get(normalize(lemma.statement))
             if proof:
                 lemma.helpers, lemma.proof = proof
-                lemma.proved = True
+                # A proof kept across a replan needs the lemmas it used.
+                lemma.proved = not missing_lemmas(lemma, names_seen, present)
+                if not lemma.proved:
+                    lemma.helpers = lemma.proof = ""
             elif lemma.name in state.failures:
                 lemma.last_errors, lemma.last_attempts = state.failures[
                     lemma.name

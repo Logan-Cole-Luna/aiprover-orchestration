@@ -101,6 +101,27 @@ def parse_lemmas(block: str) -> list[Lemma]:
 # ── Lemmas of a sketch ─────────────────────────────────────────────────────
 
 
+def refers_to(text: str, name: str) -> bool:
+    return (
+        re.search(rf"(?<![\w.']){re.escape(name)}(?![\w'])", text)
+        is not None
+    )
+
+
+def missing_lemmas(
+    lemma: Lemma, names: set[str], present: set[str]
+) -> list[str]:
+    """Lemmas among `names` (of this or an earlier sketch) that the proof of
+    `lemma` uses but that are not in `present`: a proof kept across a replan
+    is valid only with the lemmas it was proved from."""
+    text = f"{lemma.helpers}\n{lemma.proof}"
+    return sorted(
+        name
+        for name in names - present - {lemma.name}
+        if refers_to(text, name)
+    )
+
+
 def dependency_order(lemmas: list[Lemma]) -> list[Lemma]:
     """Lemmas in sketch order, except that each proved lemma follows the
     lemmas its proof uses. A proof kept across a replan may use a lemma the
@@ -108,10 +129,7 @@ def dependency_order(lemmas: list[Lemma]) -> list[Lemma]:
 
     def uses(lemma: Lemma, other: Lemma) -> bool:
         text = f"{lemma.helpers}\n{lemma.proof}" if lemma.proved else ""
-        return (
-            re.search(rf"(?<![\w.']){re.escape(other.name)}(?![\w'])", text)
-            is not None
-        )
+        return refers_to(text, other.name)
 
     remaining, ordered = list(lemmas), []
     while remaining:

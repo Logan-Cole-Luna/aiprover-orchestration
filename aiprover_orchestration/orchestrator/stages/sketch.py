@@ -34,6 +34,7 @@ from ..structures import (
     extract_tag,
     extract_tactics,
     failed_lemma_text,
+    missing_lemmas,
     parse_lemmas,
 )
 
@@ -152,10 +153,26 @@ class SketchStage:
         )
         new_sketch = self.sketch(form, feedback)
         proofs = {normalize(lemma.statement): lemma for lemma in proved}
+        kept = {
+            lemma.name
+            for lemma in new_sketch.lemmas
+            for old in sketch.lemmas
+            if old.name == lemma.name
+            and normalize(old.statement) == normalize(lemma.statement)
+        }
+        old_names = {lemma.name for lemma in sketch.lemmas}
         for lemma in new_sketch.lemmas:
             previous = proofs.get(normalize(lemma.statement))
-            if previous:
-                lemma.helpers, lemma.proof = previous.helpers, previous.proof
-                lemma.proved = True
-                self._decision("lemma_reused", lemma=lemma.name)
+            if not previous:
+                continue
+            missing = missing_lemmas(previous, old_names, kept)
+            if missing:
+                logger.info(
+                    f"{lemma.name}: proof not reused; it uses {missing}, "
+                    f"which the new sketch drops"
+                )
+                continue
+            lemma.helpers, lemma.proof = previous.helpers, previous.proof
+            lemma.proved = True
+            self._decision("lemma_reused", lemma=lemma.name)
         return new_sketch
