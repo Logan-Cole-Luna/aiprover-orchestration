@@ -159,8 +159,13 @@ Results
   outside this server (1057849 at 00:58, 1060100 at 01:38 while pending,
   1060124 at 02:14 while pending; none logged by the worker, no scancel in
   the harness, the Vista scripts or the local sessions). Jobs of group
-  `main` are now named `aiprover_srv_main`. The source (another machine or
-  session using this account) is to be identified.
+  `main` are now named `aiprover_srv_main`. Source identified on
+  2026-10-10: `temp/vista_watch.py`, a watcher left running since
+  2026-10-08, which submitted and cancelled `aiprover_srv` jobs outside
+  the worker and wrote main's handoff file
+  (`$SCRATCH/servers/aiprover_server.txt`). At 12:28 its job 1063487
+  displaced main's server 1063220 from the handoff, and the worker closed
+  main's tunnel. The watcher was stopped at 12:58.
 
 - AIProver sessions receive the shared Lean project's path
   (`AGENT_MATHLIB`, `lean_projects/TmpProjDir`) and can build in it; its
@@ -371,8 +376,39 @@ Results
   characters each.
 - The hand-back prompt begins with the run-stable context (definitions,
   preamble, informal proof, main proof) for provider prefix caching.
+- Per-phase agents: an agent specification's `phases` maps phase-label
+  prefixes to option overrides (`build_agent`, `Agent.for_phase`). Our
+  runs carry the server option `captain_phases`, which applies
+  `configs/orchestrator/captain_phases.json` to a Claude captain: judge on
+  Sonnet 5.5 at medium effort, formalize at medium effort, hand-back
+  output limited to 32K tokens; sketch on Opus at high effort. Other
+  runs use the selected model in every phase.
 
 ## 2026-10-10: Hosted captains, trace repair, Lake commands refused
+
+- `max_parallel` 56 (12:50) brought free memory to 4.7 GB at 51 sessions
+  (15:21; about 2.4 GB per session plus 4.7 GB for the Mathlib index).
+  Lowered to 48; `temp/hold_slots.py` holds slots 48 to 55 so that workers
+  started under 56 cannot take them (stop it once those workers have
+  ended). At 15:26 free memory reached 2.9 GB before any session had
+  ended; the Mathlib index service (4.3 GB) was stopped and restarts once
+  15 GB are free.
+
+- A proof kept across a replan is kept only with the lemmas it uses
+  (`structures.missing_lemmas`, in `replan` and in `restore_state`). 332's
+  replan (step 428) kept `mc_cut_real`, proved by a split into
+  `mc_cut_real_pointwise`, which the new sketch dropped; with 46 of 47
+  lemmas proved, assembly failed on the unknown identifier (13:54).
+  `mc_cut_real` is open again and 332 was requeued (13:57).
+
+- Session slots are reassigned during a run: every minute, while no lemma
+  waits to start a job, running jobs grow by the slots freed meanwhile
+  (`rebalance` in `stages/aiprover.py`; `aiprover grow <job> -k N`, whose
+  sessions end at the job's deadline; `aiprover slots`; `status --json`).
+  A job may have several worker processes; the last one writes its result.
+  Growth is bounded by the free slots of the machine as well: on
+  2026-10-10 at 12:40 all 44 (`max_parallel`) were held and 16 sessions
+  waited.
 
 - Hosted models (`Agent.hosted`: the Claude backends, and an
   OpenAI-compatible agent with a `provider`) receive the carried notes
@@ -391,6 +427,10 @@ Results
   lost); 332's seven refused hand-backs removed. Both requeued. The
   previous traces are in `temp/trace_backup/`.
 - The harness refuses `lake build|exe|update|clean` (`lake_refusal`).
+- Calls refused by a provider's safety classifier are left out of the
+  trace (`trace.is_untraced`, `without_untraced_calls`; the call log keeps
+  them), on resume, in shared copies and through the repair command. `share_results` skips `.tmp`
+  files, which are traces being rewritten.
 
 ## 2026-10-09: Knowledge carry, bounded subagents, DGX session limit
 
@@ -468,6 +508,25 @@ Results
   with their original instructions): 10 `lean_leanfinder` queries against
   916 greps; the search fence fired 53 times. The fence message now points
   to `lean_leanfinder` before grep.
+
+- 2026-10-10 13:26: 011, stopped at 12:52 to pick up `max_parallel` 56
+  (an interrupted run is not requeued by the worker), requeued in group
+  `openai`; main's server jobs had been released at 13:23 after 30 min
+  without runs of its own. Main's tunnel was closed at 12:33 as "ended job
+  1063220" while that job was running: an unreadable handoff file (a failed
+  remote read) counted as naming no running job. A tunnel to a running job
+  is now kept when the handoff cannot be read (`_tunnel_current`).
+- 2026-10-10 14:27: 048, stopped at 13:38 to resume on the day's changes
+  (budget 47 calls), requeued. 332 proved all 47 lemmas; assembly failed at
+  13:54 (`mc_cut_real_pointwise` unknown: a proof reused after the replan
+  depends on a split lemma of the earlier sketch that was never proved) and
+  was relaunched at 13:57; it is reproving `mc_cut_real`.
+- 2026-10-10 15:41: 332 limits raised for our run (`max_claude_calls` 60,
+  `max_handbacks` 30); its trace lost the split of `mc_cut_real` and the
+  captain's proof that used the never-proved `mc_cut_real_pointwise`
+  (steps 203-204; backup in `temp/trace_backup/`), so that the lemma could
+  be handed back again. Resumed: the captain split it into
+  `mc_cut_real_mono` and `mc_cut_real_pointwise` at 15:43.
 
 ## 2026-10-09: Decode speed of the Vista server
 
