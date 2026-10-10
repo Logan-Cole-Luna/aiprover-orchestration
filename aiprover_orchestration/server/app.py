@@ -21,6 +21,7 @@ import re
 import secrets
 import tempfile
 import time
+import urllib.request
 import zipfile
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -222,6 +223,17 @@ def me(request: Request, user: str = Depends(current_user)) -> dict:
     }
 
 
+def proxy_pool(group: vista.GpuGroup) -> list[dict]:
+    """The model servers behind the group's reasoning proxy, with their
+    health and the requests in flight through it; empty if it is down."""
+    url = f"http://127.0.0.1:{group.proxy_port}/upstreams"
+    try:
+        with urllib.request.urlopen(url, timeout=3) as reply:
+            return json.load(reply)["upstreams"]
+    except (OSError, ValueError, KeyError):
+        return []
+
+
 @app.get("/api/health")
 def health(user: str = Depends(current_user)) -> dict:
     running = store.in_states("running", "cancelling")
@@ -241,6 +253,14 @@ def health(user: str = Depends(current_user)) -> dict:
                 else {job["id"]: job["state"] for job in server_jobs}
             ),
             "vista": worker.vista_messages.get(name, "not checked"),
+            "persistent": not group.job_name,
+            "pool": proxy_pool(group),
+            "borrows": list(group.borrows),
+            "lent_to": [
+                other.name
+                for other in vista.GPU_GROUPS.values()
+                if name in other.borrows
+            ],
         }
     # A group whose own server is down is served while a server it
     # borrows answers.

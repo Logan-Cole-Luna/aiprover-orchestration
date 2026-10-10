@@ -63,6 +63,9 @@ python -m aiprover_orchestration.orchestrator.run \
 # Resume a run from results/<run_id>/ alone (trace.json or trace.json.gz)
 python -m aiprover_orchestration.orchestrator.run --run-id <run_id> --resume
 
+# Semantic index of the pinned Mathlib, experimental (service: aiprover_mathlib_index)
+python -m aiprover_orchestration.search.server --index data/mathlib_index
+
 # Copy runs to a sharing repository (timer: aiprover_share_results)
 python -m aiprover_orchestration.utils.share_results \
     --target ~/workspace/orchestration-results --match OpenAIMath

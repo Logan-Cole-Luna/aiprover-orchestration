@@ -171,14 +171,16 @@ def checkpoint_names(selection: dict) -> set[str]:
 
 # AIProver versions served by a persistent server, each behind its own
 # reasoning proxy and harness configuration; runs that use only these need no
-# Vista server job. The persistent server sustains fewer sessions.
+# Vista server job.
 PERSISTENT_VERSIONS = {"dgx"}
 VERSION_ENDPOINTS = {"dgx": "http://127.0.0.1:18566/v1"}
 HARNESS_CONFIGS = {"dgx": "configs/aiprover/dgx.toml"}
 # Session time limits (seconds) of versions slower than the Vista servers; the
 # DGX completes a median 11 turns per hour against 76 on Vista.
 SOLVER_TIMEOUTS = {"dgx": 10800}
-VERSION_SETTINGS = {"dgx": {"aiprover_session_slots": 4}}
+# Sessions per run on the DGX: 32 concurrent requests, the load its owners
+# asked to test.
+VERSION_SETTINGS = {"dgx": {"aiprover_session_slots": 32}}
 
 
 def checkpoint_of(selection: dict) -> str | None:

@@ -12,8 +12,8 @@ trace_replay.html is left out, being rendered from the trace. Error texts of
 failed model calls are reduced to their HTTP status, since they quote
 provider messages verbatim, and the strings of a redaction file
 (`--redactions`, if it exists) are replaced everywhere: one per line, either
-`text` (replaced by "[redacted]") or `text==>replacement`. The target's README.md indexes the copies and
-states how to resume one.
+`text` (replaced by "[redacted]") or `text==>replacement`. The target's
+README.md indexes the copies and states how to resume one.
 """
 
 import argparse

@@ -1,0 +1,19 @@
+# Semantic search over the pinned Mathlib with the Lean Finder protocol
+# (aiprover_orchestration/search/server.py); harness configs point
+# `leanfinder_url` at it.
+# Install:
+#   cp scripts/systemd/aiprover_mathlib_index.service ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now aiprover_mathlib_index
+[Unit]
+Description=AIProver semantic Mathlib index
+After=network-online.target
+
+[Service]
+WorkingDirectory=/home/loganluna/workspace/aiprover_orchestration
+ExecStart=/home/loganluna/lean_env/bin/python3 -m aiprover_orchestration.search.server --index data/mathlib_index --port 18570 --threads 4
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target
