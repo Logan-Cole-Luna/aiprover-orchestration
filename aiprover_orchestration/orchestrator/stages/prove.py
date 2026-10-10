@@ -4,6 +4,10 @@ Each pending lemma is attacked by `workers` independent chains. A chain
 proposes a proof, receives Lean errors and repairs; the first proof that
 compiles is kept and the other chains of that lemma stop. With an AIProver
 solver the lemmas go to AIProver jobs instead (`stages/aiprover.py`).
+
+Related published work (tags defined in docs/lit_review/lit_review.md §6):
+- [Similar] Proof revision from Lean compiler feedback: Goedel-Prover-V2
+  (Lin et al., ICLR 2026), https://github.com/Goedel-LM/Goedel-Prover-V2
 """
 
 import logging

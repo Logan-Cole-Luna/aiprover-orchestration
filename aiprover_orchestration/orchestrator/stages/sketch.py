@@ -4,6 +4,20 @@ The captain decomposes the proof into lemmas (stated in full, left as
 `sorry`) and a proof of `solution` from them; the sketch must compile. After
 failed lemmas, the captain revises the sketch with the solvers' failed code
 and errors; proved lemmas whose statements are unchanged keep their proofs.
+
+Related published work (tags defined in docs/lit_review/lit_review.md §6):
+- [Similar] Informal proof to a formal sketch with `sorry` gaps closed by a
+  prover: Draft, Sketch, and Prove (Jiang et al., ICLR 2023),
+  https://github.com/albertqjiang/draft_sketch_prove
+- [Similar] Informal planner decomposing into subgoals for a Lean prover
+  model: Hilbert (Varambally et al., ICLR 2026),
+  https://github.com/Rose-STL-Lab/ml-hilbert
+- [Similar] Lemmas following the dependency graph of the informal proof:
+  ProofFlow (Cabral et al., ICLR 2026),
+  https://github.com/Huawei-AI4Math/ProofFlow
+- [Similar] Revising the global plan from failed lemmas: Goedel-Architect
+  (Chung et al., ICML 2026; no code released),
+  https://icml.cc/virtual/2026/82541
 """
 
 import logging
