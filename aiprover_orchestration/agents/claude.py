@@ -130,6 +130,7 @@ class ClaudeAgent(Agent):
             return Completion(
                 usage=usage,
                 error="request declined: safeguards flagged it (refusal)",
+                refused=True,
             )
         text = "".join(
             block.text for block in message.content if block.type == "text"

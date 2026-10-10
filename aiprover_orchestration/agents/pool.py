@@ -34,11 +34,14 @@ import threading
 import time
 from pathlib import Path
 
-from .base import Agent, AgentCallError, Completion
+from .base import Agent, AgentCallError, AgentRefusal, Completion
 from .claude import ClaudeAgent
 from .openai_compatible import OpenAICompatibleAgent
 
 logger = logging.getLogger(__name__)
+
+# Error text of a refusal, for records written before the `refused` field.
+REFUSAL_MARKER = "safeguards flagged"
 
 
 BACKENDS = {
@@ -111,9 +114,10 @@ class AgentPool:
             record = json.loads(line)
             self._accumulate(
                 record["role"],
-                record.get("backend"),
+                _hosted(record),
                 record.get("model_usage") or {},
                 failed=record.get("error") is not None,
+                refused=_refused(record),
             )
 
     def _load_trace_history(self) -> None:
@@ -124,22 +128,24 @@ class AgentPool:
                 usage = step.get("usage") or {}
                 self._accumulate(
                     step["role"],
-                    step.get("backend"),
+                    _hosted(step),
                     {step.get("model") or "": usage} if usage else {},
                     failed=step.get("error") is not None,
+                    refused=_refused(step),
                 )
 
     def _accumulate(
         self,
         role: str,
-        backend: str | None,
+        hosted: bool,
         model_usage: dict,
         failed: bool = False,
+        refused: bool = False,
     ) -> None:
-        # A failed call (rate limit, outage) does not count against the
-        # run's Claude call budget.
+        # The budget counts the calls to hosted models that are billed: a
+        # refusal is billed, a failure on a rate limit or outage is not.
         self.num_calls[role] = self.num_calls.get(role, 0) + 1
-        self.claude_calls += backend == "claude" and not failed
+        self.claude_calls += hosted and (not failed or refused)
         for model_id, usage in model_usage.items():
             totals = self.usage_by_model.setdefault(
                 model_id,
@@ -161,10 +167,11 @@ class AgentPool:
         """Return the reply of the role's agent.
 
         Raises RuntimeError when the call fails permanently, so that the
-        pipeline never proceeds on an empty reply.
+        pipeline never proceeds on an empty reply, and AgentRefusal when the
+        provider's safety classifier declines the prompt.
         """
         agent = self.agents[role]
-        if agent.backend == "claude" and self.max_claude_calls:
+        if agent.hosted and self.max_claude_calls:
             self._check_claude_budget()
         completion = Completion()
         for attempt in range(agent.max_retries + 1):
@@ -192,13 +199,14 @@ class AgentPool:
                 f"{wait:.0f}s: {completion.error[:200]}"
             )
             time.sleep(max(wait, 1.0))
-        raise AgentCallError(
+        error = AgentRefusal if completion.refused else AgentCallError
+        raise error(
             f"{agent.backend} call failed ({role}/{phase}): "
             f"{completion.error}"
         )
 
     def claude_budget_left(self) -> int:
-        """Calls to Claude agents left in the run's budget (large if
+        """Billed calls to hosted models left in the run's budget (large if
         unlimited)."""
         return (
             self.max_claude_calls - self.claude_calls
@@ -211,7 +219,8 @@ class AgentPool:
         # a budget stop, which is not restarted automatically.
         if self.claude_calls >= self.max_claude_calls:
             raise RuntimeError(
-                f"Claude call budget of {self.max_claude_calls} exhausted"
+                f"hosted model call budget of {self.max_claude_calls} "
+                f"exhausted"
             )
 
     def record(
@@ -252,11 +261,13 @@ class AgentPool:
             "role": role,
             "phase": phase,
             "backend": agent.backend,
+            "hosted": agent.hosted,
             "requested_model": agent.model,
             "model_usage": completion.usage,
             "cost_usd": cost,
             "seconds": round(seconds, 1),
             "error": completion.error,
+            "refused": completion.refused,
             "system_prompt": system_prompt,
             "prompt": prompt,
             "response": completion.text,
@@ -264,9 +275,10 @@ class AgentPool:
         with self._lock:
             self._accumulate(
                 role,
-                agent.backend,
+                agent.hosted,
                 completion.usage,
                 failed=completion.error is not None,
+                refused=completion.refused,
             )
             with open(self.calls_path, "a") as f:
                 f.write(json.dumps(record) + "\n")
@@ -279,6 +291,7 @@ class AgentPool:
                 label=phase,
                 role=role,
                 backend=agent.backend,
+                hosted=agent.hosted,
                 model=agent.model,
                 resolved_models=list(completion.usage),
                 system_prompt=self.system_prompt_ids.get(
@@ -287,11 +300,24 @@ class AgentPool:
                 prompt=prompt,
                 response=completion.text,
                 error=completion.error,
+                refused=completion.refused,
                 seconds=record["seconds"],
                 cost_usd=cost,
                 usage=primary_usage,
                 **trace_fields,
             )
+
+
+def _hosted(record: dict) -> bool:
+    """Whether a recorded call went to a hosted model; records written
+    before the field existed count the `claude` backend as hosted."""
+    return record.get("hosted", record.get("backend") == "claude")
+
+
+def _refused(record: dict) -> bool:
+    return record.get(
+        "refused", REFUSAL_MARKER in (record.get("error") or "")
+    )
 
 
 def probe(agents: dict[str, Agent]) -> None:
