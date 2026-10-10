@@ -54,6 +54,9 @@ PROBLEM_DIR = STATE_DIR / "problems"
 # Every JSONL file in data/ is offered as a source of problems.
 DATASET = DATA_DIR / "val_JiatuBook_unlabelled.jsonl"
 CONFIG = CONFIG_DIR / "orchestrator" / "aiprover_vista_served.json"
+# Per-phase captain settings applied to a run whose options set
+# `captain_phases` (our own runs); other runs use the selected model as is.
+CAPTAIN_PHASES = CONFIG_DIR / "orchestrator" / "captain_phases.json"
 
 POLL_SECONDS = 5
 BACKEND_RETRY_SECONDS = 60
@@ -81,7 +84,7 @@ OPEN_STATES = ("awaiting_approval", "queued", "running", "cancelling")
 # builds on a library entry the other adds). `aiprover_timeout` replaces the
 # wall clock of the run's AIProver sessions, in seconds; 0 removes it, so a
 # session ends only at its turn limit.
-SERVER_OPTIONS = ("after", "aiprover_timeout")
+SERVER_OPTIONS = ("after", "aiprover_timeout", "captain_phases")
 # A clock no session reaches: the harness scales its own time fences with it.
 NO_TIME_LIMIT = 30 * 24 * 3600
 
@@ -775,6 +778,9 @@ class Worker(threading.Thread):
             for spec in config["agents"].values():
                 if spec.get("backend") == "aiprover":
                     spec["timeout"] = timeout
+        captain = config["agents"]["captain"]
+        if options.get("captain_phases") and captain["backend"] == "claude":
+            captain["phases"] = json.loads(CAPTAIN_PHASES.read_text())
         config_path.write_text(json.dumps(config, indent=1))
         arguments = [
             sys.executable,

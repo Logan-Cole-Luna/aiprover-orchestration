@@ -10,6 +10,8 @@ built from a specification in the run configuration:
      "config": "configs/aiprover/local.toml",
      "cli": "AIProver/AIProver_plugin/bin/aiprover"}
     {"backend": "python", "class": "my_package.my_module:MyAgent", ...}
+    {"backend": "claude", "model": "claude-opus-5-5",
+     "phases": {"judge": {"model": "claude-sonnet-5-5"}}}
 
 `claude` calls the Anthropic API (key in `ANTHROPIC_API_KEY`).
 `openai_compatible` covers any server that implements the OpenAI chat
@@ -51,7 +53,20 @@ BACKENDS = {
 
 
 def build_agent(spec: dict) -> Agent:
-    """Instantiate the agent described by one role specification."""
+    """Instantiate the agent described by one role specification. Its
+    `phases` maps phase-label prefixes to option overrides, each served by a
+    variant agent (e.g. a smaller model for the captain's judge phase)."""
+    phases = spec.get("phases") or {}
+    base = {key: value for key, value in spec.items() if key != "phases"}
+    agent = _build(base)
+    agent.phase_agents = {
+        prefix: _build({**base, **overrides})
+        for prefix, overrides in phases.items()
+    }
+    return agent
+
+
+def _build(spec: dict) -> Agent:
     options = dict(spec)
     backend = options.pop("backend")
     if backend == "aiprover":
@@ -170,7 +185,7 @@ class AgentPool:
         pipeline never proceeds on an empty reply, and AgentRefusal when the
         provider's safety classifier declines the prompt.
         """
-        agent = self.agents[role]
+        agent = self.agents[role].for_phase(phase)
         if agent.hosted and self.max_claude_calls:
             self._check_claude_budget()
         completion = Completion()
