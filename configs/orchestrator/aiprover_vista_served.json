@@ -43,5 +43,6 @@
   "max_claude_calls": 10,
   "aiprover_session_slots": 8,
   "aiprover_handback_after": 3,
+  "max_handbacks": 12,
   "final_claude_calls": 8
 }

@@ -17,10 +17,17 @@ class Completion:
     error: str | None = None
     retryable: bool = False
     retry_after_s: float | None = None
+    # Declined by the provider's safety classifier. A refused call is billed
+    # and the same prompt is refused again, so it is never retried.
+    refused: bool = False
 
 
 class AgentCallError(RuntimeError):
     """A model call that failed after all retries (an infrastructure failure)."""
+
+
+class AgentRefusal(AgentCallError):
+    """A model call declined by the provider's safety classifier."""
 
 
 class Agent:
@@ -43,9 +50,29 @@ class Agent:
         self.model = model
         self.max_retries = max_retries
         self.options = options
+        # Variant agents by phase-label prefix (the spec's `phases`).
+        self.phase_agents: dict[str, "Agent"] = {}
 
     def complete_once(self, prompt: str, system_prompt: str) -> Completion:
         raise NotImplementedError
 
+    def for_phase(self, phase: str) -> "Agent":
+        """The variant whose prefix is the longest match of `phase`, or this
+        agent."""
+        matches = [
+            prefix for prefix in self.phase_agents if phase.startswith(prefix)
+        ]
+        return self.phase_agents[max(matches, key=len)] if matches else self
+
     def describe(self) -> dict:
-        return {"backend": self.backend, "model": self.model, **self.options}
+        description = {
+            "backend": self.backend,
+            "model": self.model,
+            **self.options,
+        }
+        if self.phase_agents:
+            description["phases"] = {
+                prefix: agent.describe()
+                for prefix, agent in self.phase_agents.items()
+            }
+        return description
