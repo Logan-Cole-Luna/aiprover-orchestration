@@ -34,6 +34,10 @@ class ResumeState:
     attempts: dict[tuple[str, str], int] = field(default_factory=dict)
     # (lemma name, statement) pairs already handed back to the captain.
     handed_back: set[tuple[str, str]] = field(default_factory=set)
+    # Attempts per (lemma name, statement) at the captain's last retry.
+    reviewed_at: dict[tuple[str, str], int] = field(default_factory=dict)
+    # Knowledge carried per lemma (knowledge.py).
+    knowledge: dict[str, str] = field(default_factory=dict)
     # AIProver job per (lemma name, statement) that started but did not
     # complete (lost model server, interrupted run): its sessions are resumed
     # rather than restarted.
@@ -189,6 +193,8 @@ def restore_state(document: dict) -> ResumeState:
                     step.get("errors", ""),
                     step.get("attempts", ""),
                 )
+            if "knowledge" in step:
+                state.knowledge[step["lemma"]] = step["knowledge"]
         elif (
             event == "lemma_handback"
             and state.sketch is not None
@@ -200,11 +206,18 @@ def restore_state(document: dict) -> ResumeState:
                 for lemma in state.sketch.lemmas
                 if lemma.name == step["lemma"]
             )
+            if "knowledge" in step:
+                state.knowledge[target.name] = step["knowledge"]
             if step["action"] == "restate":
                 target.statement = step["statement"]
                 statement_of[target.name] = target.statement
                 continue
-            state.handed_back.add((target.name, normalize(target.statement)))
+            key = (target.name, normalize(target.statement))
+            if step["action"] == "retry" and "attempts" in step:
+                state.handed_back.discard(key)
+                state.reviewed_at[key] = step["attempts"]
+                continue
+            state.handed_back.add(key)
             if step["action"] == "split":
                 position = state.sketch.lemmas.index(target)
                 for offset, statement in enumerate(
@@ -218,13 +231,11 @@ def restore_state(document: dict) -> ResumeState:
             state.replan_pending = True
     if state.sketch is not None:
         for lemma in state.sketch.lemmas:
-            lemma.attempts = state.attempts.get(
-                (lemma.name, normalize(lemma.statement)), 0
-            )
-            lemma.handed_back = (
-                lemma.name,
-                normalize(lemma.statement),
-            ) in state.handed_back
+            key = (lemma.name, normalize(lemma.statement))
+            lemma.attempts = state.attempts.get(key, 0)
+            lemma.handed_back = key in state.handed_back
+            lemma.reviewed_at = state.reviewed_at.get(key, 0)
+            lemma.knowledge = state.knowledge.get(lemma.name, "")
             proof = state.proofs.get(normalize(lemma.statement))
             if proof:
                 lemma.helpers, lemma.proof = proof

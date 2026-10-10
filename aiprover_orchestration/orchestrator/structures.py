@@ -33,6 +33,8 @@ class Lemma:
     last_attempts: str = ""  # the solvers' last failed code, for a replan
     attempts: int = 0  # completed AIProver jobs that did not prove it
     handed_back: bool = False  # handed back to the captain for this statement
+    reviewed_at: int = 0  # attempts when the captain last asked for a retry
+    knowledge: str = ""  # notes carried to the next jobs (knowledge.py)
 
 
 @dataclass
