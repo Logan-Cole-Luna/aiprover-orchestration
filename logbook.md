@@ -38,6 +38,9 @@ Orchestration (`aiprover_orchestration/orchestrator/`)
   replan precede none of the lemmas they use.
 - Replan prompt with the solvers' failed code and the Lean errors located in
   it.
+- Knowledge carried across attempts on a lemma (searches, files read, last
+  reasoning, code), given to later sessions as guidance and curated by the
+  captain at hand-backs (`orchestrator/knowledge.py`).
 - Captain on Opus 5.5 with high effort and a 128,000-token reply limit.
 
 Model serving and infrastructure (`scripts/`, `aiprover_orchestration/server/`,
@@ -268,6 +271,15 @@ Results
 
 ## Done
 
+- G-Simple non-triviality: `GSimple_S_Xm_model` proved (32 lemmas, verified,
+  review FAITHFUL): $X_{-1}(u)\neq1$ in $S(\mathfrak m)$ for $c(2)=1$,
+  $c_{0,2}=c_{1,2}=-1$, via the representation $\rho_3$ on $\mathbb{C}^3$.
+  Informal summary for the authors (commutator lemmas, collapse of
+  $G(\mathfrak m)$, model case, scope) in
+  `analysis/gsimple_nontriviality/gsimple_nontriviality.pdf`.
+- Literature review `docs/lit_review/` (`lit_review.md`, `lit_review.xlsx`):
+  30 related systems, feature matrix, gaps and ranked adoptions; MAESTRO,
+  Paper2Lean and ToMAP (`docs/papers/`) read in full.
 - Query server page organized around the run list: the new-run form opens
   from a "New run" button, with library and model/GPU settings collapsed
   behind summaries of the current choice; Vista server jobs are collapsed
@@ -315,6 +327,48 @@ Results
 - Query server with run queue, live progress and Claude call budget.
 - Per-run model choice for orchestrator and subagent (Claude model and
   reasoning level, or AIProver trained/base) on the query server page.
+
+## 2026-10-09: Knowledge carry, bounded subagents, DGX session limit
+
+- `orchestrator/knowledge.py`: a failed session is condensed into a note
+  (ending, Mathlib searches with those that found nothing, files read, last
+  reasoning, code); a lemma carries its newest notes (6,000 characters) to
+  later jobs through the harness's `--hint-file`. The notes are recorded in
+  `solver_budget_exhausted` and restored on resume.
+- Hand-back: the captain sees the carried notes and may replace or clear
+  them (`<knowledge>`) with any action; a retry lets the captain review the
+  lemma again after `aiprover_handback_after` further failures. A lemma with
+  notes but no code is no longer deferred.
+- Harness: subagents (`explore`) bounded together by 20 % of the session's
+  time limit and 30 % of its turn budget, and by the hard fence; past them
+  every subagent call is refused with an instruction to report, and no new
+  subagent starts. The task text states that `grep` is ripgrep (`a|b`;
+  `a\|b` matches a literal `|`): 10 of the first 20 searches in one 048 session
+  found nothing for this reason.
+- GPU group `dgx` for runs on the persistent server: no Slurm job or
+  handoff; the worker starts its runs only while the endpoint answers. 048
+  moved there (it held a place in group `openai`); the DGX vLLM refused
+  connections 09:55-10:05 and returned with about 32 requests of another
+  client in flight.
+- DGX sessions: 10,800 s (`SOLVER_TIMEOUTS`, `dgx.toml`); the DGX completes a
+  median 11 turns per hour (8 sessions) against 76 on Vista (89 sessions).
+- Failed Claude calls no longer count against `max_claude_calls`. Claude
+  calls failing from 11:31 to 13:40 ended S_Xm_nontrivial and
+  S_Ym_nontrivial (3 resumptions without progress) and S_Xm_model's report
+  step (proof verified); the three were requeued to resume. Markov and
+  S_Wm_nontrivial, started before the change, keep their failed calls in
+  the budget until their next resume.
+- Self-contained result directories: a resumed run takes its config
+  (unless `--config` is given) and its problem from the trace, and its
+  library from `results/<run>/library.lean`, a snapshot taken at the start;
+  without a call log, the Claude budget is counted from the trace's model
+  calls; an AIProver job missing from the work directory is submitted
+  afresh; `Trace.load` reads `trace.json.gz`.
+- `utils/share_results.py` (timer `aiprover_share_results`, every 15 min):
+  the latest run of each OpenAI problem is copied to
+  `~/workspace/orchestration-results` (`completed_problems/` once finished,
+  else `ip_problems/`), with the trace gzipped, the config as `config.json`
+  and a README index with resume instructions.
 
 ## 2026-10-09: Decode speed of the Vista server
 
@@ -382,6 +436,9 @@ Results
   ended, and cancels a superseded running job it submitted; a busy group
   keeps one successor server job queued. Group `main`'s tunnel had stayed on
   job 1059338 while its own job 1057849 ran (and failed at 00:58).
+- Group `main` (submissions from the page) borrows `openai` and `open`:
+  its proxy (18565) pools tunnels 18555, 18559 and 18558, so the page is
+  served while `main`'s own job waits in the gh queue.
 - Group `openai` borrows `main` and `open`. Overnight watcher
   (`temp/overnight/watch.py`, unit `aiprover_overnight_watch`): events in
   `temp/overnight/events.log`, and a 2 h gh-dev job kept queued for `open`
