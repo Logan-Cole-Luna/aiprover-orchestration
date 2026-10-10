@@ -53,6 +53,10 @@ logger = logging.getLogger(__name__)
 # Sample states that say nothing about the lemma: the session failed on
 # infrastructure or was cancelled.
 STOPPED_STATES = ("infra", "cancelled")
+# Failed samples' code kept for the captain and the replan: the most
+# complete ones, each cut to a length.
+MAX_ATTEMPTS_KEPT = 2
+MAX_ATTEMPT_CHARS = 6000
 
 
 class AIProverStage:
@@ -82,6 +86,13 @@ class AIProverStage:
         # sessions; every job receives it.
         mathlib = knowledge.MathlibMap.from_steps(
             self.trace.document["steps"]
+        )
+        # Hand-backs so far in the run, including earlier sketches and runs
+        # before a resume.
+        handbacks = sum(
+            step["kind"] == "decision"
+            and step.get("event") == "lemma_handback"
+            for step in self.trace.document["steps"]
         )
 
         def exhausted(lemma: Lemma) -> bool:
@@ -128,7 +139,8 @@ class AIProverStage:
             return max(1, min(free, share))
 
         def maybe_handback(lemma: Lemma) -> None:
-            after = self.config.aiprover_handback_after
+            nonlocal handbacks
+            after = handback_after * (1 + lemma.generation)
             if (
                 not after
                 or lemma.proved
@@ -154,10 +166,19 @@ class AIProverStage:
                     f"{lemma.name}: Claude budget too low for a " f"hand-back"
                 )
             else:
+                limit = self.config.max_handbacks
                 # A hand-back takes minutes against a job's 90, so the lemma
                 # gives up its share of the slots meanwhile.
                 with sketch_lock:
-                    in_handback.add(lemma.name)
+                    allowed = not limit or handbacks < limit
+                    if allowed:
+                        in_handback.add(lemma.name)
+                        handbacks += 1
+                if not allowed:
+                    logger.info(
+                        f"{lemma.name}: hand-back limit of {limit} reached"
+                    )
+                    return
                 try:
                     self._handback(form, sketch, lemma, sketch_lock, submit)
                 except AgentRefusal as error:
@@ -318,7 +339,10 @@ class AIProverStage:
                 for sample in job.samples
             ]
             attempts = sorted(filter(None, codes), key=lambda entry: entry[0])
-            lemma.last_attempts = "\n\n".join(text for _, text in attempts)
+            lemma.last_attempts = "\n\n".join(
+                text[:MAX_ATTEMPT_CHARS]
+                for _, text in attempts[:MAX_ATTEMPTS_KEPT]
+            )
             lemma.knowledge = knowledge.carry(
                 lemma.knowledge,
                 [
@@ -628,6 +652,7 @@ class AIProverStage:
                     if result.ok:
                         with sketch_lock:
                             for offset, other in enumerate(new_lemmas):
+                                other.generation = lemma.generation + 1
                                 sketch.lemmas.insert(position + offset, other)
                             lemma.helpers, lemma.proof = helpers, proof
                             lemma.proved = True

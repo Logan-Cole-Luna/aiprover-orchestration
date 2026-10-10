@@ -224,6 +224,7 @@ def restore_state(document: dict) -> ResumeState:
                     step.get("new_lemmas") or []
                 ):
                     for lemma in parse_lemmas(statement + " := by sorry"):
+                        lemma.generation = target.generation + 1
                         state.sketch.lemmas.insert(position + offset, lemma)
                         statement_of[lemma.name] = lemma.statement
         elif event == "replan":
