@@ -6,6 +6,15 @@ sessions, weighted towards lemmas with more failures. Every sample's proof
 passes the same Lean gate as chat solvers. After `aiprover_handback_after`
 failures a lemma is handed back to the captain, who proves, splits, restates
 it, or asks for a retry.
+
+Related published work (tags defined in docs/lit_review/lit_review.md §6):
+- [Similar] Splitting a lemma the prover fails on into subgoals: Hilbert
+  (Varambally et al., ICLR 2026), https://github.com/Rose-STL-Lab/ml-hilbert
+- [Similar] Refining the plan from failed lemmas: Goedel-Architect (Chung
+  et al., ICML 2026; no code released), https://icml.cc/virtual/2026/82541
+- [Similar] Spending prover attempts by estimated success and cost:
+  Rognvaldsson et al., ICML 2026,
+  https://github.com/eth-sri/optimizing-lean-agents
 """
 
 import logging

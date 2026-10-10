@@ -4,6 +4,13 @@ The captain formalizes the informal result until it compiles; an auditor
 writes a read-back of the Lean code without seeing the source; the captain
 judges the read-back against the source. REVISE returns to formalization
 with the read-back and the captain's issues as feedback.
+
+Related published work (tags defined in docs/lit_review/lit_review.md §6):
+- [Similar] Back-translation of formal statements checked against the
+  source by an NLI model: Lean Workbook (Ying et al., NeurIPS 2024),
+  https://github.com/InternLM/InternLM-Math/tree/main/leanworkbook
+- [Similar] Automated alignment scoring of informal and formal statements:
+  FormalAlign (Lu et al., ICLR 2025), https://github.com/rookie-joe/FormalAlign
 """
 
 import logging
