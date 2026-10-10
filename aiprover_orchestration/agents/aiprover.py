@@ -295,6 +295,7 @@ class AIProverAgent(Agent):
         work_dir: Path,
         resume_job: str | None = None,
         on_start: Callable[[str], None] | None = None,
+        hint: str = "",
     ) -> AIProverJob:
         """Run one AIProver job and return its samples (blocks until done).
 
@@ -303,7 +304,8 @@ class AIProverAgent(Agent):
         under this agent's timeout and turn budget, instead of a new job being
         submitted. `on_start` receives the job id once the job runs, so that an
         interruption can still find it. If the installed CLI cannot resume, a
-        new job is submitted instead."""
+        new job is submitted instead. `hint` is guidance added to a new job's
+        problem (the harness's `--hint-file`)."""
         if STOPPING.is_set():
             raise Terminated
         work_dir.mkdir(parents=True, exist_ok=True)
@@ -334,6 +336,11 @@ class AIProverAgent(Agent):
             statement_path = work_dir / f"{name}_statement.lean"
             context_path.write_text(context)
             statement_path.write_text(statement)
+            hint_args = []
+            if hint:
+                hint_path = work_dir / f"{name}_hint.txt"
+                hint_path.write_text(hint)
+                hint_args = ["--hint-file", str(hint_path)]
             args = [
                 "--theorem-text",
                 theorem_text,
@@ -343,6 +350,7 @@ class AIProverAgent(Agent):
                 str(context_path),
                 "--lean-statement",
                 str(statement_path),
+                *hint_args,
             ]
             rendered = self._cli("render", *args, timeout=60).stdout
             submitted = self._cli(
