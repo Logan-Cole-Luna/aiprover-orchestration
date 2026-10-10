@@ -6,6 +6,15 @@ sessions, weighted towards lemmas with more failures. Every sample's proof
 passes the same Lean gate as chat solvers. After `aiprover_handback_after`
 failures a lemma is handed back to the captain, who proves, splits, restates
 it, or asks for a retry.
+
+Related published work (tags defined in docs/lit_review/lit_review.md §6):
+- [Similar] Splitting a lemma the prover fails on into subgoals: Hilbert
+  (Varambally et al., ICLR 2026), https://github.com/Rose-STL-Lab/ml-hilbert
+- [Similar] Refining the plan from failed lemmas: Goedel-Architect (Chung
+  et al., ICML 2026; no code released), https://icml.cc/virtual/2026/82541
+- [Similar] Spending prover attempts by estimated success and cost:
+  Rognvaldsson et al., ICML 2026,
+  https://github.com/eth-sri/optimizing-lean-agents
 """
 
 import logging
@@ -23,7 +32,7 @@ from ...lean.text import (
     split_declarations,
     strip_leading_by,
 )
-from .. import prompts
+from .. import knowledge, prompts
 from ..extraction import (
     extract_lemma_proof,
     failed_attempt,
@@ -110,12 +119,12 @@ class AIProverStage:
                 not after
                 or lemma.proved
                 or lemma.handed_back
-                or lemma.attempts < after
+                or lemma.attempts - lemma.reviewed_at < after
                 or stopped.is_set()
             ):
                 return
-            if not lemma.last_attempts:
-                # No session left code of its own: a setup failure (clock,
+            if not lemma.last_attempts and not lemma.knowledge:
+                # No session left code or notes: a setup failure (clock,
                 # stalled replies); retry before asking the captain.
                 logger.info(
                     f"{lemma.name}: no code in the last attempt; "
@@ -194,6 +203,7 @@ class AIProverStage:
                 samples=samples,
                 work_dir=self.temp_dir / "aiprover",
                 resume_job=resume_job,
+                hint=knowledge.hint(lemma.knowledge),
                 on_start=lambda job_id: self._decision(
                     "aiprover_job_started",
                     lemma=lemma.name,
@@ -261,17 +271,21 @@ class AIProverStage:
             lemma.attempts += 1
             lemma.last_errors = "\n\n".join(errors)[:3000]
             # The samples' own code, most complete first, for the captain.
-            attempts = sorted(
-                filter(
-                    None,
-                    (
-                        failed_attempt(sample, lemma.name, fixed_names)
-                        for sample in job.samples
-                    ),
-                ),
-                key=lambda entry: entry[0],
-            )
+            codes = [
+                failed_attempt(sample, lemma.name, fixed_names)
+                for sample in job.samples
+            ]
+            attempts = sorted(filter(None, codes), key=lambda entry: entry[0])
             lemma.last_attempts = "\n\n".join(text for _, text in attempts)
+            lemma.knowledge = knowledge.carry(
+                lemma.knowledge,
+                [
+                    knowledge.session_notes(
+                        sample, lemma.attempts, code[1] if code else ""
+                    )
+                    for sample, code in zip(job.samples, codes)
+                ],
+            )
             logger.info(
                 f"AIProver job {job.job} did not prove {lemma.name} "
                 f"(attempt {lemma.attempts}/{max_attempts}): "
@@ -284,6 +298,7 @@ class AIProverStage:
                 aiprover_job=job.job,
                 errors=lemma.last_errors,
                 attempts=lemma.last_attempts,
+                knowledge=lemma.knowledge,
             )
 
         def gate_sample(
@@ -452,6 +467,7 @@ class AIProverStage:
             main_proof=sketch.main_proof,
             informal_proof=self.row["informal_proof"],
             failed=failed_lemma_text(lemma),
+            knowledge=lemma.knowledge or "(none)",
         )
         feedback = ""
         for repair in range(2):
@@ -465,6 +481,10 @@ class AIProverStage:
             proof = extract_tactics(reply, "proof")
             split_block = drop_imports(extract_tag(reply, "split"))
             restated = extract_tag(reply, "restate")
+            if "<knowledge>" in reply:
+                # Applied with whichever action follows: the next sessions
+                # on this lemma, or its new statement, start from it.
+                lemma.knowledge = extract_tag(reply, "knowledge")
             problems = []
             if restated:
                 new = parse_lemmas(
@@ -501,6 +521,9 @@ class AIProverStage:
                         with sketch_lock:
                             lemma.statement = new[0].statement
                             lemma.attempts, lemma.handed_back = 0, False
+                            lemma.reviewed_at = 0
+                            if "<knowledge>" not in reply:
+                                lemma.knowledge = ""
                         logger.info(f"{lemma.name} restated by the captain")
                         self._decision(
                             "lemma_handback",
@@ -509,6 +532,7 @@ class AIProverStage:
                             diagnosis=diagnosis,
                             statement=lemma.statement,
                             previous_statement=old,
+                            knowledge=lemma.knowledge,
                         )
                         return
                     problems.append(result.error_report())
@@ -589,11 +613,18 @@ class AIProverStage:
                     problems.append(result.error_report())
             elif "<retry" in reply:
                 logger.info(f"{lemma.name}: captain asks for a retry")
+                # The captain reviews the lemma again after as many further
+                # failures as led to this hand-back.
+                with sketch_lock:
+                    lemma.handed_back = False
+                    lemma.reviewed_at = lemma.attempts
                 self._decision(
                     "lemma_handback",
                     lemma=lemma.name,
                     action="retry",
                     diagnosis=diagnosis,
+                    attempts=lemma.attempts,
+                    knowledge=lemma.knowledge,
                 )
                 return
             else:

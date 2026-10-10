@@ -4,6 +4,10 @@ An item is a definition or a theorem. A submission is an attempted proof or
 disproof of a theorem; a sketch is a submission that imports other theorems,
 which become its children (`edges`). A sketch proves its parent once every
 child is proved.
+
+Related published work (tags defined in docs/lit_review/lit_review.md §6):
+- [Similar] Dependency graph of statements with formalization status: Lean
+  blueprints, https://github.com/PatrickMassot/leanblueprint
 """
 
 import json
