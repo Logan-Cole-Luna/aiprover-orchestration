@@ -42,15 +42,6 @@ from .trace import Trace
 
 logger = logging.getLogger(__name__)
 
-# Problem fields copied into the trace header.
-PROBLEM_FIELDS = (
-    "uuid",
-    "source_name",
-    "source_subset",
-    "raw_source_path",
-    "informal_statement",
-    "informal_proof",
-)
 # Summary fields recorded as the trace's outcome.
 OUTCOME_FIELDS = (
     "status",
@@ -124,7 +115,7 @@ class Orchestration(
             trace_path,
             {
                 "run_id": run_id,
-                "problem": {key: row.get(key) for key in PROBLEM_FIELDS},
+                "problem": dict(row),
                 "theorem_name": self.slug,
                 "models": {
                     "orchestrator": agents["captain"].model,
@@ -151,9 +142,7 @@ class Orchestration(
             max_claude_calls=config.max_claude_calls,
         )
         self.library_path = config.library or row.get("library", "")
-        self.library = (
-            libraries.load(self.library_path) if self.library_path else ""
-        )
+        self.library = self._load_library()
         self._file_counter = self.state.lean_checks_done
         self._counter_lock = threading.Lock()
         previous_outcome = (previous or {}).get("outcome") or {}
@@ -198,6 +187,18 @@ class Orchestration(
 
     def _decision(self, event: str, **fields) -> None:
         self.trace.add("decision", event=event, **fields)
+
+    def _load_library(self) -> str:
+        """The library text the run started with. It is kept as library.lean
+        in the result directory: the library file may be extended by other
+        runs meanwhile, and a resumed run elsewhere may lack it."""
+        snapshot = self.result_dir / "library.lean"
+        if not snapshot.exists():
+            if not self.library_path:
+                return ""
+            library_file = libraries.resolve(self.library_path)
+            snapshot.write_text(library_file.read_text())
+        return libraries.load(str(snapshot))
 
     def _check_library(self) -> None:
         """The library must compile on its own without `sorry`."""
