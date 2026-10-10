@@ -7,6 +7,7 @@ file is rewritten atomically after every step so it can be inspected while
 the run is in progress.
 """
 
+import gzip
 import json
 import os
 import threading
@@ -59,8 +60,15 @@ class Trace:
 
     @staticmethod
     def load(path: Path) -> dict | None:
+        """The trace document at `path`, or its gzip copy `<path>.gz` (as
+        shared result directories hold it); None if neither exists."""
         path = Path(path)
-        return json.loads(path.read_text()) if path.exists() else None
+        packed = path.with_name(path.name + ".gz")
+        if path.exists():
+            return json.loads(path.read_text())
+        if packed.exists():
+            return json.loads(gzip.decompress(packed.read_bytes()))
+        return None
 
     @property
     def elapsed_seconds(self) -> float:

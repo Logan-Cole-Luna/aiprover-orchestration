@@ -316,6 +316,13 @@ class AIProverAgent(Agent):
                 "AIProver CLI has no `resume` command. Submitting a new job."
             )
             resume_job = None
+        if resume_job and not (self.work_root / "jobs" / resume_job).exists():
+            # A run resumed on another machine lacks the job's sessions.
+            logger.warning(
+                f"AIProver job {resume_job} is not in {self.work_root}; "
+                "submitting a new job."
+            )
+            resume_job = None
         if resume_job:
             submitted = self._cli(
                 "resume",
