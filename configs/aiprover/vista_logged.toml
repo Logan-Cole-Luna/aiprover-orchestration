@@ -28,7 +28,7 @@ work_root = "~/workspace/aiprover_orchestration/aiprover/work"
 # Concurrent rollouts on this machine, across all runs; each holds a Lean
 # server (~2.5 GB measured at 13 sessions) and peaks near 5 GB while compiling
 # (VM: 32 cores, 125 GB).
-max_parallel = 44
+max_parallel = 48
 # Experimental: semantic index of the pinned Mathlib (service
 # aiprover_mathlib_index), served to the harness's lean_leanfinder tool;
 # empty = the hosted index of v4.28.
