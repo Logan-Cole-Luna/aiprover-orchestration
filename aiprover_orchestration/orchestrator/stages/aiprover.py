@@ -493,7 +493,12 @@ class AIProverStage:
             main_proof=sketch.main_proof,
             informal_proof=self.row["informal_proof"],
             failed=failed_lemma_text(lemma),
-            knowledge=lemma.knowledge or "(none)",
+            knowledge=(
+                knowledge.without_reasoning(lemma.knowledge)
+                if self.agents.agents["captain"].hosted
+                else lemma.knowledge
+            )
+            or "(none)",
         )
         feedback = ""
         for repair in range(2):
