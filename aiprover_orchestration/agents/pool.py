@@ -102,6 +102,8 @@ class AgentPool:
         self.usage_by_model: dict[str, dict] = {}
         if self.calls_path.exists():
             self._load_history()
+        elif trace is not None:
+            self._load_trace_history()
 
     def _load_history(self) -> None:
         """Seed the call and usage totals from an existing calls file (resume)."""
@@ -111,13 +113,33 @@ class AgentPool:
                 record["role"],
                 record.get("backend"),
                 record.get("model_usage") or {},
+                failed=record.get("error") is not None,
             )
 
+    def _load_trace_history(self) -> None:
+        """Seed the call totals from a resumed trace's model calls, for a run
+        whose call log is absent (a result directory copied elsewhere)."""
+        for step in self.trace.document["steps"]:
+            if step["kind"] == "model_call":
+                usage = step.get("usage") or {}
+                self._accumulate(
+                    step["role"],
+                    step.get("backend"),
+                    {step.get("model") or "": usage} if usage else {},
+                    failed=step.get("error") is not None,
+                )
+
     def _accumulate(
-        self, role: str, backend: str | None, model_usage: dict
+        self,
+        role: str,
+        backend: str | None,
+        model_usage: dict,
+        failed: bool = False,
     ) -> None:
+        # A failed call (rate limit, outage) does not count against the
+        # run's Claude call budget.
         self.num_calls[role] = self.num_calls.get(role, 0) + 1
-        self.claude_calls += backend == "claude"
+        self.claude_calls += backend == "claude" and not failed
         for model_id, usage in model_usage.items():
             totals = self.usage_by_model.setdefault(
                 model_id,
@@ -240,7 +262,12 @@ class AgentPool:
             "response": completion.text,
         }
         with self._lock:
-            self._accumulate(role, agent.backend, completion.usage)
+            self._accumulate(
+                role,
+                agent.backend,
+                completion.usage,
+                failed=completion.error is not None,
+            )
             with open(self.calls_path, "a") as f:
                 f.write(json.dumps(record) + "\n")
         if self.trace is not None:
