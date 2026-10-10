@@ -23,7 +23,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 
 from ...agents.aiprover import AIProverAgent
-from ...agents.base import AgentCallError, Completion
+from ...agents.base import AgentCallError, AgentRefusal, Completion
 from ...lean.checker import forbidden_constructs
 from ...lean.text import (
     drop_imports,
@@ -53,8 +53,6 @@ logger = logging.getLogger(__name__)
 # Sample states that say nothing about the lemma: the session failed on
 # infrastructure or was cancelled.
 STOPPED_STATES = ("infra", "cancelled")
-# Error text of a captain call refused by the model's safety classifier.
-REFUSAL = "safeguards flagged"
 
 
 class AIProverStage:
@@ -162,13 +160,11 @@ class AIProverStage:
                     in_handback.add(lemma.name)
                 try:
                     self._handback(form, sketch, lemma, sketch_lock, submit)
-                except AgentCallError as error:
+                except AgentRefusal as error:
                     # The captain's model refuses this prompt (a safety
                     # classifier), so asking again would fail the same way:
                     # the lemma continues without a hand-back instead of
                     # the run stopping and repeating it on every resume.
-                    if REFUSAL not in str(error):
-                        raise
                     logger.warning(
                         f"{lemma.name}: hand-back refused by the model; "
                         f"continuing without it"
