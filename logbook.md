@@ -202,6 +202,12 @@ Results
 
 ## Decisions
 
+- The budget keys keep the names `max_claude_calls`, `final_claude_calls`
+  and `informal_claude_calls`, stored in existing traces, although they
+  now count calls to every hosted model.
+- Explicit Claude prompt caching (a `cache_control` block on the stable
+  prefix of a hand-back) is deferred: hand-backs of a run are often more
+  than the cache lifetime apart.
 - Decode settings are measured on one allocation per arm set
   (`bench_serve_vista.sbatch`) before the serve defaults change; the
   serve script deployed on Vista keeps eager mode until then. FP8 KV cache
@@ -345,6 +351,26 @@ Results
 - Query server with run queue, live progress and Claude call budget.
 - Per-run model choice for orchestrator and subagent (Claude model and
   reasoning level, or AIProver trained/base) on the query server page.
+
+## 2026-10-10: Hosted model spend
+
+- Claude spend over the 30 traces in `results/` ($86.4): captain
+  hand-backs 34%, sketches 22.5%, formalization and judge 13.5%,
+  reviewer and writer about 20%. Output, mostly adaptive thinking at
+  `effort: high`, is about 60%. Hand-backs recurse through splits
+  (Theorem 3.7: lemma generations up to 3).
+- Refusals are a field of `Completion` set by every backend (Claude,
+  OpenAI-compatible `refusal` / `content_filter`). A refused
+  call is not retried and raises `AgentRefusal`; outside a hand-back the
+  run ends with `error_kind: refused`, which is not resumed automatically.
+- The call budget (`max_claude_calls`) counts billed calls to hosted
+  models on any backend: successful calls and refusals.
+- Hand-backs: `max_handbacks` per run (served config: 12); a lemma from a
+  split is handed back after `aiprover_handback_after` × (1 + generation)
+  failures; `last_attempts` keeps the two most complete samples, 6,000
+  characters each.
+- The hand-back prompt begins with the run-stable context (definitions,
+  preamble, informal proof, main proof) for provider prefix caching.
 
 ## 2026-10-10: Hosted captains, trace repair, Lake commands refused
 
