@@ -36,14 +36,12 @@ import threading
 import time
 from pathlib import Path
 
+from ..orchestrator.trace import REFUSAL_MARKER, is_untraced
 from .base import Agent, AgentCallError, AgentRefusal, Completion
 from .claude import ClaudeAgent
 from .openai_compatible import OpenAICompatibleAgent
 
 logger = logging.getLogger(__name__)
-
-# Error text of a refusal, for records written before the `refused` field.
-REFUSAL_MARKER = "safeguards flagged"
 
 
 BACKENDS = {
@@ -297,7 +295,11 @@ class AgentPool:
             )
             with open(self.calls_path, "a") as f:
                 f.write(json.dumps(record) + "\n")
-        if self.trace is not None:
+        # A refusal concerns the provider, not the run: it stays in the call
+        # log and is left out of the trace.
+        if self.trace is not None and not is_untraced(
+            completion.error, completion.refused
+        ):
             primary_usage = completion.usage.get(agent.model) or next(
                 iter(completion.usage.values()), {}
             )
