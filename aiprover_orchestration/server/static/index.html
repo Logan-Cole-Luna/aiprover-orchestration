@@ -98,6 +98,8 @@ table.servers .note { color: var(--muted); }
         color: var(--muted); border: 1px solid var(--border); }
 .pill.RUNNING { color: var(--ok); border-color: var(--ok); }
 .pill.PENDING { color: var(--accent); border-color: var(--accent); }
+.pill.PERSISTENT { color: var(--ok); border-color: var(--ok); }
+.pill.DOWN { color: var(--bad); border-color: var(--bad); }
 pre#log {
   background: var(--code-bg); padding: 12px; border: 1px solid var(--border);
   border-radius: 8px; margin: 0; max-height: 420px; overflow: auto;
@@ -137,7 +139,7 @@ summary .note { color: var(--muted); font-weight: 400; font-size: 0.85rem; margi
           <button class="plain" id="logout">Sign out</button></div>
       </div>
       <details>
-        <summary>Model servers on Vista</summary>
+        <summary>Model servers</summary>
         <div class="table-wrap" id="vista"></div>
       </details>
     </section>
@@ -381,12 +383,38 @@ function startText(job) {
   return `${estimate}${time} (${untilText(job.start_epoch)})`;
 }
 
+// The group's load and sharing: requests in flight through its proxy, and
+// the groups whose servers it borrows or that borrow its own.
+function poolText(group) {
+  const pool = group.pool || [];
+  const healthy = pool.filter(server => server.healthy).length;
+  const inFlight = pool.reduce((sum, server) => sum + server.in_flight, 0);
+  return [
+    pool.length ? `${inFlight} requests in flight on ${healthy}/${pool.length} servers` : "",
+    (group.borrows || []).length ? `borrows ${group.borrows.join(", ")}` : "",
+    (group.lent_to || []).length ? `used by ${group.lent_to.join(", ")}` : "",
+  ].filter(Boolean).join(" · ");
+}
+
+// A persistent server (no Slurm job): its host, always on.
+function persistentRow(name, group, status) {
+  const host = ((group.pool || [])[0] || {}).url || "";
+  const state = group.endpoint_up ? "PERSISTENT" : "DOWN";
+  const note = [poolText(group), status].filter(Boolean).join(" · ");
+  return `<tr><td class="group">${escapeHtml(name)}</td>`
+    + `<td>${escapeHtml(host.replace(/^https?:\/\//, ""))}</td>`
+    + `<td><span class="pill ${state}">${state === "DOWN" ? "down" : "persistent"}</span></td>`
+    + `<td>–</td><td>always on</td><td>–</td>`
+    + `<td class="note">${escapeHtml(note)}</td></tr>`;
+}
+
 // Rows of one GPU group: a row per server job, or one row saying why none
 // is listed; the group cell carries the worker's last status.
 function serverRows(name, group) {
   const status = group.vista && group.vista !== "not checked" ? group.vista : "";
   const jobs = group.server_jobs;
   const groupCell = (span) => `<td class="group" rowspan="${span}">${escapeHtml(name)}</td>`;
+  if (group.persistent) return persistentRow(name, group, status);
   if (!jobs || !jobs.length) {
     const text = jobs ? "no server job" : "Vista unreachable";
     return `<tr>${groupCell(1)}<td colspan="5" class="note">${text}</td>`
@@ -395,7 +423,8 @@ function serverRows(name, group) {
   return jobs.map((job, index) => {
     const reason = job.state === "PENDING"
       ? (PENDING_REASONS[job.reason] || job.reason) : "";
-    const note = [reason, index === 0 ? status : ""].filter(Boolean).join(" · ");
+    const note = [reason, index === 0 ? poolText(group) : "", index === 0 ? status : ""]
+      .filter(Boolean).join(" · ");
     return `<tr>${index === 0 ? groupCell(jobs.length) : ""}`
       + `<td>${escapeHtml(job.id)}</td>`
       + `<td><span class="pill ${escapeHtml(job.state)}">${escapeHtml(job.state.toLowerCase())}</span></td>`
@@ -416,7 +445,7 @@ async function refreshHealth() {
       + `<span>queued ${h.queued}</span>`
       + `<span>running ${h.running ? escapeHtml(h.running) : "none"}</span>`;
     $("vista").innerHTML = `<table class="servers"><thead><tr>
-        <th>GPU group</th><th>Server job</th><th>State</th><th>Start</th>
+        <th>GPU group</th><th>Server</th><th>State</th><th>Start</th>
         <th>Elapsed / limit</th><th>Nodes</th><th>Note</th></tr></thead>
         <tbody>${groups.map(([name, g]) => serverRows(name, g)).join("")}</tbody>
       </table>`;
