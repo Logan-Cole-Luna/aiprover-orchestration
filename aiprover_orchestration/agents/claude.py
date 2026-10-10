@@ -50,6 +50,7 @@ class ClaudeAgent(Agent):
     """
 
     backend = "claude"
+    hosted = True
 
     def __init__(
         self,
