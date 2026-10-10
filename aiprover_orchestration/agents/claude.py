@@ -127,7 +127,10 @@ class ClaudeAgent(Agent):
             }
         }
         if message.stop_reason == "refusal":
-            return Completion(usage=usage, error="request declined (refusal)")
+            return Completion(
+                usage=usage,
+                error="request declined: safeguards flagged it (refusal)",
+            )
         text = "".join(
             block.text for block in message.content if block.type == "text"
         ).strip()

@@ -53,6 +53,8 @@ logger = logging.getLogger(__name__)
 # Sample states that say nothing about the lemma: the session failed on
 # infrastructure or was cancelled.
 STOPPED_STATES = ("infra", "cancelled")
+# Error text of a captain call refused by the model's safety classifier.
+REFUSAL = "safeguards flagged"
 
 
 class AIProverStage:
@@ -160,6 +162,24 @@ class AIProverStage:
                     in_handback.add(lemma.name)
                 try:
                     self._handback(form, sketch, lemma, sketch_lock, submit)
+                except AgentCallError as error:
+                    # The captain's model refuses this prompt (a safety
+                    # classifier), so asking again would fail the same way:
+                    # the lemma continues without a hand-back instead of
+                    # the run stopping and repeating it on every resume.
+                    if REFUSAL not in str(error):
+                        raise
+                    logger.warning(
+                        f"{lemma.name}: hand-back refused by the model; "
+                        f"continuing without it"
+                    )
+                    lemma.handed_back = True
+                    self._decision(
+                        "lemma_handback",
+                        lemma=lemma.name,
+                        action="refused",
+                        diagnosis=str(error)[:300],
+                    )
                 finally:
                     with sketch_lock:
                         in_handback.discard(lemma.name)
@@ -641,6 +661,13 @@ class AIProverStage:
                         for other in new_lemmas:
                             submit(other)
                         return
+                    # A timed-out check reflects the machine, not the reply:
+                    # the run stops and its resume repeats this hand-back.
+                    if result.timed_out:
+                        raise AgentCallError(
+                            f"Lean check of the hand-back of {lemma.name} "
+                            f"timed out"
+                        )
                     problems.append(result.error_report())
             elif "<retry" in reply:
                 logger.info(f"{lemma.name}: captain asks for a retry")
