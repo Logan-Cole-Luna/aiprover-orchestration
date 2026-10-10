@@ -1,6 +1,7 @@
 # GPU group "openai": the harness reaches its model server through the
 # reasoning proxy on 127.0.0.1:18569, which pools the tunnels on 18559 (own
-# server), 18555 and 18558 (servers of groups "main" and "open", borrowed).
+# server) and 18555 (group "main", borrowed); 18558 (group "open") answers
+# only while open serves.
 # Sessions share work_root with the other groups, so max_parallel bounds the
 # Lean sessions of all groups on this machine.
 # AIProver harness configuration: the harness reaches the model through the
@@ -31,9 +32,9 @@ model = ""
 [runtime]
 work_root = "~/workspace/aiprover_orchestration/aiprover/work"
 # Concurrent rollouts on this machine, across all runs; each holds a Lean
-# server (~2 GB measured at 16 sessions) and peaks near 5 GB while compiling
+# server (~2.5 GB measured at 13 sessions) and peaks near 5 GB while compiling
 # (VM: 32 cores, 125 GB).
-max_parallel = 28
+max_parallel = 44
 # Experimental: semantic index of the pinned Mathlib (service
 # aiprover_mathlib_index), served to the harness's lean_leanfinder tool;
 # empty = the hosted index of v4.28.

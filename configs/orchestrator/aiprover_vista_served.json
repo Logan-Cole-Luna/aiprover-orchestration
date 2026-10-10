@@ -41,7 +41,6 @@
   "lean_parallel": 4,
   "lean_timeout": 300,
   "max_claude_calls": 10,
-  "aiprover_lemma_concurrency": 4,
   "aiprover_session_slots": 8,
   "aiprover_handback_after": 3,
   "final_claude_calls": 8
