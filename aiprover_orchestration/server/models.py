@@ -175,6 +175,9 @@ def checkpoint_names(selection: dict) -> set[str]:
 PERSISTENT_VERSIONS = {"dgx"}
 VERSION_ENDPOINTS = {"dgx": "http://127.0.0.1:18566/v1"}
 HARNESS_CONFIGS = {"dgx": "configs/aiprover/dgx.toml"}
+# Session time limits (seconds) of versions slower than the Vista servers; the
+# DGX completes a median 11 turns per hour against 76 on Vista.
+SOLVER_TIMEOUTS = {"dgx": 10800}
 VERSION_SETTINGS = {"dgx": {"aiprover_session_slots": 4}}
 
 
@@ -228,6 +231,9 @@ def build_config(base_config: Path, selection: dict) -> dict:
                 agents["solver"] = {
                     **agents["solver"],
                     "config": HARNESS_CONFIGS[choice["model"]],
+                    "timeout": SOLVER_TIMEOUTS.get(
+                        choice["model"], agents["solver"].get("timeout")
+                    ),
                 }
             continue
         agents[ROLES[role]] = spec

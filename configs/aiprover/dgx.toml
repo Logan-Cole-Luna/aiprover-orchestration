@@ -27,9 +27,9 @@ work_root = "~/workspace/aiprover_orchestration/aiprover/work"
 # server (~2 GB measured at 16 sessions) and peaks near 5 GB while compiling
 # (VM: 32 cores, 125 GB).
 max_parallel = 28
-# Champion measurement settings (100 turns / 5400 s); the harness derives its
-# time fences from timeout_sec.
-timeout_sec = 5400
+# 100 turns in 10800 s: the DGX serves turns several times slower than the
+# Vista servers (5400 s); the harness derives its time fences from timeout_sec.
+timeout_sec = 10800
 max_turns = 100
 
 [paths]

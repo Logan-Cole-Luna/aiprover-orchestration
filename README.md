@@ -60,6 +60,13 @@ python -m aiprover_orchestration.orchestrator.run \
     --config configs/orchestrator/claude.json \
     --problem-uuid JiatuBook_BoundedArithmetic_000004
 
+# Resume a run from results/<run_id>/ alone (trace.json or trace.json.gz)
+python -m aiprover_orchestration.orchestrator.run --run-id <run_id> --resume
+
+# Copy runs to a sharing repository (timer: aiprover_share_results)
+python -m aiprover_orchestration.utils.share_results \
+    --target ~/workspace/orchestration-results --match OpenAIMath
+
 # Query server (systemd unit: scripts/systemd/aiprover_query_server.service)
 uvicorn aiprover_orchestration.server.app:app --host 0.0.0.0 --port 8443
 
