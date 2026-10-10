@@ -439,12 +439,20 @@ class Worker(threading.Thread):
             if candidate is None:
                 continue
             checkpoint = job_checkpoint(candidate)
+            group = job_group(candidate)
             if checkpoint is not None and not self._pool_serving(
-                checkpoint, job_group(candidate)
+                checkpoint, group
             ):
                 # A run that needs no model server does not wait for
                 # another run's server.
                 candidate = self._serverless_job(name, queued)
+            elif not group.job_name:
+                # A persistent server's runs wait until it answers, rather
+                # than failing on it.
+                endpoint_up, message = endpoint_status(False, group)
+                self.vista_messages[name] = message
+                if not endpoint_up:
+                    candidate = None
             if candidate is not None:
                 self._execute(candidate)
                 started = True
