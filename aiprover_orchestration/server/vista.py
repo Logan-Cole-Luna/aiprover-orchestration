@@ -46,6 +46,9 @@ CHECKPOINTS = {
 
 @dataclass(frozen=True)
 class GpuGroup:
+    """A group of runs sharing a model server. A group without a Slurm job
+    name uses a persistent server (the DGX), which is never submitted."""
+
     name: str
     job_name: str  # Slurm job name of the group's server jobs
     handoff: str  # file on Vista where the server job writes its node and port
@@ -74,6 +77,7 @@ GPU_GROUPS = {
         AIPROVER_CONFIGS / "vista.toml",
         "configs/aiprover/vista_logged.toml",
         18565,
+        borrows=("openai", "open"),
     ),
     "open": GpuGroup(
         "open",
@@ -91,6 +95,15 @@ GPU_GROUPS = {
         "configs/aiprover/vista_logged_openai.toml",
         18569,
         borrows=("main", "open"),
+    ),
+    # The persistent server cic-dgx-01 through its reasoning proxy.
+    "dgx": GpuGroup(
+        "dgx",
+        "",
+        "",
+        AIPROVER_CONFIGS / "dgx.toml",
+        "configs/aiprover/dgx.toml",
+        18566,
     ),
 }
 
@@ -165,6 +178,8 @@ def server_job_details(group: GpuGroup) -> list[dict] | None:
     """The group's model server jobs as squeue reports them; None if Vista
     is unreachable. `start_epoch` is the (estimated) start in seconds since
     the epoch, or None when Slurm gives no estimate."""
+    if not group.job_name:
+        return []
     code, output = remote(
         f'squeue -u "$USER" -n {group.job_name} -h -o "{SQUEUE_FORMAT}"'
     )
@@ -201,6 +216,8 @@ def server_jobs(group: GpuGroup) -> dict[str, str] | None:
 def handoff(group: GpuGroup) -> dict | None:
     """Job id, node and port named in the group's handoff file; None if the
     file is missing or Vista is unreachable."""
+    if not group.handoff:
+        return None
     code, output = remote(f"cat {group.handoff}")
     match = re.search(r"node=(\S+) port=(\d+) job=(\d+)", output)
     if code != 0 or not match:

@@ -167,7 +167,12 @@ def tool_call_id() -> str:
 
 def parse_tool_calls(content: str) -> tuple[str, list[dict]]:
     """Split a reply's content into its text and the tool calls written
-    after it in the Mistral format; (content, []) when there are none."""
+    after it in the Mistral format; (content, []) when there are none.
+
+    [Similar] vLLM's server-side parser for the same format (vLLM: Kwon et
+    al., SOSP 2023; tags defined in docs/lit_review/lit_review.md §6):
+    https://github.com/vllm-project/vllm/blob/main/vllm/tool_parsers/mistral_tool_parser.py
+    """
     text, *parts = content.split(TOOL_CALLS_MARK)
     calls = []
     for part in parts:

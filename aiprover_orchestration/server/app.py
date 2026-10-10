@@ -242,6 +242,15 @@ def health(user: str = Depends(current_user)) -> dict:
             ),
             "vista": worker.vista_messages.get(name, "not checked"),
         }
+    # A group whose own server is down is served while a server it
+    # borrows answers.
+    for name, group in vista.GPU_GROUPS.items():
+        lenders = [
+            lender for lender in group.borrows if groups[lender]["endpoint_up"]
+        ]
+        if lenders and not groups[name]["endpoint_up"]:
+            groups[name]["endpoint_up"] = True
+            groups[name]["endpoint"] += f"; served by {', '.join(lenders)}"
     main = groups[vista.DEFAULT_GROUP]
     return {
         "control_master": control_master_running(),

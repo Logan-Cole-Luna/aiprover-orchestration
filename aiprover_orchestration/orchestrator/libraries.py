@@ -13,6 +13,11 @@ its lemmas, and its main proof under the target theorem's name in place of
 `solution`. The extension is appended under a file lock and kept only if the
 extended library compiles without `sorry`.
 
+Related published work (tags defined in docs/lit_review/lit_review.md §6):
+- [Similar] Libraries that grow with proved results: LEGO-Prover (Wang et
+  al., ICLR 2024), https://github.com/wiio12/LEGO-Prover; LeanAgent
+  (Kumarappan et al., ICLR 2025), https://github.com/lean-dojo/LeanAgent
+
     python3 -m aiprover_orchestration.orchestrator.libraries add \
         libraries/<name>.lean results/<run_id>
 """

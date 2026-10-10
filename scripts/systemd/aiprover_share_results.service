@@ -1,0 +1,13 @@
+# Copies the OpenAI problem runs into ~/workspace/orchestration-results
+# (aiprover_orchestration/utils/share_results.py); run by the timer below.
+# Install:
+#   cp scripts/systemd/aiprover_share_results.{service,timer} ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now aiprover_share_results.timer
+[Unit]
+Description=Share AIProver orchestration results
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/loganluna/workspace/aiprover_orchestration
+ExecStart=/home/loganluna/lean_env/bin/python3 -m aiprover_orchestration.utils.share_results --target /home/loganluna/workspace/orchestration-results --match OpenAIMath
