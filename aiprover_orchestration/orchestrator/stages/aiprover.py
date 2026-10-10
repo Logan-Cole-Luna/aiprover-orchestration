@@ -53,6 +53,8 @@ logger = logging.getLogger(__name__)
 # Sample states that say nothing about the lemma: the session failed on
 # infrastructure or was cancelled.
 STOPPED_STATES = ("infra", "cancelled")
+# Error text of a captain call refused by the model's safety classifier.
+REFUSAL = "safeguards flagged"
 
 
 class AIProverStage:
@@ -77,6 +79,20 @@ class AIProverStage:
         in_handback: set[str] = set()  # lemmas waiting on the captain
         max_attempts = max(1, self.config.aiprover_attempts_per_lemma)
         concurrency = self.config.aiprover_lemma_concurrency or len(pending)
+        handback_after = self.config.aiprover_handback_after
+        # Declarations found and searches that failed, over the run's
+        # sessions; every job receives it.
+        mathlib = knowledge.MathlibMap.from_steps(
+            self.trace.document["steps"]
+        )
+
+        def exhausted(lemma: Lemma) -> bool:
+            """No attempts left: `max_attempts`, or, after a captain's retry,
+            `aiprover_handback_after` more than at that review."""
+            allowed = max_attempts
+            if handback_after and lemma.reviewed_at:
+                allowed = max(allowed, lemma.reviewed_at + handback_after)
+            return lemma.attempts >= allowed
 
         def weight(lemma: Lemma) -> int:
             return 1 + lemma.attempts
@@ -98,7 +114,7 @@ class AIProverStage:
                     and not other.proved
                     and other.name not in sessions_in_flight
                     and other.name not in in_handback
-                    and other.attempts < max_attempts
+                    and not exhausted(other)
                 ),
                 key=weight,
                 reverse=True,
@@ -123,9 +139,14 @@ class AIProverStage:
                 or stopped.is_set()
             ):
                 return
-            if not lemma.last_attempts and not lemma.knowledge:
+            if (
+                not lemma.last_attempts
+                and not lemma.knowledge
+                and not exhausted(lemma)
+            ):
                 # No session left code or notes: a setup failure (clock,
-                # stalled replies); retry before asking the captain.
+                # stalled replies); retry before asking the captain. A lemma
+                # without attempts left goes to the captain regardless.
                 logger.info(
                     f"{lemma.name}: no code in the last attempt; "
                     f"hand-back deferred"
@@ -141,6 +162,24 @@ class AIProverStage:
                     in_handback.add(lemma.name)
                 try:
                     self._handback(form, sketch, lemma, sketch_lock, submit)
+                except AgentCallError as error:
+                    # The captain's model refuses this prompt (a safety
+                    # classifier), so asking again would fail the same way:
+                    # the lemma continues without a hand-back instead of
+                    # the run stopping and repeating it on every resume.
+                    if REFUSAL not in str(error):
+                        raise
+                    logger.warning(
+                        f"{lemma.name}: hand-back refused by the model; "
+                        f"continuing without it"
+                    )
+                    lemma.handed_back = True
+                    self._decision(
+                        "lemma_handback",
+                        lemma=lemma.name,
+                        action="refused",
+                        diagnosis=str(error)[:300],
+                    )
                 finally:
                     with sketch_lock:
                         in_handback.discard(lemma.name)
@@ -150,7 +189,7 @@ class AIProverStage:
             # with enough failures (after a resume) goes to the captain first.
             while not lemma.proved and not stopped.is_set():
                 maybe_handback(lemma)
-                if lemma.proved or lemma.attempts >= max_attempts:
+                if lemma.proved or exhausted(lemma):
                     break
                 servers = solver.servers()
                 with sketch_lock:
@@ -161,6 +200,10 @@ class AIProverStage:
                 finally:
                     with sketch_lock:
                         sessions_in_flight.pop(lemma.name, None)
+
+        def mathlib_text() -> str:
+            with sketch_lock:
+                return mathlib.text({other.name for other in sketch.lemmas})
 
         def context_for(lemma: Lemma) -> tuple[str, set[str]]:
             with sketch_lock:
@@ -203,7 +246,7 @@ class AIProverStage:
                 samples=samples,
                 work_dir=self.temp_dir / "aiprover",
                 resume_job=resume_job,
-                hint=knowledge.hint(lemma.knowledge),
+                hint=knowledge.hint(lemma.knowledge, mathlib_text()),
                 on_start=lambda job_id: self._decision(
                     "aiprover_job_started",
                     lemma=lemma.name,
@@ -211,6 +254,9 @@ class AIProverStage:
                     aiprover_job=job_id,
                 ),
             )
+            with sketch_lock:
+                for sample in job.samples:
+                    mathlib.add(sample.session, sample.lean)
             ranked = sorted(
                 job.samples, key=lambda sample: sample.status != "verified"
             )
@@ -467,7 +513,12 @@ class AIProverStage:
             main_proof=sketch.main_proof,
             informal_proof=self.row["informal_proof"],
             failed=failed_lemma_text(lemma),
-            knowledge=lemma.knowledge or "(none)",
+            knowledge=(
+                knowledge.without_reasoning(lemma.knowledge)
+                if self.agents.agents["captain"].hosted
+                else lemma.knowledge
+            )
+            or "(none)",
         )
         feedback = ""
         for repair in range(2):
@@ -610,6 +661,13 @@ class AIProverStage:
                         for other in new_lemmas:
                             submit(other)
                         return
+                    # A timed-out check reflects the machine, not the reply:
+                    # the run stops and its resume repeats this hand-back.
+                    if result.timed_out:
+                        raise AgentCallError(
+                            f"Lean check of the hand-back of {lemma.name} "
+                            f"timed out"
+                        )
                     problems.append(result.error_report())
             elif "<retry" in reply:
                 logger.info(f"{lemma.name}: captain asks for a retry")

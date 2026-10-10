@@ -65,6 +65,7 @@ class OpenAICompatibleAgent(Agent):
             extra_body=extra_body or {},
             **options,
         )
+        self.hosted = bool(provider)
         self.url = base_url.rstrip("/") + "/chat/completions"
         self.api_key = os.environ.get(api_key_env, "") if api_key_env else ""
         # OpenAI's reasoning models accept only `max_completion_tokens`.
