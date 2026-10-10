@@ -25,6 +25,7 @@ from ..agents.aiprover import stop_jobs
 from ..paths import CONFIG_DIR, DATA_DIR, LOGS_DIR, RESULTS_DIR, TEMP_DIR
 from .config import Config
 from .pipeline import Orchestration
+from .trace import Trace
 
 # JiatuBook validation split, copied from PartitionAndProve
 # (`feature/SAM:JiatuBookFormalization/dataset/`).
@@ -49,7 +50,9 @@ def fork_run(source_id: str, run_id: str, stage: str) -> None:
     call log, so its totals include the shared prefix; a source run without
     a call log gives an empty one.
     """
-    source = json.loads((RESULTS_DIR / source_id / "trace.json").read_text())
+    source = Trace.load(RESULTS_DIR / source_id / "trace.json")
+    if source is None:
+        raise SystemExit(f"no trace of run {source_id}")
     steps = source["steps"]
     cut = next(
         (i for i, step in enumerate(steps) if step["stage"] == stage), None
@@ -109,7 +112,13 @@ def main() -> None:
         "--problem-uuid", default="JiatuBook_BoundedArithmetic_000004"
     )
     parser.add_argument("--dataset", type=Path, default=DATASET)
-    parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="orchestrator config (default: the trace's on --resume, else "
+        f"{DEFAULT_CONFIG.relative_to(CONFIG_DIR.parent)})",
+    )
     parser.add_argument("--run-id", default="")
     parser.add_argument(
         "--resume",
@@ -154,13 +163,6 @@ def main() -> None:
         )
     args = parser.parse_args()
 
-    settings = json.loads(args.config.read_text())
-    for option in scalar_options:
-        value = getattr(args, option.name)
-        if value is not None:
-            settings[option.name] = value
-    config = Config(**settings)
-
     if args.fork_from:
         if not args.run_id:
             parser.error("--fork-from requires --run-id")
@@ -169,11 +171,31 @@ def main() -> None:
     if args.resume:
         if not args.run_id:
             parser.error("--resume requires --run-id")
-        trace = json.loads(
-            (RESULTS_DIR / args.run_id / "trace.json").read_text()
-        )
+        trace = Trace.load(RESULTS_DIR / args.run_id / "trace.json")
+        if trace is None:
+            parser.error(f"no trace of run {args.run_id} in {RESULTS_DIR}")
         args.problem_uuid = trace["problem"]["uuid"]
-    row = load_problem(args.dataset, args.problem_uuid)
+    else:
+        trace = None
+    # A resumed run is self-contained: its trace records the config and the
+    # problem, so it continues without the original files.
+    if args.config is not None:
+        settings = json.loads(args.config.read_text())
+    elif trace is not None:
+        settings = trace["config"]
+    else:
+        settings = json.loads(DEFAULT_CONFIG.read_text())
+    for option in scalar_options:
+        value = getattr(args, option.name)
+        if value is not None:
+            settings[option.name] = value
+    config = Config(**settings)
+
+    row = (
+        trace["problem"]
+        if trace is not None and "informal_proof" in trace["problem"]
+        else load_problem(args.dataset, args.problem_uuid)
+    )
     run_id = (
         args.run_id
         or f"{time.strftime('%Y%m%d_%H%M%S')}_{row['uuid'].rsplit('_', 1)[-1]}"
