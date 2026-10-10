@@ -1,5 +1,3 @@
-Solver agents have failed {attempts} times to prove the lemma `{lemma_name}` of your proof sketch. The other lemmas are still being proved. Diagnose the failure from the attempts below and choose one action.
-
 <definitions>
 {definitions}
 </definitions>
@@ -8,16 +6,19 @@ Solver agents have failed {attempts} times to prove the lemma `{lemma_name}` of 
 {preamble}
 </preamble>
 
-<sketch_lemmas>
-{lemmas}
-</sketch_lemmas>
+<informal_proof>
+{informal_proof}
+</informal_proof>
+
 <main_proof>
 {main_proof}
 </main_proof>
 
-<informal_proof>
-{informal_proof}
-</informal_proof>
+Solver agents have failed {attempts} times to prove the lemma `{lemma_name}` of your proof sketch. The other lemmas are still being proved. Diagnose the failure from the attempts below and choose one action.
+
+<sketch_lemmas>
+{lemmas}
+</sketch_lemmas>
 
 <failed_lemma>
 {failed}
