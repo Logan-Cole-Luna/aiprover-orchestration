@@ -275,6 +275,32 @@ class AIProverAgent(Agent):
         except (OSError, ValueError, KeyError):
             return 1
 
+    def _cli_json(self, *args: str) -> dict:
+        """The JSON a CLI command prints; empty if it fails."""
+        try:
+            done = self._cli(*args, timeout=60)
+            return json.loads(done.stdout.strip().splitlines()[-1])
+        except (subprocess.TimeoutExpired, ValueError, IndexError):
+            return {}
+
+    def live_sessions(self, job: str) -> int:
+        """Sessions of a job running or waiting for a slot."""
+        state = self._cli_json("status", job, "--json")
+        return int(state.get("running", 0)) + int(state.get("queued", 0))
+
+    def free_slots(self) -> int:
+        """Session slots of this machine that no session holds."""
+        return int(self._cli_json("slots").get("free", 0))
+
+    def grow(self, job: str, sessions: int) -> int:
+        """Add sessions to a running job; the number added (0 if the job is
+        finished or too close to its deadline)."""
+        try:
+            done = self._cli("grow", job, "-k", str(sessions), timeout=60)
+            return int(done.stdout.strip() or 0) if done.returncode == 0 else 0
+        except (subprocess.TimeoutExpired, ValueError):
+            return 0
+
     @cached_property
     def supports_resume(self) -> bool:
         """True if the installed AIProver CLI provides `aiprover resume`."""

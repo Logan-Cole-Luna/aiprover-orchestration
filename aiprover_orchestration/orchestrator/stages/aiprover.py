@@ -53,6 +53,8 @@ logger = logging.getLogger(__name__)
 # Sample states that say nothing about the lemma: the session failed on
 # infrastructure or was cancelled.
 STOPPED_STATES = ("infra", "cancelled")
+# Interval at which running jobs receive the session slots freed meanwhile.
+REBALANCE_SECONDS = 60
 # Failed samples' code kept for the captain and the replan: the most
 # complete ones, each cut to a length.
 MAX_ATTEMPTS_KEPT = 2
@@ -78,6 +80,7 @@ class AIProverStage:
         # Guards sketch.lemmas, lemma statements and the session counts.
         sketch_lock = threading.Lock()
         sessions_in_flight: dict[str, int] = {}
+        running_jobs: dict[str, str] = {}  # lemma name -> its AIProver job
         in_handback: set[str] = set()  # lemmas waiting on the captain
         max_attempts = max(1, self.config.aiprover_attempts_per_lemma)
         concurrency = self.config.aiprover_lemma_concurrency or len(pending)
@@ -217,6 +220,77 @@ class AIProverStage:
                 finally:
                     with sketch_lock:
                         sessions_in_flight.pop(lemma.name, None)
+                        running_jobs.pop(lemma.name, None)
+
+        def startable(lemma: Lemma) -> bool:
+            """An unproved lemma without a job that could start one."""
+            return (
+                not lemma.proved
+                and lemma.name not in sessions_in_flight
+                and lemma.name not in in_handback
+                and not exhausted(lemma)
+            )
+
+        def rebalance() -> None:
+            """Give running jobs the session slots freed while they run (a
+            finished session, a proved lemma), which a job sized at its
+            start cannot receive. Slots go to new jobs first: running jobs
+            grow only while no lemma waits to start one, and only into slots
+            free on both the model servers and this machine."""
+            slots = self.config.aiprover_session_slots
+            while slots and not finished.wait(REBALANCE_SECONDS):
+                if stopped.is_set():
+                    return
+                with sketch_lock:
+                    jobs = dict(running_jobs)
+                    if not jobs or any(map(startable, sketch.lemmas)):
+                        continue
+                live = {
+                    name: solver.live_sessions(job)
+                    for name, job in jobs.items()
+                }
+                free = min(
+                    slots * solver.servers() - sum(live.values()),
+                    solver.free_slots(),
+                )
+                with sketch_lock:
+                    for name, count in live.items():
+                        if name in sessions_in_flight:
+                            sessions_in_flight[name] = count
+                    growing = sorted(
+                        (
+                            lemma
+                            for lemma in sketch.lemmas
+                            if lemma.name in jobs and not lemma.proved
+                        ),
+                        key=weight,
+                        reverse=True,
+                    )
+                if free < 1 or not growing:
+                    continue
+                total = sum(map(weight, growing))
+                left = free
+                for lemma in growing:
+                    share = min(left, max(1, free * weight(lemma) // total))
+                    added = solver.grow(jobs[lemma.name], share)
+                    if not added:
+                        continue
+                    left -= added
+                    with sketch_lock:
+                        if lemma.name in sessions_in_flight:
+                            sessions_in_flight[lemma.name] += added
+                    logger.info(
+                        f"{lemma.name}: {added} session(s) added to "
+                        f"{jobs[lemma.name]}"
+                    )
+                    self._decision(
+                        "aiprover_job_grown",
+                        lemma=lemma.name,
+                        aiprover_job=jobs[lemma.name],
+                        sessions=added,
+                    )
+                    if left < 1:
+                        break
 
         def mathlib_text() -> str:
             with sketch_lock:
@@ -230,6 +304,16 @@ class AIProverStage:
                 )
             fixed = split_declarations(self._standalone(form, stubs))
             return stubs, {name for _, name, _ in fixed}
+
+        def started(lemma: Lemma, key: tuple, job_id: str) -> None:
+            with sketch_lock:
+                running_jobs[lemma.name] = job_id
+            self._decision(
+                "aiprover_job_started",
+                lemma=lemma.name,
+                statement=key[1],
+                aiprover_job=job_id,
+            )
 
         def one_job(lemma: Lemma, samples: int) -> None:
             stubs, fixed_names = context_for(lemma)
@@ -264,12 +348,7 @@ class AIProverStage:
                 work_dir=self.temp_dir / "aiprover",
                 resume_job=resume_job,
                 hint=knowledge.hint(lemma.knowledge, mathlib_text()),
-                on_start=lambda job_id: self._decision(
-                    "aiprover_job_started",
-                    lemma=lemma.name,
-                    statement=key[1],
-                    aiprover_job=job_id,
-                ),
+                on_start=lambda job_id: started(lemma, key, job_id),
             )
             with sketch_lock:
                 for sample in job.samples:
@@ -456,6 +535,7 @@ class AIProverStage:
         # flag is set by the failing thread itself, before its worker is
         # reused.
         stopped = threading.Event()
+        finished = threading.Event()  # the phase is over
 
         def guarded(lemma: Lemma) -> None:
             if stopped.is_set():
@@ -473,6 +553,8 @@ class AIProverStage:
             with futures_lock:
                 futures.append(pool.submit(guarded, lemma))
 
+        rebalancer = threading.Thread(target=rebalance, daemon=True)
+        rebalancer.start()
         with ThreadPoolExecutor(max_workers=concurrency) as pool:
             for _, lemma in pending:
                 submit(lemma)
@@ -488,6 +570,8 @@ class AIProverStage:
             except BaseException:
                 stopped.set()
                 raise
+            finally:
+                finished.set()
 
     def _handback(
         self,
