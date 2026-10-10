@@ -32,6 +32,10 @@ class Agent:
     """
 
     backend = "abstract"
+    # A model served by its provider (Claude, OpenAI, ...), not by us. Such
+    # models receive no other model's reasoning: their safeguards refuse
+    # prompts that carry it, and refused calls are billed.
+    hosted = False
     # Prometheus metrics of the model server, where the backend has one.
     metrics_url: str | None = None
 

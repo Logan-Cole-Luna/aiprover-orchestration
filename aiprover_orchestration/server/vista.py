@@ -77,7 +77,7 @@ GPU_GROUPS = {
         AIPROVER_CONFIGS / "vista.toml",
         "configs/aiprover/vista_logged.toml",
         18565,
-        borrows=("openai", "open"),
+        borrows=("openai",),
     ),
     "open": GpuGroup(
         "open",
@@ -94,7 +94,7 @@ GPU_GROUPS = {
         AIPROVER_CONFIGS / "vista_openai.toml",
         "configs/aiprover/vista_logged_openai.toml",
         18569,
-        borrows=("main", "open"),
+        borrows=("main",),
     ),
     # The persistent server cic-dgx-01 through its reasoning proxy.
     "dgx": GpuGroup(

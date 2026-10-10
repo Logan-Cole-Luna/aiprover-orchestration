@@ -226,6 +226,12 @@ def session_notes(sample: AIProverSample, attempt: int, code: str) -> str:
     return "\n".join(lines)
 
 
+def without_reasoning(knowledge: str) -> str:
+    """Carried notes without the sessions' reasoning, for a hosted model."""
+    pattern = rf"\n{re.escape(REASONING_LABEL)}.*?(?=\n{re.escape(CODE_LABEL)})"
+    return re.sub(pattern, "", knowledge, flags=re.S)
+
+
 def carry(previous: str, notes: list[str]) -> str:
     """The notes to carry: the new ones first, then the previous ones, the
     oldest dropped beyond MAX_CHARS."""
