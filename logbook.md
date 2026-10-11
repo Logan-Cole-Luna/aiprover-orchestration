@@ -38,6 +38,10 @@ Orchestration (`aiprover_orchestration/orchestrator/`)
   replan precede none of the lemmas they use.
 - Replan prompt with the solvers' failed code and the Lean errors located in
   it.
+- Interactive captain: skill `aiprover-captain` (`orchestration_plugin/`)
+  runs the method in Claude Code with the session's agent as captain and
+  subagents as auditor, reviewer and writer; runs are recorded in the same
+  result layout and rendered by the same trace pages.
 - Knowledge carried across attempts on a lemma (searches, files read, last
   reasoning, code), given to later sessions as guidance and curated by the
   captain at hand-backs (`orchestrator/knowledge.py`).
@@ -68,6 +72,11 @@ Results
 
 ## Todo
 
+- `aiprover-captain` skill: first end-to-end run in Claude Code on
+  `JiatuBook_BoundedArithmetic_000004` with a model server up; compare
+  with the pipeline's run of the same problem.
+- `utils/share_results.py` selects runs by `trace.json` and `srv_*` run
+  ids; extend it to skill runs (`trace.jsonl`) if they are to be shared.
 - Decode benchmark (Vista jobs 1060653 tune, 1060649 arms A-D, 1060650
   arms E-G): tabulate with `scripts/vista/summarize_bench.py`; deploy
   `serve_aiprover_vista.sbatch` and `submit_aiprover_vista.sh` (CUDA graphs
@@ -128,6 +137,10 @@ Results
 
 ## Issues
 
+- `aiprover doctor` fails 4 of 15 rows under every config: harness pin and
+  skill-copy comparison (uncommitted orchestration changes to `harness.py`
+  and `aiprover.py` in the `AIProver` submodule), REPL and cslib not built in
+  `TmpProjDir`. The skill's preflight treats them as non-blocking.
 - The shared Mathlib build (`lean_projects/TmpProjDir/.lake/packages`) is
   writable by prover sessions. A session of 332 (job
   `20261010-005428-5xxt`, s0) ran `lake exe cache get` at 01:03 on
@@ -194,6 +207,13 @@ Results
 
 ## Decisions
 
+- The `aiprover-captain` skill makes no programmatic model calls (no
+  `claude -p`, no orchestrator driver, no `aiprover expand`,
+  `backtranslate` or `ask`); blind roles are subagents of the session.
+  Solvers are AIProver jobs only; hand-backs are the captain's.
+- Skill runs record their trace as `trace.jsonl`, appended line by line
+  from the shell; `Trace.load` reads it, so no trace writer process is
+  needed.
 - The budget keys keep the names `max_claude_calls`, `final_claude_calls`
   and `informal_claude_calls`, stored in existing traces, although they
   now count calls to every hosted model.
@@ -334,6 +354,27 @@ Results
 - Query server with run queue, live progress and Claude call budget.
 - Per-run model choice for orchestrator and subagent (Claude model and
   reasoning level, or AIProver trained/base) on the query server page.
+
+## 2026-10-10: Interactive captain skill
+
+- Plugin `orchestration_plugin/` (marketplace
+  `aiprover-orchestration-local`, skill `aiprover-captain`), packaged as
+  the AIProver plugin is; `setup.sh` links the repository at
+  `~/.config/aiprover_orchestration/root` and reinstalls the plugin.
+- `scripts/env.sh` of the skill: repository paths and recording functions
+  (`trace_start`, `trace_step`, `traced_check`, `traced_job`,
+  `traced_subagent`, `forbidden`, `informal_build`), reusing
+  `ALGORITHM`, `LEAN_ENVIRONMENT`, the role prompts, `forbidden_constructs`
+  and `InformalBuilder`.
+- `Trace.load` reads `trace.jsonl` (`Trace.from_lines`); `trace_view`
+  loads through it.
+- Model endpoint as in the AIProver plugin: `orchestration_plugin/aiprover.toml`
+  (default `ssh` mode, handoff file of the Vista server job, ControlMaster
+  opened by hand), linked at `~/.config/aiprover_orchestration/aiprover.toml`;
+  `setup.sh` steps `deps` (AIProver's `setup.sh deps` with this config),
+  `claude`, `doctor` (`--full`, without `--agents`, which calls `claude -p`).
+- Checked: header, Lean check, AIProver job and decision steps recorded
+  and rendered; informalization typeset; module statement check built.
 
 ## 2026-10-10: Hosted model spend
 
