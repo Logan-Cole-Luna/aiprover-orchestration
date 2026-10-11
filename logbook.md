@@ -519,6 +519,17 @@ Results
   (steps 203-204; backup in `temp/trace_backup/`), so that the lemma could
   be handed back again. Resumed: the captain split it into
   `mc_cut_real_mono` and `mc_cut_real_pointwise` at 15:43.
+- 2026-10-10 20:15: 332 has 46 of its 47 sketch lemmas proved; open is
+  `mc_cut_real`, through its split lemmas `mc_cut_real_mono` (job 3/5, 10
+  sessions) and `mc_cut_real_pointwise` (job 1/5, 7 sessions), then
+  assembly. One session of each ended without
+  a proof (turn limit).
+- Trace pages show AIProver jobs in flight (`live`, read from the job
+  directories at render time: per session its state, model replies so far,
+  and once ended its status and turns): a "Jobs in progress" panel in the
+  solver chapter and a count in the overview. The query server re-renders
+  running runs every 5 min (`LIVE_PAGE_REFRESH_SECONDS`) as well as on new
+  trace steps; query server restarted at 20:14.
 
 ## 2026-10-09: Decode speed of the Vista server
 

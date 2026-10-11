@@ -66,8 +66,11 @@ IDLE_SECONDS = int(os.environ.get("QUERY_SERVER_IDLE_SECONDS", str(30 * 60)))
 MAX_CONCURRENT_RUNS = int(os.environ.get("QUERY_SERVER_MAX_RUNS", "2"))
 MAINTAIN_SECONDS = 300  # interval of the server checks for running runs
 SUCCESSOR_RETRY_SECONDS = 600  # between successor submissions of a group
-# Minimum interval between renders of a running run's trace pages.
+# Minimum interval between renders of a running run's trace pages, and the
+# interval at which they are rendered without new steps, so that the
+# sessions of AIProver jobs in flight stay current.
 PAGE_REFRESH_SECONDS = 60
+LIVE_PAGE_REFRESH_SECONDS = 300
 # A run that loses its model server is requeued and resumed without limit;
 # it ends only after this many resumptions in a row with no progress.
 MAX_STALLED_RESUMPTIONS = 3
@@ -527,8 +530,9 @@ class Worker(threading.Thread):
 
     def _refresh_pages(self) -> None:
         """Render the trace pages of running runs whose trace has steps the
-        pages lack, so a run can be viewed in progress: one render per run at
-        a time, at most every PAGE_REFRESH_SECONDS."""
+        pages lack, or every LIVE_PAGE_REFRESH_SECONDS for the jobs in
+        flight, so a run can be viewed in progress: one render per run at a
+        time, at most every PAGE_REFRESH_SECONDS."""
         for run_id in list(self.running):
             render = self.page_renders.get(run_id)
             if render is not None and render.poll() is None:
@@ -538,9 +542,10 @@ class Worker(threading.Thread):
             if not trace.exists():
                 continue
             rendered = page.stat().st_mtime if page.exists() else 0.0
-            if (
+            age = time.time() - rendered
+            if age >= LIVE_PAGE_REFRESH_SECONDS or (
                 trace.stat().st_mtime > rendered
-                and time.time() - rendered >= PAGE_REFRESH_SECONDS
+                and age >= PAGE_REFRESH_SECONDS
             ):
                 self.page_renders[run_id] = subprocess.Popen(
                     trace_pages_command(trace),
