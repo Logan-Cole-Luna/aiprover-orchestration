@@ -364,6 +364,26 @@ Results
 
 ## 2026-10-10: Hosted captains, trace repair, Lake commands refused
 
+- Without a lemma concurrency limit, the prove phase runs every lemma's
+  jobs at once, including lemmas added by a split (`MAX_LEMMA_JOBS`); its
+  thread pool had been sized by the lemmas pending when the phase began,
+  so split lemmas waited for a running lemma's remaining attempts
+  (332: `mc_cut_real_pointwise`; 048: three `away_final_transfer_*`).
+  332 was restarted at 18:41 and runs both halves of the split.
+  A run set back to `queued` before the worker has registered its
+  exit is overwritten as `finished`; requeue after the exit is logged.
+
+- Lemmas from a split are handed back after `aiprover_handback_after`
+  failures, as other lemmas are. The former threshold of
+  `aiprover_handback_after` times (1 + split depth) exceeded
+  `aiprover_attempts_per_lemma` at depth 1 (6 > 5), so a split lemma ran
+  out of attempts without reaching the captain.
+
+- `aiprover resume` on a job whose workers are alive returns the job name,
+  and the stage waits on it. A job can outlive the run that submitted it;
+  the resumed run had counted such a job as a failed attempt and started a
+  second one (332, `mc_cut_real_pointwise`, 21:18).
+
 - `max_parallel` 56 (12:50) brought free memory to 4.7 GB at 51 sessions
   (15:21; about 2.4 GB per session plus 4.7 GB for the Mathlib index).
   Lowered to 48; `temp/hold_slots.py` holds slots 48 to 55 so that workers
@@ -499,6 +519,17 @@ Results
   (steps 203-204; backup in `temp/trace_backup/`), so that the lemma could
   be handed back again. Resumed: the captain split it into
   `mc_cut_real_mono` and `mc_cut_real_pointwise` at 15:43.
+- 2026-10-10 20:15: 332 has 46 of its 47 sketch lemmas proved; open is
+  `mc_cut_real`, through its split lemmas `mc_cut_real_mono` (job 3/5, 10
+  sessions) and `mc_cut_real_pointwise` (job 1/5, 7 sessions), then
+  assembly. One session of each ended without
+  a proof (turn limit).
+- Trace pages show AIProver jobs in flight (`live`, read from the job
+  directories at render time: per session its state, model replies so far,
+  and once ended its status and turns): a "Jobs in progress" panel in the
+  solver chapter and a count in the overview. The query server re-renders
+  running runs every 5 min (`LIVE_PAGE_REFRESH_SECONDS`) as well as on new
+  trace steps; query server restarted at 20:14.
 
 ## 2026-10-09: Decode speed of the Vista server
 
