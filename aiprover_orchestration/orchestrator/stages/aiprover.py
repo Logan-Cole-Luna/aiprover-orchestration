@@ -55,6 +55,8 @@ logger = logging.getLogger(__name__)
 STOPPED_STATES = ("infra", "cancelled")
 # Interval at which running jobs receive the session slots freed meanwhile.
 REBALANCE_SECONDS = 60
+# Lemma jobs at once without a concurrency limit (threads that mostly wait).
+MAX_LEMMA_JOBS = 256
 # Failed samples' code kept for the captain and the replan: the most
 # complete ones, each cut to a length.
 MAX_ATTEMPTS_KEPT = 2
@@ -83,7 +85,9 @@ class AIProverStage:
         running_jobs: dict[str, str] = {}  # lemma name -> its AIProver job
         in_handback: set[str] = set()  # lemmas waiting on the captain
         max_attempts = max(1, self.config.aiprover_attempts_per_lemma)
-        concurrency = self.config.aiprover_lemma_concurrency or len(pending)
+        # Concurrent lemma jobs; 0 for no limit, under which a lemma added
+        # by a split starts at once rather than after a running lemma.
+        concurrency = self.config.aiprover_lemma_concurrency or MAX_LEMMA_JOBS
         handback_after = self.config.aiprover_handback_after
         # Declarations found and searches that failed, over the run's
         # sessions; every job receives it.
@@ -143,12 +147,11 @@ class AIProverStage:
 
         def maybe_handback(lemma: Lemma) -> None:
             nonlocal handbacks
-            after = handback_after * (1 + lemma.generation)
             if (
-                not after
+                not handback_after
                 or lemma.proved
                 or lemma.handed_back
-                or lemma.attempts - lemma.reviewed_at < after
+                or lemma.attempts - lemma.reviewed_at < handback_after
                 or stopped.is_set()
             ):
                 return
@@ -736,7 +739,6 @@ class AIProverStage:
                     if result.ok:
                         with sketch_lock:
                             for offset, other in enumerate(new_lemmas):
-                                other.generation = lemma.generation + 1
                                 sketch.lemmas.insert(position + offset, other)
                             lemma.helpers, lemma.proof = helpers, proof
                             lemma.proved = True

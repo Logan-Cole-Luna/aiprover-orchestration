@@ -80,6 +80,7 @@ function chapterOverview() {
     <div class="stat"><span class="v">${formatDuration(outcome.wall_seconds || steps.at(-1)?.elapsed_seconds || 0)}</span><span class="k">wall-clock time</span></div>
     <div class="stat"><span class="v">${calls.length}</span><span class="k">model calls (${roles.map(r => callsByRole(r).length).join(" / ")} captain / auditor / solver)</span></div>
     <div class="stat"><span class="v">${checks.length}</span><span class="k">Lean checks</span></div>
+    ${TRACE.live ? `<div class="stat"><span class="v">${TRACE.live.jobs.length} · ${sum(TRACE.live.jobs.map(j => j.sessions.filter(s => s.state !== "done").length))}</span><span class="k">jobs · sessions in progress</span></div>` : ""}
     <div class="stat"><span class="v">${formatUSD(totalCost)}</span><span class="k">notional API cost</span></div>
   </div>
   ${phaseNames.length ? `
@@ -458,6 +459,33 @@ function gantt() {
   </div>`;
 }
 
+// AIProver jobs still running when the page was rendered (`live`, read from
+// the job directories): a job enters the trace only when all its sessions end.
+function liveJobsPanel() {
+  const live = TRACE.live;
+  if (!live?.jobs?.length) return "";
+  const asOf = new Date(live.time * 1000).toLocaleString();
+  const sessionText = s => s.state !== "done" ? `${s.state} · ${s.replies} replies`
+    : `${sampleText({ status: s.status, ending: s.ending })} · ${s.turns ?? s.replies} turns`;
+  const pill = s => s.state !== "done" ? "warn" : s.status === "verified" ? "ok" : "fail";
+  return `
+  <div class="panel">
+    <h3>Jobs in progress</h3>
+    <p class="muted">As of ${escapeHTML(asOf)}. A job enters the step log when all its sessions end;
+    until then its sessions are read from the AIProver job directory.</p>
+    <table class="kv">
+      <tr><th>Lemma</th><th>Job</th><th>Running</th><th>Sessions</th></tr>
+      ${live.jobs.map(job => {
+        const running = job.sessions.filter(s => s.state !== "done");
+        return `<tr><td><code>${escapeHTML(job.lemma)}</code></td>
+          <td class="num">${escapeHTML(job.job.split("-srv_")[0])}<br><span class="muted">running for ${formatDuration(Math.max(0, ...job.sessions.map(s => s.seconds || 0)))}</span></td>
+          <td class="num">${running.length} / ${job.sessions.length}</td>
+          <td>${job.sessions.map(s => `<span class="pill ${pill(s)}" title="${formatDuration(s.seconds || 0)}">s${s.sample}: ${escapeHTML(sessionText(s))}</span>`).join(" ")}</td></tr>`;
+      }).join("")}
+    </table>
+  </div>`;
+}
+
 function chapterProveAIProver(jobs) {
   const solver = TRACE.agents?.solver || {};
   const perJob = cfg.workers ?? 1;
@@ -482,6 +510,7 @@ function chapterProveAIProver(jobs) {
     <div class="stat"><span class="v">${lemmaWins.size} / ${lemmaOrder.length}</span><span class="k">lemmas proved</span></div>
     <div class="stat"><span class="v">${firstJob}</span><span class="k">proved by the first job</span></div>
   </div>
+  ${liveJobsPanel()}
   <p class="muted">Sessions in flight include those waiting in AIProver: the harness runs at most
   <code>max_parallel</code> sessions on this machine (8) and queues the rest.</p>
   <div class="panel">

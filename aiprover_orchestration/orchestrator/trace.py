@@ -6,11 +6,15 @@ Each step is a model call, a Lean check, or an orchestration decision. The
 file is rewritten atomically after every step so it can be inspected while
 the run is in progress.
 
+A model call that the provider's safety classifier refused records the
+provider, not the run: it is not traced (the call log keeps it), and a
+continued trace drops such calls recorded earlier (`without_untraced_calls`).
+
     python -m aiprover_orchestration.orchestrator.trace results/<run_id> ...
 
-repairs the traces of runs that are not in progress: `--rewind N` drops the
-steps from index N on (`rewound`), and `--refused-handbacks` the hand-backs
-the captain's model refused.
+removes them from the traces of runs that are not in progress; `--rewind N`
+also drops the steps from index N on (`rewound`), and `--refused-handbacks`
+the hand-backs the captain's model refused.
 """
 
 import argparse
@@ -20,6 +24,16 @@ import os
 import threading
 import time
 from pathlib import Path
+
+# Error text of a request declined by the model's safety classifier.
+REFUSAL_MARKER = "safeguards flagged"
+
+
+def is_untraced(error: str | None, refused: bool = False) -> bool:
+    """A failed call that is left out of the trace: a refusal by the
+    provider's safety classifier."""
+    return refused or REFUSAL_MARKER in (error or "")
+
 
 def _without_steps(document: dict, removed: set[int]) -> dict:
     """The trace document without the steps at the given positions: steps
@@ -41,6 +55,19 @@ def _without_steps(document: dict, removed: set[int]) -> dict:
         for resumption in document.get("resumptions", [])
     ]
     return {**document, "steps": kept, "resumptions": resumptions}
+
+
+def without_untraced_calls(document: dict) -> dict:
+    """The trace document without refused model calls."""
+    return _without_steps(
+        document,
+        {
+            position
+            for position, step in enumerate(document.get("steps", []))
+            if step["kind"] == "model_call"
+            and is_untraced(step.get("error"), bool(step.get("refused")))
+        },
+    )
 
 
 def rewound(document: dict, at_step: int) -> dict:
@@ -107,6 +134,7 @@ class Trace:
                 "outcome": None,
             }
         else:
+            previous = without_untraced_calls(previous)
             steps = previous.get("steps", [])
             elapsed = steps[-1]["elapsed_seconds"] if steps else 0.0
             self._start = time.time() - elapsed
@@ -176,7 +204,7 @@ class Trace:
 
 def main() -> None:
     """Repair the traces of runs not in progress (a running run rewrites its
-    trace)."""
+    trace): refused calls are always removed."""
     parser = argparse.ArgumentParser(description=main.__doc__)
     parser.add_argument("directories", nargs="+", type=Path)
     parser.add_argument(
@@ -194,7 +222,7 @@ def main() -> None:
         if document is None:
             print(f"{directory}: no trace")
             continue
-        repaired = document
+        repaired = without_untraced_calls(document)
         if args.rewind is not None:
             repaired = rewound(repaired, args.rewind)
         if args.refused_handbacks:

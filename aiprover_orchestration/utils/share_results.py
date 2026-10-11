@@ -12,8 +12,10 @@ trace_replay.html is left out, being rendered from the trace. Error texts of
 failed model calls are reduced to their HTTP status, since they quote
 provider messages verbatim, and the strings of a redaction file
 (`--redactions`, if it exists) are replaced everywhere: one per line, either
-`text` (replaced by "[redacted]") or `text==>replacement`. The target's
-README.md indexes the copies and states how to resume one.
+`text` (replaced by "[redacted]") or `text==>replacement`. Model calls left
+out of traces (`trace.without_untraced_calls`) are removed from the shared
+trace. The target's README.md indexes the copies and states how to resume
+one.
 """
 
 import argparse
@@ -26,6 +28,7 @@ import tempfile
 import time
 from pathlib import Path
 
+from ..orchestrator.trace import without_untraced_calls
 from ..orchestrator.trace_view.render import render
 from ..paths import RESULTS_DIR
 from ..server.jobs import JobStore
@@ -145,13 +148,18 @@ def share_run(run: Path, target: Path) -> None:
     """Bring the copy of `run` at `target` up to date."""
     for source in run.rglob("*"):
         relative = source.relative_to(run)
-        if source.is_file() and str(relative) not in EXCLUDED:
+        # A `.tmp` file is a trace being rewritten by a running run.
+        if (
+            source.is_file()
+            and str(relative) not in EXCLUDED
+            and source.suffix != ".tmp"
+        ):
             copy_if_newer(source, target / relative)
     trace = run / "trace.json"
     packed = target / "trace.json.gz"
     if packed.exists() and packed.stat().st_mtime >= trace.stat().st_mtime:
         return
-    document = clean(json.loads(trace.read_text()))
+    document = clean(without_untraced_calls(json.loads(trace.read_text())))
     text = json.dumps(document).encode()
     packed.write_bytes(gzip.compress(text, compresslevel=6))
     (target / "config.json").write_text(
