@@ -13,10 +13,10 @@ Vista server job for the group when an approved run of it is waiting and none
 is queued or running, and cancels the server jobs it submitted for the group
 after IDLE_SECONDS without work there. A group may borrow the servers of
 other groups (`GpuGroup.borrows`): its runs use every server of the pool
-that serves their checkpoint, and the borrowed servers stay up while it has
-work. A run that loses all its model servers stops as an infrastructure
-failure and is put back at the head of the queue, to resume on the next
-server job of its group.
+that serves their checkpoint while it is up, but a group's servers are
+submitted, renewed and kept only for its own runs. A run that loses all its
+model servers stops as an infrastructure failure and is put back at the head
+of the queue, to resume on the next server job of its group.
 
 Runs are started in their own session, so a server restart does not end
 them; on start, the worker adopts a run whose process is still alive and
@@ -66,8 +66,11 @@ IDLE_SECONDS = int(os.environ.get("QUERY_SERVER_IDLE_SECONDS", str(30 * 60)))
 MAX_CONCURRENT_RUNS = int(os.environ.get("QUERY_SERVER_MAX_RUNS", "2"))
 MAINTAIN_SECONDS = 300  # interval of the server checks for running runs
 SUCCESSOR_RETRY_SECONDS = 600  # between successor submissions of a group
-# Minimum interval between renders of a running run's trace pages.
+# Minimum interval between renders of a running run's trace pages, and the
+# interval at which they are rendered without new steps, so that the
+# sessions of AIProver jobs in flight stay current.
 PAGE_REFRESH_SECONDS = 60
+LIVE_PAGE_REFRESH_SECONDS = 300
 # A run that loses its model server is requeued and resumed without limit;
 # it ends only after this many resumptions in a row with no progress.
 MAX_STALLED_RESUMPTIONS = 3
@@ -426,11 +429,9 @@ class Worker(threading.Thread):
         self._refresh_pages()
         queued = self.store.in_states("queued")
         running = [self.store.get(run_id) for run_id in self.running]
-        busy_groups = {
-            member.name
-            for job in queued + running
-            for member in vista.server_pool(job_group(job))
-        }
+        # A group's servers are kept for its own runs; a group that only
+        # lends them is idle.
+        busy_groups = {job_group(job).name for job in queued + running}
         for name, group in vista.GPU_GROUPS.items():
             if name in busy_groups:
                 self.idle_since.pop(name, None)
@@ -529,8 +530,9 @@ class Worker(threading.Thread):
 
     def _refresh_pages(self) -> None:
         """Render the trace pages of running runs whose trace has steps the
-        pages lack, so a run can be viewed in progress: one render per run at
-        a time, at most every PAGE_REFRESH_SECONDS."""
+        pages lack, or every LIVE_PAGE_REFRESH_SECONDS for the jobs in
+        flight, so a run can be viewed in progress: one render per run at a
+        time, at most every PAGE_REFRESH_SECONDS."""
         for run_id in list(self.running):
             render = self.page_renders.get(run_id)
             if render is not None and render.poll() is None:
@@ -540,9 +542,10 @@ class Worker(threading.Thread):
             if not trace.exists():
                 continue
             rendered = page.stat().st_mtime if page.exists() else 0.0
-            if (
+            age = time.time() - rendered
+            if age >= LIVE_PAGE_REFRESH_SECONDS or (
                 trace.stat().st_mtime > rendered
-                and time.time() - rendered >= PAGE_REFRESH_SECONDS
+                and age >= PAGE_REFRESH_SECONDS
             ):
                 self.page_renders[run_id] = subprocess.Popen(
                     trace_pages_command(trace),
@@ -553,11 +556,14 @@ class Worker(threading.Thread):
 
     # Vista servers --------------------------------------------------------
 
-    def _serving(self, checkpoint: str, group: vista.GpuGroup) -> bool:
+    def _serving(
+        self, checkpoint: str, group: vista.GpuGroup, own: bool = True
+    ) -> bool:
         """True if the group's model endpoint is up and serves `checkpoint`;
         otherwise bring the group's server in line with it: replace a server
         job of another checkpoint (none of the group's running jobs uses it),
-        or submit one."""
+        or submit one. For a borrowed server (`own` false) the jobs are only
+        followed: none is submitted, replaced or queued as a successor."""
         if self.serving.get(group.name) == checkpoint:
             endpoint_up, message = endpoint_status(bring_up=True, group=group)
             if endpoint_up:
@@ -585,6 +591,8 @@ class Worker(threading.Thread):
         for job_id in [
             job_id for job_id, served in serves.items() if served != checkpoint
         ]:
+            if not own:
+                return False
             if job_id not in checkpoints:
                 self.vista_messages[group.name] = (
                     f"waiting for server job {job_id}, "
@@ -599,6 +607,8 @@ class Worker(threading.Thread):
                 self.store.remove_vista_job(job_id)
             del serves[job_id]
         if not serves:
+            if not own:
+                return False
             job_id = vista.submit_server(checkpoint, group)
             if job_id:
                 self.store.add_vista_job(job_id, checkpoint, group.name)
@@ -614,7 +624,8 @@ class Worker(threading.Thread):
             return False
         endpoint_up, message = endpoint_status(bring_up=True, group=group)
         if endpoint_up:
-            self._keep_successor(checkpoint, group, jobs, checkpoints)
+            if own:
+                self._keep_successor(checkpoint, group, jobs, checkpoints)
             self.serving[group.name] = checkpoint
             self.vista_messages[group.name] = message
             return True
@@ -635,6 +646,10 @@ class Worker(threading.Thread):
         ]
         named = vista.handoff(group)
         current = tunnel_job(group)
+        # An unreadable handoff (a failed remote read) leaves a tunnel to a
+        # running job in place.
+        if named is None and current in running:
+            return True
         if named is None or named["job"] not in running:
             if current is not None:
                 logger.info(
@@ -692,7 +707,7 @@ class Worker(threading.Thread):
         every server of the pool is brought in line with it."""
         return any(
             [
-                self._serving(checkpoint, member)
+                self._serving(checkpoint, member, own=member is group)
                 for member in vista.server_pool(group)
             ]
         )

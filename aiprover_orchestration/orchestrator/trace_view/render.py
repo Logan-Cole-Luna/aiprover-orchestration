@@ -1,4 +1,7 @@
-r"""Render a run's trace.json as two self-contained, linked HTML pages.
+r"""Render a run's trace as two self-contained, linked HTML pages.
+
+The trace is `trace.json`, or the line record `trace.jsonl` of a run
+driven by the `aiprover-captain` skill.
 
 trace.html (template `trace_view.html`) walks a reader chapter by chapter
 through the problem, the orchestration algorithm, the prompts, and every
@@ -7,7 +10,9 @@ model call, Lean check and decision of the run. trace_replay.html (template
 problem through the captain's steps and the parallel solver lanes to the
 verified proof. Both pages share `trace_common.css`, `trace_common.js` and the
 style in `trace_theme.css`. The trace is embedded verbatim, except that absolute
-paths of Lean attempt files are shortened to their file names.
+paths of Lean attempt files are shortened to their file names, and the
+sessions of AIProver jobs still in flight are added from their job
+directories (`add_live_jobs`).
 
 Usage:
     python3 -m aiprover_orchestration.orchestrator.trace_view \
@@ -20,6 +25,7 @@ import html
 import json
 import os
 import re
+import time
 from pathlib import Path
 
 from ...agents.aiprover import (
@@ -29,6 +35,7 @@ from ...agents.aiprover import (
     session_ending,
 )
 from ...paths import AIPROVER_JOBS
+from ..trace import Trace
 
 ASSETS = Path(__file__).parent / "assets"
 # Output file name → (template, page title suffix).
@@ -87,6 +94,87 @@ def add_sample_records(trace: dict) -> dict:
     return trace
 
 
+def read_json(path: Path) -> dict:
+    """The JSON object at `path`; empty if it is missing or being written."""
+    try:
+        return json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def live_session(directory: Path) -> dict:
+    """Progress of one AIProver session from its directory: its harness
+    state, and its model replies so far (records of the reasoning proxy);
+    once its summary exists, its turns."""
+    state = read_json(directory / "state.json")
+    summary = read_json(directory / "summary.json")
+    reasoning = directory / "reasoning.jsonl"
+    replies = (
+        sum(1 for _ in reasoning.open(errors="replace"))
+        if reasoning.exists()
+        else 0
+    )
+    started = state.get("started")
+    return {
+        "sample": int(directory.name[1:]),
+        "state": state.get("state", "queued"),
+        "status": summary.get("status") or state.get("status"),
+        "ending": session_ending(summary) if summary else "",
+        "turns": summary.get("turns"),
+        "replies": replies,
+        "seconds": round(
+            summary.get("elapsed_sec")
+            or (time.time() - started if started else 0)
+        ),
+    }
+
+
+def live_job(job: str) -> list[dict]:
+    """Progress of the sessions of an AIProver job; empty once every session
+    has ended (the job is returning or was cancelled)."""
+    sessions = [
+        live_session(directory)
+        for directory in sorted(
+            (AIPROVER_JOBS / job).glob("s*/"), key=lambda d: d.name
+        )
+        if directory.name[1:].isdigit()
+    ]
+    sessions.sort(key=lambda session: session["sample"])
+    if all(session["state"] == "done" for session in sessions):
+        return []
+    return sessions
+
+
+def add_live_jobs(trace: dict) -> dict:
+    """Record under `live` the sessions of AIProver jobs still running. A job
+    enters the trace only when all its sessions end, so the pages of a
+    running run would otherwise omit the work in flight."""
+    steps = trace.get("steps", [])
+    returned = {
+        step.get("aiprover_job")
+        for step in steps
+        if step.get("kind") == "model_call"
+    }
+    jobs = []
+    for step in steps:
+        job = step.get("aiprover_job")
+        if step.get("event") != "aiprover_job_started" or job in returned:
+            continue
+        sessions = live_job(job)
+        if sessions:
+            jobs.append(
+                {
+                    "lemma": step.get("lemma"),
+                    "job": job,
+                    "elapsed_seconds": step.get("elapsed_seconds"),
+                    "sessions": sessions,
+                }
+            )
+    if jobs:
+        trace["live"] = {"time": time.time(), "jobs": jobs}
+    return trace
+
+
 # Per-sample records shown only in the replay's step drawer; the other pages
 # are rendered without them to stay small.
 REPLAY_ONLY = ("lean", "session", "reasoning")
@@ -113,7 +201,7 @@ def without_sample_records(trace: dict) -> dict:
 
 def render(trace_path: Path, output_dir: Path) -> list[Path]:
     trace = shorten_paths(
-        add_sample_records(json.loads(trace_path.read_text()))
+        add_live_jobs(add_sample_records(Trace.load(trace_path)))
     )
     # `</` would terminate the enclosing <script> element early.
     payloads = {
