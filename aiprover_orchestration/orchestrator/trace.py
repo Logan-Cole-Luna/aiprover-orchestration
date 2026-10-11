@@ -158,15 +158,43 @@ class Trace:
 
     @staticmethod
     def load(path: Path) -> dict | None:
-        """The trace document at `path`, or its gzip copy `<path>.gz` (as
-        shared result directories hold it); None if neither exists."""
+        """The trace document at `path`, its gzip copy `<path>.gz` (as
+        shared result directories hold it), or the line record
+        `trace.jsonl` of an interactive run; None if none exists."""
         path = Path(path)
         packed = path.with_name(path.name + ".gz")
-        if path.exists():
+        lines = path.with_suffix(".jsonl")
+        if path.suffix != ".jsonl" and path.exists():
             return json.loads(path.read_text())
         if packed.exists():
             return json.loads(gzip.decompress(packed.read_bytes()))
+        if lines.exists():
+            return Trace.from_lines(lines)
         return None
+
+    @staticmethod
+    def from_lines(path: Path) -> dict:
+        """The trace document of a line record, as written by the
+        `aiprover-captain` skill: the header on the first line, then one
+        step per line. A line without `kind` updates the header (`outcome`,
+        `finished`). Steps are indexed in order; a step's `time` (Unix
+        seconds) gives its `elapsed_seconds` from the header's `time`."""
+        header, *records = [
+            json.loads(line)
+            for line in Path(path).read_text().splitlines()
+            if line.strip()
+        ]
+        document = {"steps": [], "outcome": None, **header}
+        for record in records:
+            if "kind" not in record:
+                document.update(record)
+                continue
+            step = {"stage": "", **record, "index": len(document["steps"])}
+            if "elapsed_seconds" not in step:
+                elapsed = step.get("time", header["time"]) - header["time"]
+                step["elapsed_seconds"] = round(elapsed, 1)
+            document["steps"].append(step)
+        return document
 
     @property
     def elapsed_seconds(self) -> float:
