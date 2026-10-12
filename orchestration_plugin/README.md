@@ -26,7 +26,7 @@ It builds the environment from `flake.nix` and writes this directory's
 
 | Endpoint | Model server | Connection |
 |---|---|---|
-| `--endpoint dgx [--via HOST]` | `aip-leanstral` on cic-dgx-01 (port 8040) | direct when reachable from the device (TACC network); otherwise an SSH tunnel through `HOST`, which must reach the DGX (key-based SSH, `--user`) |
+| `--endpoint dgx [--via HOST]` | `aip-leanstral` on cic-dgx-01 (port 8040) | direct when reachable from the device (TACC network); otherwise an SSH tunnel through `HOST`, which must reach the DGX: a host name or an alias of `~/.ssh/config` (its `User` and key apply); key-based, no passphrase prompt (BatchMode) |
 | `--endpoint vista [--user USER]` | a Vista server job | SSH tunnel to the compute node named in the job's handoff file, over an SSH master opened by hand (MFA) |
 | `--endpoint URL [--api-key KEY]` | any OpenAI-compatible endpoint serving the model | direct; the key is sent as a bearer token |
 
@@ -60,9 +60,11 @@ fix. The skill runs `aiprover doctor` itself before every run.
 
 Restart the Claude Code app (or VS Code). `/plugin` lists
 `aiprover-orchestration`. Open the repository and ask for a problem to be run
-with the aiprover-captain skill: by uuid of `data/*.jsonl` (not in git; copy
-the files to a new device), or with an informal statement and proof. Results
-are written to `results/<run_id>/`.
+with the aiprover-captain skill: by uuid of `data/*.jsonl`, or with an
+informal statement and proof. `data/openai_math.jsonl` (five problems of the
+OpenAI math release) is in git as a sample set, for example
+`OpenAIMath_164_HindmanDistinctExpressions`; copy other problem files to a
+new device. Results are written to `results/<run_id>/`.
 
 To change the endpoint later, run `./setup --endpoint ... --no-lean`, or edit
 `aiprover.toml` and run `setup.sh doctor`.
