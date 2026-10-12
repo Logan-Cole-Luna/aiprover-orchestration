@@ -183,12 +183,21 @@ class ReportText:
 
     @staticmethod
     def parse(reply: str) -> "ReportText":
-        return ReportText(
-            *(
-                extract_tag(reply, tag)
-                for tag in ("title", "abstract", "macros", "body")
-            )
+        title, abstract, macros, body = (
+            extract_tag(reply, tag)
+            for tag in ("title", "abstract", "macros", "body")
         )
+        return ReportText(title, abstract, macros, body or open_body(reply))
+
+
+def open_body(reply: str) -> str:
+    """The body of a reply whose last block is opened by <body> but not
+    closed by </body> (a closing such as `\\end{body>`), up to the end."""
+    start = reply.rfind("<body>")
+    if start < 0:
+        return ""
+    body = reply[start + len("<body>") :]
+    return re.sub(r"\s*(?:</?body\W*|\\end\{body\W*)\s*\Z", "", body).strip()
 
 
 def lean_declarations(lean_text: str) -> list[tuple[str, str, str]]:
@@ -564,6 +573,9 @@ def compile_latex(out_dir: Path, name: str, document: str) -> tuple[bool, str]:
                 cwd=out_dir,
                 capture_output=True,
                 text=True,
+                # pdfTeX wraps its output at 79 bytes, which can split a
+                # multibyte character.
+                errors="replace",
                 timeout=600,
             )
         except subprocess.TimeoutExpired:

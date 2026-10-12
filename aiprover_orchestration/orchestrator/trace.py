@@ -112,6 +112,27 @@ def without_refused_handbacks(document: dict) -> dict:
     )
 
 
+def without_jobs(document: dict, jobs: set[str]) -> dict:
+    """The trace document without the given AIProver jobs, for jobs whose
+    failure was the infrastructure's: their start, call, end decisions and
+    the Lean checks of their samples (which follow the call)."""
+    steps = document.get("steps", [])
+    removed, open_lemmas = set(), set()
+    for position, step in enumerate(steps):
+        lemma = step.get("lemma")
+        if step.get("aiprover_job") in jobs:
+            removed.add(position)
+            if step["kind"] == "model_call":
+                open_lemmas.add(lemma)
+            else:
+                open_lemmas.discard(lemma)
+        elif step["kind"] == "lean_check" and lemma in open_lemmas:
+            removed.add(position)
+        elif lemma in open_lemmas:
+            open_lemmas.discard(lemma)
+    return _without_steps(document, removed)
+
+
 class Trace:
 
     def __init__(self, path: Path, header: dict, previous: dict | None = None):
@@ -243,6 +264,13 @@ def main() -> None:
         action="store_true",
         help="drop hand-backs the captain's model refused",
     )
+    parser.add_argument(
+        "--drop-jobs",
+        nargs="+",
+        default=[],
+        metavar="JOB",
+        help="drop AIProver jobs that failed on the infrastructure",
+    )
     args = parser.parse_args()
     for directory in args.directories:
         path = directory / "trace.json"
@@ -255,6 +283,8 @@ def main() -> None:
             repaired = rewound(repaired, args.rewind)
         if args.refused_handbacks:
             repaired = without_refused_handbacks(repaired)
+        if args.drop_jobs:
+            repaired = without_jobs(repaired, set(args.drop_jobs))
         removed = len(document["steps"]) - len(repaired["steps"])
         temporary = path.with_suffix(".json.tmp")
         temporary.write_text(
