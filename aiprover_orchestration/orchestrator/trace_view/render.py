@@ -12,7 +12,8 @@ verified proof. Both pages share `trace_common.css`, `trace_common.js` and the
 style in `trace_theme.css`. The trace is embedded verbatim, except that absolute
 paths of Lean attempt files are shortened to their file names, and the
 sessions of AIProver jobs still in flight are added from their job
-directories (`add_live_jobs`).
+directories (`add_live_jobs`). Costs and GPU time are added as `costs`
+(`benchmark.run_costs`).
 
 Usage:
     python3 -m aiprover_orchestration.orchestrator.trace_view \
@@ -35,6 +36,7 @@ from ...agents.aiprover import (
     session_ending,
 )
 from ...paths import AIPROVER_JOBS
+from ..benchmark import run_costs
 from ..trace import Trace
 
 ASSETS = Path(__file__).parent / "assets"
@@ -203,6 +205,7 @@ def render(trace_path: Path, output_dir: Path) -> list[Path]:
     trace = shorten_paths(
         add_live_jobs(add_sample_records(Trace.load(trace_path)))
     )
+    trace["costs"] = run_costs(trace)
     # `</` would terminate the enclosing <script> element early.
     payloads = {
         replay: json.dumps(

@@ -59,12 +59,47 @@ if (!TRACE) {
 
 // Chapters ------------------------------------------------------------------------
 
+// Hosted calls by role, model and purpose; the solver's sessions with the GPU
+// time attributed to them (`benchmark.run_costs`).
+function costPanel() {
+  const hosted = costs.hosted || [];
+  const solver = costs.solver || {};
+  const rows = hosted.map(row => `<tr><td><span class="role ${escapeHTML(row.role)}">${escapeHTML(row.role)}</span></td>
+    <td class="num">${escapeHTML(row.model)}</td><td>${escapeHTML(row.purpose)}</td><td class="num">${row.calls}</td>
+    <td class="num">${row.output_tokens.toLocaleString()}</td><td class="num">${formatUSD(row.cost_usd)}</td></tr>`).join("");
+  const gpu = solver.gpu_hours != null
+    ? `<tr><td>GPU time</td><td class="num">${solver.gpu_hours.toFixed(1)} GPU-hours: ${solver.gpus_per_server} × ${escapeHTML(solver.gpu)} per model server, ${solver.sessions_per_server} sessions per server</td></tr>`
+    : "";
+  return `
+  <div class="panel">
+    <h3>Hosted model calls</h3>
+    <table class="kv">
+      <tr><th>Role</th><th>Model</th><th>Purpose</th><th>Calls</th><th>Output tokens</th><th>Cost</th></tr>
+      ${rows}
+      <tr><td colspan="3"><b>Total</b></td><td class="num"><b>${sum(hosted.map(r => r.calls))}</b></td>
+        <td class="num"><b>${sum(hosted.map(r => r.output_tokens)).toLocaleString()}</b></td><td class="num"><b>${formatUSD(costs.hosted_cost_usd)}</b></td></tr>
+    </table>
+    <p class="muted">Calls that failed or were refused by the provider are not counted.</p>
+  </div>
+  ${solver.jobs ? `
+  <div class="panel">
+    <h3>Solver compute</h3>
+    <table class="kv">
+      <tr><th>Item</th><th>Value</th></tr>
+      <tr><td>Model</td><td class="num">${escapeHTML(solver.model)}</td></tr>
+      <tr><td>Jobs · sessions</td><td class="num">${solver.jobs} · ${solver.sessions}</td></tr>
+      <tr><td>Session time</td><td class="num">${solver.session_hours.toFixed(1)} h</td></tr>
+      ${gpu}
+    </table>
+  </div>` : ""}`;
+}
+
 function chapterOverview() {
   const phases = outcome.phase_seconds || {};
   const phaseTotal = sum(Object.values(phases)) || 1;
   const phaseNames = Object.keys(phases);
   const verified = outcome.checks?.verified;
-  const roles = ["captain", "auditor", "solver"];
+  const callRoles = [...new Set(calls.map(c => c.role))];
   return `
   <div class="eyebrow">Run ${escapeHTML(TRACE.run_id)} · ${escapeHTML(TRACE.started || "")}</div>
   <h2>Orchestrated formal proof of <code>${escapeHTML(TRACE.theorem_name)}</code></h2>
@@ -78,10 +113,11 @@ function chapterOverview() {
   <div class="stats">
     <div class="stat"><span class="v">${verified ? "Proved" : escapeHTML(outcome.status || "running")}</span><span class="k">${verified ? "all final checks pass" : "final status"}</span></div>
     <div class="stat"><span class="v">${formatDuration(outcome.wall_seconds || steps.at(-1)?.elapsed_seconds || 0)}</span><span class="k">wall-clock time</span></div>
-    <div class="stat"><span class="v">${calls.length}</span><span class="k">model calls (${roles.map(r => callsByRole(r).length).join(" / ")} captain / auditor / solver)</span></div>
+    <div class="stat"><span class="v">${calls.length}</span><span class="k">model calls (${callRoles.map(r => `${callsByRole(r).length} ${r}`).join(", ")})</span></div>
     <div class="stat"><span class="v">${checks.length}</span><span class="k">Lean checks</span></div>
     ${TRACE.live ? `<div class="stat"><span class="v">${TRACE.live.jobs.length} · ${sum(TRACE.live.jobs.map(j => j.sessions.filter(s => s.state !== "done").length))}</span><span class="k">jobs · sessions in progress</span></div>` : ""}
-    <div class="stat"><span class="v">${formatUSD(totalCost)}</span><span class="k">notional API cost</span></div>
+    <div class="stat"><span class="v">${formatUSD(costs.hosted_cost_usd ?? totalCost)}</span><span class="k">hosted model cost</span></div>
+    ${costs.solver?.gpu_hours != null ? `<div class="stat"><span class="v">${costs.solver.gpu_hours.toFixed(1)}</span><span class="k">GPU-hours (${escapeHTML(costs.solver.gpu)})</span></div>` : ""}
   </div>
   ${phaseNames.length ? `
   <div class="panel">
@@ -89,17 +125,7 @@ function chapterOverview() {
     <div class="phasebar">${phaseNames.map(p => `<div class="ph-${p}" style="width:${(phases[p] / phaseTotal * 100).toFixed(2)}%">${phases[p] / phaseTotal > 0.12 ? p : ""}</div>`).join("")}</div>
     <div class="phaselegend">${phaseNames.map(p => `<span><i class="ph-${p}"></i>${p} ${formatDuration(phases[p])}</span>`).join("")}</div>
   </div>` : ""}
-  <div class="panel">
-    <h3>Models</h3>
-    <table class="kv">
-      <tr><th>Role</th><th>Model</th><th>Calls</th><th>Output tokens</th><th>Cost</th></tr>
-      ${roles.map(r => {
-        const list = callsByRole(r);
-        return `<tr><td><span class="role ${r}">${r}</span></td><td class="num">${escapeHTML(list[0]?.model || (r === "captain" ? TRACE.models?.orchestrator : TRACE.models?.worker))}</td>
-          <td class="num">${list.length}</td><td class="num">${sum(list.map(c => c.usage?.outputTokens)).toLocaleString()}</td><td class="num">${formatUSD(sum(list.map(c => c.cost_usd)))}</td></tr>`;
-      }).join("")}
-    </table>
-  </div>
+  ${costPanel()}
   <div class="panel">
     <h3>Reading this page</h3>
     <p>The chapters follow the pipeline in order. Use <b>Next</b>, the chapter list, or the
