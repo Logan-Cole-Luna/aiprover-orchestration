@@ -140,6 +140,10 @@ Results
 
 ## Issues
 
+- The DGX server (vLLM 0.31.0) runs without a tool-call parser; every
+  client must reach it through a reasoning proxy (the skill starts one
+  locally). Restarting it with `--enable-auto-tool-choice --tool-call-parser
+  mistral` would remove the dependency for other clients.
 - `aiprover doctor` fails 4 of 15 rows under every config: harness pin and
   skill-copy comparison (uncommitted orchestration changes to `harness.py`
   and `aiprover.py` in the `AIProver` submodule), REPL and cslib not built in
@@ -391,6 +395,25 @@ Results
   (not bundled): Nix's OpenSSH rejected Ubuntu-permitted `~/.ssh/config`
   permissions and lacks GSSAPI and macOS `UseKeychain`. `--via` accepts
   `~/.ssh/config` aliases; `ssh_user` is empty unless `--user` is given.
+- Endpoints in `./setup` are generic: `--endpoint URL` (direct when it
+  answers), `--via HOST` (SSH tunnel, control socket
+  `~/.ssh/aiprover-<host>.sock`), `--handoff FILE` (server job on a cluster),
+  `--timeout`, `--max-turns`; `dgx` and `vista` remain as shortcuts of the
+  project's servers and are not documented in the README.
+- Endpoint-independent harness path: the harness always talks to a local
+  reasoning proxy (`127.0.0.1:18575`), which forwards to the server directly
+  or through the SSH tunnel. `./setup` writes `endpoint.toml` (connection,
+  `[proxy]`) and `aiprover.toml` (harness, direct to the proxy); `setup.sh
+  endpoint` opens master and tunnel (AIProver CLI with `endpoint.toml`) and
+  starts the proxy detached, restarting it when its upstream changes. Checked
+  on the VM against the DGX directly (no tool-call parser): model endpoint,
+  model thinks and structured tool calls PASS through the local proxy.
+- macOS device: environment built, doctor 14/15, tunnel answers; every
+  AIProver job ended `empty`. Cause: the DGX server has no tool-call
+  parser, and the device reached it directly instead of through the
+  reasoning proxy, so the harness received tool calls as text; resolved by
+  the local proxy (entry above). `setup.sh doctor` adds a structured
+  tool-call check.
 - First device run (Linux, Nix 2.35.2): environment built, Lean and plugin
   installed, doctor 12/14 (harness pin; endpoint, before the changes above).
 - Checked on the VM (no Nix): dry runs of every preset; the generated config

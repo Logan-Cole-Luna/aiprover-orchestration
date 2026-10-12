@@ -15,29 +15,45 @@ server, reached as the AIProver plugin reaches it (`AIProver/AIProver_plugin/REA
 One command from a fresh clone, on Linux, WSL2 or macOS:
 
 ```bash
-git clone --recurse-submodules <repository url> aiprover_orchestration && cd aiprover_orchestration && ./setup --endpoint dgx --via <host>
+git clone --recurse-submodules <repository url> aiprover_orchestration && cd aiprover_orchestration && ./setup --endpoint http://<model host>:<port>
 ```
 
 `./setup` (repository root) checks the platform and fetches the submodules.
 It finds Nix, or offers to install it, asking first and showing the command.
 It builds the environment from `flake.nix` and writes this directory's
-`aiprover.toml` for the device. Finally it runs `setup.sh lean claude connect doctor`.
+`endpoint.toml` and `aiprover.toml` for the device. Finally it runs
+`setup.sh lean claude endpoint doctor`.
 `./setup --dry-run` prints every step without changing anything.
 
-| Endpoint | Model server | Connection |
+| Where the model server is | Command | Connection |
 |---|---|---|
-| `--endpoint dgx [--via HOST]` | `aip-leanstral` on cic-dgx-01 (port 8040) | direct when reachable from the device (TACC network); otherwise an SSH tunnel through `HOST`, which must reach the DGX: a host name or an alias of `~/.ssh/config` (its `User` and key apply); key-based, no passphrase prompt (BatchMode) |
-| `--endpoint vista [--user USER]` | a Vista server job | SSH tunnel to the compute node named in the job's handoff file |
-| `--endpoint URL [--api-key KEY]` | any OpenAI-compatible endpoint serving the model | direct; the key is sent as a bearer token |
+| reachable from the device | `--endpoint URL [--api-key KEY]` | direct; the key is sent as a bearer token |
+| reachable only from an SSH host | `--endpoint URL --via HOST [--user USER]` | SSH tunnel through `HOST` (a host name or an alias of `~/.ssh/config`) |
+| a scheduled job writing `node=<n> port=<p>` to a file on a login node | `--via HOST --handoff FILE` | SSH tunnel to the node the file names; a restarted job is followed |
 
-With a TACC account, `--via 129.114.35.157 --user <TACC user>` (the
-orchestration VM) needs no SSH key. The SSH routes authenticate once per
-login session: `setup.sh connect` opens an SSH master connection and asks for
-what the host requires (at TACC the password, then `TACC_Token`). The
-AIProver CLI opens, checks and reopens its tunnels over that master without
-prompting. When the master has closed (reboot, sleep, network change), the
-doctor and the skill report it; rerun `setup.sh connect`. Without
-`--endpoint`, `./setup` keeps an existing `aiprover.toml`, or asks for one.
+The harness never talks to the server itself: it talks to a reasoning proxy
+on the user's machine (`aiprover_orchestration/server/reasoning_proxy.py`,
+port 18575), which forwards to the server directly or through the SSH
+tunnel. The proxy turns tool calls that a server without a tool-call parser
+returns as text into structured calls, caps reply length, repairs histories
+the server would reject, and records each session's reasoning; so any
+OpenAI-compatible server of the model works, with or without vLLM's tool
+parser. `setup.sh endpoint` opens the connection and starts the proxy; the
+skill runs it before each run.
+
+```
+harness -> reasoning proxy (127.0.0.1:18575) -> server            (direct)
+harness -> reasoning proxy (127.0.0.1:18575) -> SSH tunnel -> server
+```
+
+The SSH routes authenticate once per login session: `setup.sh connect` opens
+an SSH master connection and asks for what the host requires (a password, a
+one-time code, a key passphrase). The AIProver CLI opens, checks and reopens
+its tunnels over that master without prompting. When the master has closed
+(reboot, sleep, network change), the doctor and the skill report it; rerun
+`setup.sh connect`. `--timeout` and `--max-turns` set one AIProver session's
+budget. Without `--endpoint`, `./setup` keeps an existing `endpoint.toml`, or
+asks for one.
 
 | Built by Nix | Linked at | Content |
 |---|---|---|
@@ -56,8 +72,9 @@ installed by elan into `~/.elan`, with Mathlib, the REPL and cslib in
 |---|---|
 | `lean` | elan, Lean 4.23.0, the Mathlib project with REPL and cslib (`AIProver/AIProver_plugin/setup.sh lean`); `orchestration_workspace/.lake/packages` linked to its packages |
 | `claude` | links `~/.config/aiprover_orchestration/{root,aiprover.toml}`; installs the plugin from the local marketplace (without the `claude` CLI, prints the `/plugin` commands for the app) |
-| `connect` | opens the SSH master of an SSH endpoint (password and `TACC_Token` at TACC); nothing for a direct endpoint |
-| `doctor` | `aiprover doctor`: environment, model endpoint, the model thinks |
+| `connect` | opens the SSH master of an SSH endpoint (asks for the host's credentials); nothing for a direct endpoint |
+| `endpoint` | `connect`, the SSH tunnel (AIProver CLI, follows a handoff file) and the local reasoning proxy |
+| `doctor` | `aiprover doctor` (environment, model endpoint, the model thinks) and a structured tool-call check |
 | `full` | `aiprover doctor --full`: as `doctor`, plus one live AIProver rollout |
 
 `AIProver/AIProver_plugin/STARTUP.md` §5 maps each failing doctor row to its
@@ -74,13 +91,14 @@ OpenAI math release) is in git as a sample set, for example
 new device. Results are written to `results/<run_id>/`.
 
 To change the endpoint later, run `./setup --endpoint ... --no-lean` (connect
-and doctor only), or edit `aiprover.toml` and run `setup.sh connect doctor`.
+and doctor only), or edit `endpoint.toml` and run `setup.sh endpoint doctor`.
 
 ## Layout
 
 | Path | Content |
 |---|---|
-| `aiprover.toml` | written by `./setup`: endpoint, runtime, paths (not in git) |
+| `endpoint.toml` | written by `./setup`: the connection to the model server and the local proxy (not in git) |
+| `aiprover.toml` | written by `./setup`: the harness (through the proxy), runtime, paths (not in git) |
 | `setup.sh` | the steps inside the environment: Lean, plugin, doctor |
 | `claude_code/skills/aiprover-captain/SKILL.md` | the captain procedure |
 | `…/references/` | Lean gates, subagent prompts, run record |
