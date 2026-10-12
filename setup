@@ -1,22 +1,27 @@
 #!/bin/sh
 # ./setup: from a fresh clone to a working aiprover-captain skill, on Linux, WSL2 or macOS.
 #
-#   ./setup --endpoint dgx [--via HOST]   the DGX server cic-dgx-01 (directly when reachable,
-#                                         else through an SSH tunnel via HOST)
-#   ./setup --endpoint vista --user USER  a Vista server job (handoff file, SSH master with MFA)
-#   ./setup --endpoint URL [--api-key K]  any OpenAI-compatible endpoint serving the model
-#   ./setup                               keep the existing endpoint, or ask for one
+#   ./setup --endpoint URL                      a model server reachable from this device
+#   ./setup --endpoint URL --via HOST           a server reachable only from HOST: SSH tunnel
+#   ./setup --via HOST --handoff FILE           a server job that writes its node and port to FILE
+#                                               on HOST (`node=<n> port=<p>`), followed on restart
+#   ./setup                                     keep the existing endpoint, or ask for one
 #
-#   --user USER          SSH user for --via or vista (default: $USER)
+#   --via HOST           an SSH host or an alias of ~/.ssh/config
+#   --user USER          SSH user, when ~/.ssh/config does not set one for HOST
+#   --api-key KEY        bearer token of the model server (direct connection)
+#   --timeout SEC        wall clock of one AIProver session (default 5400)
+#   --max-turns N        turn budget of one AIProver session (default 200)
+#   Shortcuts for this project's servers: --endpoint dgx, --endpoint vista.
 #   --lean-project PATH  use an existing Lean project (default: aiprover/lean_project)
 #   --yes                accept every default (the Nix installer still shows what it runs)
 #   --dry-run            print what would happen; change nothing
-#   --no-lean            stop after the configuration (no Lean build, plugin install or doctor)
+#   --no-lean            skip the Lean build and the plugin installation (to change the endpoint)
 #   --installer official|determinate
 #
 # Steps: check the platform; fetch the submodules; find Nix, or offer to install it; build the
 # tools and the AIProver virtualenvs into aiprover/nix/; write orchestration_plugin/aiprover.toml;
-# then orchestration_plugin/setup.sh lean claude doctor. Every Nix command passes
+# then orchestration_plugin/setup.sh lean claude endpoint doctor. Every Nix command passes
 # `--extra-experimental-features 'nix-command flakes'`, so flakes need not be enabled.
 #
 # POSIX sh on purpose: it runs before anything else is installed.
@@ -25,6 +30,10 @@ set -eu
 NIX_FEATURES="nix-command flakes"
 MIN_FREE_GB=15
 DGX_URL="http://cic-dgx-01.tacc.cloud:8040"
+ORCHESTRATION_VM="129.114.35.157"
+# Local ports: the SSH tunnel's end and the reasoning proxy the harness talks to.
+TUNNEL_PORT=18555
+PROXY_PORT=18575
 VISTA_HANDOFF="/scratch/11757/loganluna/servers/aiprover_server.txt"
 
 YES=no
@@ -33,8 +42,11 @@ LEAN=yes
 INSTALLER=official
 ENDPOINT=""
 VIA=""
-SSH_USER="${USER:-}"
+SSH_USER=""
 API_KEY="EMPTY"
+HANDOFF=""
+TIMEOUT=""
+TURNS=""
 LEAN_PROJECT=""
 
 say() { printf '%s\n' "$*"; }
@@ -45,7 +57,7 @@ die() {
   exit 1
 }
 
-usage() { sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; }
 
 # ask QUESTION DEFAULT(y|n): yes or no from the terminal; --yes answers y.
 ask() {
@@ -137,13 +149,13 @@ build_environment() {
 # Endpoint ---------------------------------------------------------------------------------------
 
 choose_endpoint() {
-  if [ -z "$ENDPOINT" ] && [ -f orchestration_plugin/aiprover.toml ]; then
-    step "Endpoint: keeping orchestration_plugin/aiprover.toml (pass --endpoint to replace it)"
+  if [ -z "$ENDPOINT$HANDOFF" ] && [ -f orchestration_plugin/endpoint.toml ]; then
+    step "Endpoint: keeping orchestration_plugin/endpoint.toml (pass --endpoint to replace it)"
     return 1
   fi
-  if [ -z "$ENDPOINT" ]; then
-    [ "$YES" = yes ] && die "no endpoint configured: pass --endpoint dgx|vista|URL"
-    printf 'Model endpoint (dgx, vista, or an http(s) URL): '
+  if [ -z "$ENDPOINT$HANDOFF" ]; then
+    [ "$YES" = yes ] && die "no endpoint configured: pass --endpoint URL (see ./setup --help)"
+    printf 'Model server URL (http://host:port): '
     read -r ENDPOINT || die "no endpoint given"
   fi
   return 0
@@ -162,35 +174,51 @@ write_config() {
   socket=""
   timeout=5400
   turns=200
+  # This project's servers, as shortcuts for the generic options.
   case "$ENDPOINT" in
   dgx)
+    ENDPOINT="$DGX_URL"
+    reachable "$ENDPOINT" || VIA="${VIA:-$ORCHESTRATION_VM}"
     timeout=10800
     turns=100
-    if reachable "$DGX_URL"; then
-      api_base="$DGX_URL/v1"
-    else
-      if [ -z "$VIA" ] && [ "$YES" = no ]; then
-        printf '%s is not reachable from here. SSH host that reaches it: ' "$DGX_URL"
-        read -r VIA || VIA=""
-      fi
-      [ -n "$VIA" ] || die "$DGX_URL is not reachable from here: pass --via HOST (a host that reaches it)"
-      mode=ssh
-      ssh_host="$VIA"
-      remote_host="cic-dgx-01.tacc.cloud"
-      remote_port=8040
-    fi
     ;;
   vista)
-    mode=ssh
-    ssh_host="vista.tacc.utexas.edu"
-    handoff="$VISTA_HANDOFF"
-    socket="~/.ssh/vista.sock"
+    ENDPOINT=""
+    VIA="${VIA:-vista.tacc.utexas.edu}"
+    HANDOFF="${HANDOFF:-$VISTA_HANDOFF}"
     ;;
-  http://* | https://*) api_base="${ENDPOINT%/}" ;;
-  *) die "unknown endpoint $ENDPOINT (dgx, vista, or an http(s) URL)" ;;
   esac
+  timeout="${TIMEOUT:-$timeout}"
+  turns="${TURNS:-$turns}"
+  case "$ENDPOINT" in
+  "" | http://* | https://*) ;;
+  *) die "unknown endpoint $ENDPOINT: give the model server's URL (http://host:port)" ;;
+  esac
+  if [ -n "$ENDPOINT" ] && [ -z "$HANDOFF" ] && reachable "${ENDPOINT%/}"; then
+    api_base="${ENDPOINT%/}"
+  else
+    if [ -z "$VIA" ] && [ "$YES" = no ]; then
+      printf '%s is not reachable from here. SSH host that reaches it: ' "${ENDPOINT:-the server}"
+      read -r VIA || VIA=""
+    fi
+    [ -n "$VIA" ] || die "${ENDPOINT:-the server} is not reachable from here: pass --via HOST (an SSH host that reaches it)"
+    mode=ssh
+    ssh_host="$VIA"
+    handoff="$HANDOFF"
+    socket="~/.ssh/aiprover-$(printf '%s' "$VIA" | tr -c 'A-Za-z0-9.-' '_').sock"
+    if [ -n "$ENDPOINT" ]; then
+      # The server's host and port as seen from HOST (a fallback when a handoff file is given).
+      address=${ENDPOINT#*://}
+      address=${address%%/*}
+      remote_host=${address%:*}
+      case "$address" in
+      *:*) remote_port=${address##*:} ;;
+      *) case "$ENDPOINT" in https://*) remote_port=443 ;; *) remote_port=80 ;; esac ;;
+      esac
+    fi
+  fi
   [ "$mode" = ssh ] || [ -n "$api_base" ] || die "no api_base for $ENDPOINT"
-  [ "$mode" = direct ] || api_base="http://127.0.0.1:18555/v1"
+  [ "$mode" = direct ] || api_base="http://127.0.0.1:$TUNNEL_PORT/v1"
   case "$api_base" in */v1) ;; *) api_base="$api_base/v1" ;; esac
 
   if [ "$(uname -s)" = Darwin ]; then
@@ -203,29 +231,68 @@ write_config() {
   [ "$parallel" -le 8 ] || parallel=8
 
   root=$(pwd)
-  step "Endpoint: $ENDPOINT ($mode, $([ "$mode" = ssh ] && echo "via $ssh_host" || echo "$api_base"))"
-  config=$(
+  if [ "$mode" = ssh ]; then
+    target="${ENDPOINT:-server named in $handoff} via $ssh_host"
+  else
+    target="$api_base"
+  fi
+  step "Endpoint: $mode, $target"
+  if [ "$mode" = ssh ]; then
+    upstream="http://127.0.0.1:$TUNNEL_PORT"
+  else
+    upstream="${api_base%/v1}"
+  fi
+  # The connection to the model server, opened by orchestration_plugin/setup.sh endpoint.
+  endpoint_config=$(
     cat <<EOF
-# AIProver configuration of the aiprover-captain skill, written by ./setup for this device
-# (endpoint $ENDPOINT). Same format as AIProver/AIProver_plugin/aiprover.toml. Edit it freely;
-# ./setup keeps it unless --endpoint is given. After an edit: orchestration_plugin/setup.sh doctor
+# Connection of the aiprover-captain skill to the model server, written by ./setup for this
+# device ($mode, $target). Same [endpoint] format as AIProver/AIProver_plugin/aiprover.toml.
+# Edit it freely; ./setup keeps it unless --endpoint is given. After an edit:
+#   orchestration_plugin/setup.sh endpoint doctor
 
 [endpoint]
 mode = "$mode"
 # ssh mode: the host you SSH into, and the model's address as seen from it. With server_handoff
-# set, the node and port are read from that file on ssh_host (the Vista server job writes it).
+# set, the node and port are read from that file on ssh_host (a server job writes it).
 ssh_host = "$ssh_host"
 ssh_user = "$SSH_USER"
 ssh_port = 22
 remote_host = "$remote_host"
 remote_port = $remote_port
 server_handoff = "$handoff"
-# An SSH master opened by hand (TACC requires MFA): ssh -fNM -S <socket> <user>@<ssh_host>
+# The SSH master the tunnel rides; setup.sh connect opens it (it asks for what the host
+# requires, such as a password and a one-time code).
 control_socket = "$socket"
 ssh_options = []
-local_port = 18555
-# direct mode: the endpoint itself; api_key is sent as a bearer token.
+local_port = $TUNNEL_PORT
+# direct mode: the server itself.
 api_base = "$api_base"
+api_key = "$API_KEY"
+model = ""
+
+# The reasoning proxy (aiprover_orchestration/server/reasoning_proxy.py) the harness talks to.
+# It turns tool calls a server returns as text into structured calls, caps reply length,
+# repairs histories the server would reject, and records each session's reasoning.
+[proxy]
+listen = $PROXY_PORT
+upstream = "$upstream"
+max_reply_tokens = 16384
+
+[runtime]
+work_root = "$root/aiprover/work"
+EOF
+  )
+  # The harness's configuration: the model through the local proxy.
+  harness_config=$(
+    cat <<EOF
+# AIProver configuration of the aiprover-captain skill, written by ./setup for this device.
+# The harness reaches the model through the local reasoning proxy, which forwards to the
+# server of endpoint.toml ($mode, $target). Same format as AIProver/AIProver_plugin/aiprover.toml.
+
+[endpoint]
+mode = "direct"
+api_base = "http://127.0.0.1:$PROXY_PORT/v1"
+# Sent as a bearer token; the proxy forwards it to the server.
 api_key = "$API_KEY"
 # Served model id; empty = the first id /v1/models reports.
 model = ""
@@ -246,15 +313,13 @@ rg_dir = "$root/aiprover/nix/tools/bin"
 EOF
   )
   if [ "$DRY" = yes ]; then
+    say "would write orchestration_plugin/endpoint.toml:"
+    printf '%s\n' "$endpoint_config"
     say "would write orchestration_plugin/aiprover.toml:"
-    printf '%s\n' "$config"
+    printf '%s\n' "$harness_config"
   else
-    printf '%s\n' "$config" > orchestration_plugin/aiprover.toml
-  fi
-  if [ "$ENDPOINT" = vista ]; then
-    say "Before the doctor, open the SSH master once (MFA):"
-    say "  ssh -fNM -S ~/.ssh/vista.sock -o ServerAliveInterval=30 $SSH_USER@vista.tacc.utexas.edu"
-    [ "$YES" = yes ] || ask "Opened?" y || true
+    printf '%s\n' "$endpoint_config" > orchestration_plugin/endpoint.toml
+    printf '%s\n' "$harness_config" > orchestration_plugin/aiprover.toml
   fi
 }
 
@@ -264,11 +329,12 @@ finish() {
   PATH="$(pwd)/aiprover/nix/tools/bin:$PATH"
   export PATH
   if [ "$LEAN" = no ]; then
-    say "Skipped. Run later:  orchestration_plugin/setup.sh lean claude doctor"
+    step "Connection and doctor (Lean and plugin skipped)"
+    run bash orchestration_plugin/setup.sh endpoint doctor
     return
   fi
-  step "Lean, Claude Code plugin, doctor (the first Lean setup downloads Mathlib's cache, ~5 GB)"
-  run bash orchestration_plugin/setup.sh lean claude doctor
+  step "Lean, Claude Code plugin, endpoint, doctor (the first Lean setup downloads Mathlib's cache, ~5 GB)"
+  run bash orchestration_plugin/setup.sh lean claude endpoint doctor
 }
 
 next_steps() {
@@ -290,6 +356,9 @@ main() {
     --via) VIA="${2:?--via needs a host}"; shift ;;
     --user) SSH_USER="${2:?--user needs a name}"; shift ;;
     --api-key) API_KEY="${2:?--api-key needs a value}"; shift ;;
+    --handoff) HANDOFF="${2:?--handoff needs a path}"; shift ;;
+    --timeout) TIMEOUT="${2:?--timeout needs seconds}"; shift ;;
+    --max-turns) TURNS="${2:?--max-turns needs a number}"; shift ;;
     --lean-project) LEAN_PROJECT="${2:?--lean-project needs a path}"; shift ;;
     --installer) INSTALLER="${2:?--installer needs a name}"; shift ;;
     --yes | -y) YES=yes ;;

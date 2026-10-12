@@ -140,6 +140,10 @@ Results
 
 ## Issues
 
+- The DGX server (vLLM 0.31.0) runs without a tool-call parser; every
+  client must reach it through a reasoning proxy (the skill starts one
+  locally). Restarting it with `--enable-auto-tool-choice --tool-call-parser
+  mistral` would remove the dependency for other clients.
 - `aiprover doctor` fails 4 of 15 rows under every config: harness pin and
   skill-copy comparison (uncommitted orchestration changes to `harness.py`
   and `aiprover.py` in the `AIProver` submodule), REPL and cslib not built in
@@ -363,6 +367,12 @@ Results
 - Per-run model choice for orchestrator and subagent (Claude model and
   reasoning level, or AIProver trained/base) on the query server page.
 
+## 2026-10-11: Sample problem set in git
+
+- `data/openai_math.jsonl` (five problems: 332, 011, 164, 048, 259) is
+  tracked as the sample set for the aiprover-captain skill; the rest of
+  `data/` stays out of git. Source: openai/math, Apache-2.0.
+
 ## 2026-10-11: One-command setup with Nix
 
 - `./setup` (POSIX sh, after the flywheel superproject's): platform and disk
@@ -379,6 +389,48 @@ Results
 - `orchestration_plugin/aiprover.toml` is generated per device (absolute
   paths) and no longer tracked; `setup.sh` steps are `lean`, `claude`,
   `doctor`, `full`.
+- SSH routes authenticate as TACC logins do: `setup.sh connect` opens an SSH
+  master (`control_socket`, also for `dgx --via`) and prompts for the password
+  and `TACC_Token`; the CLI's tunnels ride it. The system ssh client is used
+  (not bundled): Nix's OpenSSH rejected Ubuntu-permitted `~/.ssh/config`
+  permissions and lacks GSSAPI and macOS `UseKeychain`. `--via` accepts
+  `~/.ssh/config` aliases; `ssh_user` is empty unless `--user` is given.
+- Endpoints in `./setup` are generic: `--endpoint URL` (direct when it
+  answers), `--via HOST` (SSH tunnel, control socket
+  `~/.ssh/aiprover-<host>.sock`), `--handoff FILE` (server job on a cluster),
+  `--timeout`, `--max-turns`; `dgx` and `vista` remain as shortcuts of the
+  project's servers and are not documented in the README.
+- Key offer in `setup.sh connect`: after a password login it offers a
+  dedicated key (`~/.ssh/aiprover_ed25519`), installs it through the master
+  with `restrict,port-forwarding,permitopen="<server>"` (or `command="cat
+  <handoff>"`), and verifies a no-prompt login; on a host that answers
+  "publickey with partial success" the key is removed again and the host
+  remembered. Checked on the orchestration VM (`AuthenticationMethods
+  publickey,keyboard-interactive keyboard-interactive`): partial success
+  detected, key removed, `~/.ssh` restored.
+- Connection resilience (macOS device: the SSH master dropped within minutes
+  during runs, leaving sessions on the VM that never closed, i.e. network-level
+  loss): master opened with `ServerAliveCountMax=20` (10 min tolerance instead
+  of 90 s); `connect` first reopens without a prompt (`BatchMode`, works with
+  keys, agents, Kerberos); on macOS the proxy is accompanied by `caffeinate
+  -ims -w <proxy pid>`; `setup.sh stop`; `endpoint` closes a stale `ssh`
+  forward holding the tunnel port and checks the path end to end.
+- Endpoint-independent harness path: the harness always talks to a local
+  reasoning proxy (`127.0.0.1:18575`), which forwards to the server directly
+  or through the SSH tunnel. `./setup` writes `endpoint.toml` (connection,
+  `[proxy]`) and `aiprover.toml` (harness, direct to the proxy); `setup.sh
+  endpoint` opens master and tunnel (AIProver CLI with `endpoint.toml`) and
+  starts the proxy detached, restarting it when its upstream changes. Checked
+  on the VM against the DGX directly (no tool-call parser): model endpoint,
+  model thinks and structured tool calls PASS through the local proxy.
+- macOS device: environment built, doctor 14/15, tunnel answers; every
+  AIProver job ended `empty`. Cause: the DGX server has no tool-call
+  parser, and the device reached it directly instead of through the
+  reasoning proxy, so the harness received tool calls as text; resolved by
+  the local proxy (entry above). `setup.sh doctor` adds a structured
+  tool-call check.
+- First device run (Linux, Nix 2.35.2): environment built, Lean and plugin
+  installed, doctor 12/14 (harness pin; endpoint, before the changes above).
 - Checked on the VM (no Nix): dry runs of every preset; the generated config
   parsed by `aiprover config`; locks against the pins.
 

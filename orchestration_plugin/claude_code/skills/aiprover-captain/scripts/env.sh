@@ -15,6 +15,13 @@ AIP=$ROOT/AIProver/AIProver_plugin/bin/aiprover
 WS=$ROOT/orchestration_workspace
 JOBS=$("$AIP" config --shell | sed -n 's/^AIP_WORK_ROOT=//p')/jobs
 
+# Brings the model server up as the harness reaches it: SSH master and tunnel when the endpoint
+# is reached over SSH, then the local reasoning proxy. Returns non-zero when the SSH master is
+# closed: the user must reopen it in a terminal (setup.sh connect asks for credentials).
+endpoint_up() {
+    bash "$ROOT/orchestration_plugin/setup.sh" endpoint < /dev/null
+}
+
 # Creates results/<run>/ and temp/<run>/ and writes the trace header.
 # Arguments: run id, problem row (JSON file), theorem name, captain model.
 trace_start() {
