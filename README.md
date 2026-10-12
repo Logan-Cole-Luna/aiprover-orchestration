@@ -110,6 +110,15 @@ Python 3.12 with `fastapi`, `httpx`, `uvicorn`, `aiohttp` and `pygments`;
 AIProver venvs and ripgrep from
 `AIPROVER_CONFIG=configs/aiprover/vista.toml AIProver/AIProver_plugin/setup.sh venvs rg`.
 
+## Results
+
+| Problem | Status | Lemmas | Final review |
+|---|---|---|---|
+| OpenAIMath 332, metric Markov cotype of L1 | proved (2026-10-10) | 49 | faithful |
+| OpenAIMath 011, large totient fibers, conditional on (H) | proved (2026-10-11) | 20 | faithful |
+
+Further runs and their status are recorded in `logbook.md`.
+
 ## Future work
 
 - Project upload: import an existing Lean project (declaration graph,
