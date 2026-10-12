@@ -26,6 +26,7 @@ aiprover/nix/
 
 # Written by ./setup for each device
 orchestration_plugin/aiprover.toml
+orchestration_plugin/endpoint.toml
 
 # Nix
 result
