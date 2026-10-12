@@ -21,6 +21,16 @@ aiprover/bin/
 aiprover/work/
 aiprover/work_*/
 aiprover/venv_*/
+aiprover/lean_project/
+aiprover/nix/
+
+# Written by ./setup for each device
+orchestration_plugin/aiprover.toml
+
+# Nix
+result
+result-*
+.direnv/
 
 # Scratch space and logs
 temp/

@@ -40,6 +40,7 @@ flowchart LR
 ├── orchestration_workspace/    # Lake project of library and run modules
 ├── scripts/                    # systemd units, Vista and local model serving
 ├── orchestration_plugin/       # Claude Code skill aiprover-captain (interactive captain)
+├── setup, flake.nix, nix/      # one-command setup of the skill's environment (Nix)
 ├── AIProver/                   # AIProver harness and prover (submodule)
 ├── aiprover/                   # AIProver runtime: venvs, ripgrep, jobs
 ├── data/ libraries/            # problem datasets; single-file result libraries
@@ -74,9 +75,10 @@ python -m aiprover_orchestration.utils.share_results \
 # Query server (systemd unit: scripts/systemd/aiprover_query_server.service)
 uvicorn aiprover_orchestration.server.app:app --host 0.0.0.0 --port 8443
 
-# Interactive run in Claude Code or VS Code: install once, then ask the agent
-# to run a problem with the aiprover-captain skill
-orchestration_plugin/setup.sh
+# Interactive runs in Claude Code or VS Code (Linux, WSL2, macOS): one command
+# sets up Nix, Lean, the AIProver virtualenvs, the model endpoint and the
+# plugin; then ask the agent to run a problem with the aiprover-captain skill
+./setup --endpoint dgx --via <host>       # or: vista, or an http(s) URL
 
 # Theorem library
 python -m aiprover_orchestration.library add-theorem NAME FILE --statement "..."

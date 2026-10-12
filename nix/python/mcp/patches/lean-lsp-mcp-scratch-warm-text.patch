@@ -1,0 +1,18 @@
+--- a/lean_lsp_mcp/client_utils.py
++++ b/lean_lsp_mcp/client_utils.py
+@@ -1,6 +1,7 @@
+ from __future__ import annotations
+ 
+ import asyncio
++import os
+ from dataclasses import dataclass
+ from pathlib import Path
+ from typing import TYPE_CHECKING
+@@ -207,6 +208,7 @@
+             size=1 if serial else config.scratch_pool_size(),
+             name_prefix="_mcp_serial" if serial else "_mcp_scratch",
+         )
++        pool.warm_text = os.environ.get("LEAN_SCRATCH_WARM_HEADER", "import Mathlib\n")
+         if serial:
+             runtime.serial_pool = pool
+         else:
