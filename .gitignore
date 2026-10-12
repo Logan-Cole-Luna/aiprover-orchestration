@@ -26,6 +26,7 @@ aiprover/nix/
 
 # Written by ./setup for each device
 orchestration_plugin/aiprover.toml
+orchestration_plugin/endpoint.toml
 
 # Nix
 result
@@ -40,7 +41,8 @@ logs/
 *.err
 results/
 libraries/
-data/
+data/*
+!data/openai_math.jsonl
 analysis/
 
 # Python
