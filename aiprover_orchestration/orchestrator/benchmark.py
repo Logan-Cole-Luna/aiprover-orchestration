@@ -26,6 +26,7 @@ rewrites benchmark.json of a finished run.
 import json
 import math
 import os
+import re
 import statistics
 import sys
 import threading
@@ -205,10 +206,21 @@ def server_summary(samples: list[dict]) -> dict | None:
     }
 
 
+# A tool name; other names are text of malformed tool calls in the model's
+# output, counted together.
+TOOL_NAME = re.compile(r"[A-Za-z][\w.-]{0,63}")
+
+
 def tool_counts(session: dict) -> dict[str, int]:
     """Tool calls of an AIProver session by tool name."""
     counts = session.get("tool_calls") or {}
-    return counts if isinstance(counts, dict) else {"all": counts}
+    if not isinstance(counts, dict):
+        return {"all": counts}
+    named: dict[str, int] = {}
+    for name, count in counts.items():
+        key = name if TOOL_NAME.fullmatch(name) else "(malformed call)"
+        named[key] = named.get(key, 0) + count
+    return named
 
 
 def session_summary(steps: list[dict]) -> dict | None:
@@ -275,6 +287,98 @@ def call_summary(steps: list[dict]) -> dict:
     }
 
 
+def call_purpose(step: dict) -> str:
+    """What a call was for: its label without the lemma, sample or repair
+    number (`handback/mc_flat` and `report_repair0` give `handback` and
+    `report_repair`)."""
+    return re.sub(r"\d+$", "", step.get("label", "").split("/")[0])
+
+
+def run_costs(trace: dict) -> dict:
+    """Hosted model costs and the GPU time of a run, from its trace, which
+    leaves out refused calls. Input tokens are left out: they are reported
+    without the cached prompt.
+
+    GPU time is attributed by session slots: a model server with `gpus`
+    GPUs serves `aiprover_session_slots` sessions, so a session-hour counts
+    as gpus / slots GPU-hours."""
+    from ..server.vista import group_of_solver
+
+    steps = trace.get("steps", [])
+    hosted: dict[tuple, dict] = {}
+    sessions = []
+    jobs = 0
+    for step in steps:
+        if step["kind"] != "model_call":
+            continue
+        if step.get("backend") == "aiprover":
+            jobs += 1
+            # Sessions cut off by a lost model server are not counted.
+            sessions += [
+                sample
+                for sample in step.get("samples") or []
+                if sample.get("status") != "infra"
+            ]
+            continue
+        usage = step.get("usage") or {}
+        key = (step.get("role"), step.get("model"), call_purpose(step))
+        row = hosted.setdefault(
+            key,
+            {
+                "role": key[0],
+                "model": key[1],
+                "purpose": key[2],
+                "calls": 0,
+                "output_tokens": 0,
+                "cost_usd": 0.0,
+            },
+        )
+        row["calls"] += 1
+        row["output_tokens"] += int(usage.get("outputTokens") or 0)
+        row["cost_usd"] += float(step.get("cost_usd") or 0.0)
+    config = trace.get("config") or {}
+    solver = (config.get("agents") or {}).get("solver") or {}
+    group = group_of_solver(solver.get("config") or "")
+    slots = config.get("aiprover_session_slots") or 0
+    session_hours = sum(
+        float(session.get("elapsed_sec") or 0) for session in sessions
+    ) / 3600
+    gpu_hours = (
+        session_hours * group.gpus / slots
+        if group and group.gpus and slots
+        else None
+    )
+    return {
+        "hosted": sorted(hosted.values(), key=lambda row: -row["cost_usd"]),
+        "hosted_cost_usd": round(
+            sum(row["cost_usd"] for row in hosted.values()), 4
+        ),
+        "solver": {
+            "model": solver.get("model"),
+            "jobs": jobs,
+            "sessions": len(sessions),
+            "session_hours": round(session_hours, 2),
+            "gpu": group.gpu if group else "",
+            "gpus_per_server": group.gpus if group else 0,
+            "sessions_per_server": slots,
+            "gpu_hours": None if gpu_hours is None else round(gpu_hours, 2),
+        },
+    }
+
+
+def usage_by_model(costs: dict) -> dict:
+    """Tokens and cost per hosted model."""
+    totals: dict[str, dict] = {}
+    for row in costs["hosted"]:
+        total = totals.setdefault(
+            row["model"],
+            {"output_tokens": 0, "cost_usd": 0.0},
+        )
+        for key in total:
+            total[key] += row[key]
+    return totals
+
+
 def machine_summary(samples: list[dict]) -> dict | None:
     if not samples:
         return None
@@ -299,12 +403,14 @@ def summarize(result_dir: Path, trace: dict) -> dict:
     samples = read_samples(Path(result_dir) / "metrics.jsonl")
     steps = trace.get("steps", [])
     outcome = trace.get("outcome") or {}
+    costs = run_costs(trace)
     summary = {
         "run_id": trace.get("run_id"),
         "status": outcome.get("status"),
         "wall_seconds": outcome.get("wall_seconds"),
         "phase_seconds": outcome.get("phase_seconds"),
-        "usage_by_model": outcome.get("usage_by_model"),
+        "usage_by_model": usage_by_model(costs),
+        "costs": costs,
         "server": server_summary(samples),
         "sessions": session_summary(steps),
         **call_summary(steps),

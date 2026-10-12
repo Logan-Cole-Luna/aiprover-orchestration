@@ -38,6 +38,10 @@ Orchestration (`aiprover_orchestration/orchestrator/`)
   replan precede none of the lemmas they use.
 - Replan prompt with the solvers' failed code and the Lean errors located in
   it.
+- Interactive captain: skill `aiprover-captain` (`orchestration_plugin/`)
+  runs the method in Claude Code with the session's agent as captain and
+  subagents as auditor, reviewer and writer; runs are recorded in the same
+  result layout and rendered by the same trace pages.
 - Knowledge carried across attempts on a lemma (searches, files read, last
   reasoning, code), given to later sessions as guidance and curated by the
   captain at hand-backs (`orchestrator/knowledge.py`).
@@ -68,6 +72,11 @@ Results
 
 ## Todo
 
+- `aiprover-captain` skill: first end-to-end run in Claude Code on
+  `JiatuBook_BoundedArithmetic_000004` with a model server up; compare
+  with the pipeline's run of the same problem.
+- `utils/share_results.py` selects runs by `trace.json` and `srv_*` run
+  ids; extend it to skill runs (`trace.jsonl`) if they are to be shared.
 - Decode benchmark (Vista jobs 1060653 tune, 1060649 arms A-D, 1060650
   arms E-G): tabulate with `scripts/vista/summarize_bench.py`; deploy
   `serve_aiprover_vista.sbatch` and `submit_aiprover_vista.sh` (CUDA graphs
@@ -128,6 +137,10 @@ Results
 
 ## Issues
 
+- `aiprover doctor` fails 4 of 15 rows under every config: harness pin and
+  skill-copy comparison (uncommitted orchestration changes to `harness.py`
+  and `aiprover.py` in the `AIProver` submodule), REPL and cslib not built in
+  `TmpProjDir`. The skill's preflight treats them as non-blocking.
 - The shared Mathlib build (`lean_projects/TmpProjDir/.lake/packages`) is
   writable by prover sessions. A session of 332 (job
   `20261010-005428-5xxt`, s0) ran `lake exe cache get` at 01:03 on
@@ -194,6 +207,13 @@ Results
 
 ## Decisions
 
+- The `aiprover-captain` skill makes no programmatic model calls (no
+  `claude -p`, no orchestrator driver, no `aiprover expand`,
+  `backtranslate` or `ask`); blind roles are subagents of the session.
+  Solvers are AIProver jobs only; hand-backs are the captain's.
+- Skill runs record their trace as `trace.jsonl`, appended line by line
+  from the shell; `Trace.load` reads it, so no trace writer process is
+  needed.
 - The budget keys keep the names `max_claude_calls`, `final_claude_calls`
   and `informal_claude_calls`, stored in existing traces, although they
   now count calls to every hosted model.
@@ -335,6 +355,27 @@ Results
 - Per-run model choice for orchestrator and subagent (Claude model and
   reasoning level, or AIProver trained/base) on the query server page.
 
+## 2026-10-10: Interactive captain skill
+
+- Plugin `orchestration_plugin/` (marketplace
+  `aiprover-orchestration-local`, skill `aiprover-captain`), packaged as
+  the AIProver plugin is; `setup.sh` links the repository at
+  `~/.config/aiprover_orchestration/root` and reinstalls the plugin.
+- `scripts/env.sh` of the skill: repository paths and recording functions
+  (`trace_start`, `trace_step`, `traced_check`, `traced_job`,
+  `traced_subagent`, `forbidden`, `informal_build`), reusing
+  `ALGORITHM`, `LEAN_ENVIRONMENT`, the role prompts, `forbidden_constructs`
+  and `InformalBuilder`.
+- `Trace.load` reads `trace.jsonl` (`Trace.from_lines`); `trace_view`
+  loads through it.
+- Model endpoint as in the AIProver plugin: `orchestration_plugin/aiprover.toml`
+  (default `ssh` mode, handoff file of the Vista server job, ControlMaster
+  opened by hand), linked at `~/.config/aiprover_orchestration/aiprover.toml`;
+  `setup.sh` steps `deps` (AIProver's `setup.sh deps` with this config),
+  `claude`, `doctor` (`--full`, without `--agents`, which calls `claude -p`).
+- Checked: header, Lean check, AIProver job and decision steps recorded
+  and rendered; informalization typeset; module statement check built.
+
 ## 2026-10-10: Hosted model spend
 
 - Claude spend over the 30 traces in `results/` ($86.4): captain
@@ -383,6 +424,42 @@ Results
   and the stage waits on it. A job can outlive the run that submitted it;
   the resumed run had counted such a job as a failed attempt and started a
   second one (332, `mc_cut_real_pointwise`, 21:18).
+
+- 2026-10-10 23:00: 332 (metric Markov cotype of L1) proved: 49 lemmas,
+  final review faithful, 41.6 h wall clock over 10 resumptions. Both
+  halves of the `mc_cut_real` split were proved by the captain on
+  hand-back after their AIProver attempts (`mono` 21:22, `pointwise`
+  22:49).
+
+- Run accounting: `benchmark.run_costs` gives hosted calls by role, model
+  and purpose, and the solver's jobs, sessions, session-hours and GPU-hours
+  (attributed by session slots: a server's GPUs over
+  `aiprover_session_slots`; GPU groups carry `gpu` and `gpus`). It feeds
+  trace.html (cost and compute panels), the report's summary table and
+  benchmark.json. Summary totals (`calls_by_role`, `usage_by_model`) count
+  the calls the trace keeps; the Claude budget still counts refusals.
+  Sessions cut off by a lost server and malformed tool-call names are not
+  counted as sessions or tools.
+- `orchestrator.trace --drop-jobs` removes AIProver jobs that failed on the
+  infrastructure, with their Lean checks and decisions. 332: the 11 jobs
+  of the Mathlib rebuild window and 3 jobs of the earlier `mc_cut_real`
+  split removed, with three resume calls that found their job still
+  running; the previous trace is in `temp/trace_backup/`.
+- The report's pdfTeX output is decoded with replacement: 332's report
+  stopped at 22:59 on a byte sequence split by pdfTeX's line wrapping,
+  leaving a single-pass PDF with unresolved references and no
+  informalization; regenerated by resuming the run.
+- The replay's assembly node shows the last assembly, not the first.
+- 2026-10-11 01:01: 011 (large totient fibers, conditional on (H)) proved,
+  final review faithful. Its informalization had no PDF: the writer
+  closed the body with `\end{body>`, the body parsed as empty, and the
+  repairs, which receive no Lean source, could not restore it.
+  `ReportText.parse` now reads an unclosed body to the end of the reply
+  (`open_body`); `reports.informal --reuse-draft` reuses the writer's
+  draft from the trace. The informal check sees the Lean source but not
+  the problem statement, and judged the conditional theorem weaker than
+  the source; the three passages it caused were corrected in
+  `informal_parts.json` and recompiled (`--rebuild`).
 
 - `max_parallel` 56 (12:50) brought free memory to 4.7 GB at 51 sessions
   (15:21; about 2.4 GB per session plus 4.7 GB for the Mathlib index).

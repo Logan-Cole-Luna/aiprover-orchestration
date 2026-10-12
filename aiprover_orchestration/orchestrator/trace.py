@@ -112,6 +112,27 @@ def without_refused_handbacks(document: dict) -> dict:
     )
 
 
+def without_jobs(document: dict, jobs: set[str]) -> dict:
+    """The trace document without the given AIProver jobs, for jobs whose
+    failure was the infrastructure's: their start, call, end decisions and
+    the Lean checks of their samples (which follow the call)."""
+    steps = document.get("steps", [])
+    removed, open_lemmas = set(), set()
+    for position, step in enumerate(steps):
+        lemma = step.get("lemma")
+        if step.get("aiprover_job") in jobs:
+            removed.add(position)
+            if step["kind"] == "model_call":
+                open_lemmas.add(lemma)
+            else:
+                open_lemmas.discard(lemma)
+        elif step["kind"] == "lean_check" and lemma in open_lemmas:
+            removed.add(position)
+        elif lemma in open_lemmas:
+            open_lemmas.discard(lemma)
+    return _without_steps(document, removed)
+
+
 class Trace:
 
     def __init__(self, path: Path, header: dict, previous: dict | None = None):
@@ -158,15 +179,43 @@ class Trace:
 
     @staticmethod
     def load(path: Path) -> dict | None:
-        """The trace document at `path`, or its gzip copy `<path>.gz` (as
-        shared result directories hold it); None if neither exists."""
+        """The trace document at `path`, its gzip copy `<path>.gz` (as
+        shared result directories hold it), or the line record
+        `trace.jsonl` of an interactive run; None if none exists."""
         path = Path(path)
         packed = path.with_name(path.name + ".gz")
-        if path.exists():
+        lines = path.with_suffix(".jsonl")
+        if path.suffix != ".jsonl" and path.exists():
             return json.loads(path.read_text())
         if packed.exists():
             return json.loads(gzip.decompress(packed.read_bytes()))
+        if lines.exists():
+            return Trace.from_lines(lines)
         return None
+
+    @staticmethod
+    def from_lines(path: Path) -> dict:
+        """The trace document of a line record, as written by the
+        `aiprover-captain` skill: the header on the first line, then one
+        step per line. A line without `kind` updates the header (`outcome`,
+        `finished`). Steps are indexed in order; a step's `time` (Unix
+        seconds) gives its `elapsed_seconds` from the header's `time`."""
+        header, *records = [
+            json.loads(line)
+            for line in Path(path).read_text().splitlines()
+            if line.strip()
+        ]
+        document = {"steps": [], "outcome": None, **header}
+        for record in records:
+            if "kind" not in record:
+                document.update(record)
+                continue
+            step = {"stage": "", **record, "index": len(document["steps"])}
+            if "elapsed_seconds" not in step:
+                elapsed = step.get("time", header["time"]) - header["time"]
+                step["elapsed_seconds"] = round(elapsed, 1)
+            document["steps"].append(step)
+        return document
 
     @property
     def elapsed_seconds(self) -> float:
@@ -215,6 +264,13 @@ def main() -> None:
         action="store_true",
         help="drop hand-backs the captain's model refused",
     )
+    parser.add_argument(
+        "--drop-jobs",
+        nargs="+",
+        default=[],
+        metavar="JOB",
+        help="drop AIProver jobs that failed on the infrastructure",
+    )
     args = parser.parse_args()
     for directory in args.directories:
         path = directory / "trace.json"
@@ -227,6 +283,8 @@ def main() -> None:
             repaired = rewound(repaired, args.rewind)
         if args.refused_handbacks:
             repaired = without_refused_handbacks(repaired)
+        if args.drop_jobs:
+            repaired = without_jobs(repaired, set(args.drop_jobs))
         removed = len(document["steps"]) - len(repaired["steps"])
         temporary = path.with_suffix(".json.tmp")
         temporary.write_text(
