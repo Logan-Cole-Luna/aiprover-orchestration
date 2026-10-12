@@ -1,0 +1,9 @@
+{
+  "name": "aiprover-orchestration",
+  "version": "0.1.0",
+  "description": "The Claude Code agent as captain of an AIProver orchestration run: formalize, blind audit, sketch, prove lemmas with AIProver, assemble, review.",
+  "author": {
+    "name": "PartitionAndProve"
+  },
+  "license": "Proprietary"
+}

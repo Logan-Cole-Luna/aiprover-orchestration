@@ -39,6 +39,7 @@ flowchart LR
 ├── configs/                    # orchestrator runs, AIProver harness, server tokens
 ├── orchestration_workspace/    # Lake project of library and run modules
 ├── scripts/                    # systemd units, Vista and local model serving
+├── orchestration_plugin/       # Claude Code skill aiprover-captain (interactive captain)
 ├── AIProver/                   # AIProver harness and prover (submodule)
 ├── aiprover/                   # AIProver runtime: venvs, ripgrep, jobs
 ├── data/ libraries/            # problem datasets; single-file result libraries
@@ -73,6 +74,10 @@ python -m aiprover_orchestration.utils.share_results \
 # Query server (systemd unit: scripts/systemd/aiprover_query_server.service)
 uvicorn aiprover_orchestration.server.app:app --host 0.0.0.0 --port 8443
 
+# Interactive run in Claude Code or VS Code: install once, then ask the agent
+# to run a problem with the aiprover-captain skill
+orchestration_plugin/setup.sh
+
 # Theorem library
 python -m aiprover_orchestration.library add-theorem NAME FILE --statement "..."
 python -m aiprover_orchestration.library verify NAME FILE [--disprove]
@@ -104,6 +109,15 @@ Python 3.12 with `fastapi`, `httpx`, `uvicorn`, `aiohttp` and `pygments`;
 (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `HF_TOKEN`, `OPENROUTER_API_KEY`);
 AIProver venvs and ripgrep from
 `AIPROVER_CONFIG=configs/aiprover/vista.toml AIProver/AIProver_plugin/setup.sh venvs rg`.
+
+## Results
+
+| Problem | Status | Lemmas | Final review |
+|---|---|---|---|
+| OpenAIMath 332, metric Markov cotype of L1 | proved (2026-10-10) | 49 | faithful |
+| OpenAIMath 011, large totient fibers, conditional on (H) | proved (2026-10-11) | 20 | faithful |
+
+Further runs and their status are recorded in `logbook.md`.
 
 ## Future work
 

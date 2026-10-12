@@ -526,7 +526,9 @@ function buildLayout() {
   // The lemmas of the final sketch are spliced into it and verified.
   y += ROW;
   const assembleSteps = steps.filter(s => s.stage === "assemble");
-  const finalCheck = assembleSteps.find(s => s.kind === "lean_check");
+  // The last assembly is the one the outcome rests on; earlier ones failed
+  // before a resume.
+  const finalCheck = assembleSteps.findLast(s => s.kind === "lean_check");
   const verification = eventsOf("final_verification").at(-1);
   if (assembleSteps.length) {
     const assemble = addNode({ id: "assemble", kind: "assemble", role: "lean", x: 0, y,

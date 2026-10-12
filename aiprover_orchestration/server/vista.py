@@ -60,6 +60,10 @@ class GpuGroup:
     # Groups whose model servers this group's runs also use: its reasoning
     # proxy pools their tunnels with its own (`--upstream`).
     borrows: tuple[str, ...] = ()
+    # Hardware of one model server, for attributing GPU time to runs; empty
+    # where it is not known.
+    gpu: str = ""
+    gpus: int = 0
 
     @property
     def endpoint(self) -> str:
@@ -67,6 +71,8 @@ class GpuGroup:
 
 
 DEFAULT_GROUP = "main"
+# One GPU per node of the gh partitions; a server spans `NODES` nodes.
+VISTA_GPU = "NVIDIA GH200 (H100, 96 GB)"
 GPU_GROUPS = {
     # Jobs of group "main" are named aiprover_srv_main: jobs named
     # aiprover_srv are cancelled by a process outside this server.
@@ -78,6 +84,8 @@ GPU_GROUPS = {
         "configs/aiprover/vista_logged.toml",
         18565,
         borrows=("openai",),
+        gpu=VISTA_GPU,
+        gpus=int(NODES),
     ),
     "open": GpuGroup(
         "open",
@@ -86,6 +94,8 @@ GPU_GROUPS = {
         AIPROVER_CONFIGS / "vista_open.toml",
         "configs/aiprover/vista_logged_open.toml",
         18568,
+        gpu=VISTA_GPU,
+        gpus=int(NODES),
     ),
     "openai": GpuGroup(
         "openai",
@@ -95,6 +105,8 @@ GPU_GROUPS = {
         "configs/aiprover/vista_logged_openai.toml",
         18569,
         borrows=("main",),
+        gpu=VISTA_GPU,
+        gpus=int(NODES),
     ),
     # The persistent server cic-dgx-01 through its reasoning proxy.
     "dgx": GpuGroup(
@@ -106,6 +118,19 @@ GPU_GROUPS = {
         18566,
     ),
 }
+
+
+def group_of_solver(solver_config: str) -> GpuGroup | None:
+    """The GPU group whose runs use this AIProver config."""
+    return next(
+        (
+            group
+            for group in GPU_GROUPS.values()
+            if group.solver_config == solver_config
+        ),
+        None,
+    )
+
 
 logger = logging.getLogger(__name__)
 

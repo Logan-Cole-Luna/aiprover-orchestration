@@ -1,0 +1,14 @@
+{
+  "name": "aiprover-orchestration-local",
+  "description": "Local marketplace for the AIProver orchestration captain skill.",
+  "owner": {
+    "name": "PartitionAndProve"
+  },
+  "plugins": [
+    {
+      "name": "aiprover-orchestration",
+      "source": "./claude_code",
+      "description": "The Claude Code agent as captain of an AIProver orchestration run: formalize, blind audit, sketch, prove lemmas with AIProver, assemble, review."
+    }
+  ]
+}

@@ -489,6 +489,7 @@ const cfg = TRACE.config || {};
 const outcome = TRACE.outcome || {};
 const problem = TRACE.problem || {};
 const totalCost = sum(calls.map(c => c.cost_usd));
+const costs = TRACE.costs || {};
 const callsByRole = role => calls.filter(c => c.role === role);
 
 // The proposition itself, without the shared setting paragraph.

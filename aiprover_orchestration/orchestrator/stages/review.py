@@ -15,6 +15,7 @@ from pathlib import Path
 from ...agents.base import AgentCallError
 from ...lean.text import split_declarations
 from .. import libraries, prompts
+from ..benchmark import run_costs
 from ..config import MAIN_NAME
 from ..reports import informal
 from ..reports.report import ReportBuilder, escape
@@ -36,6 +37,36 @@ DOCUMENT_FIELDS = ("pdf", "compiled", "discrepancies", "problems")
 def digest(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()
 
+
+
+def compute_rows(costs: dict) -> list[tuple[str, str]]:
+    """Report rows for the solver's GPU time and the hosted models' cost."""
+    solver = costs["solver"]
+    rows = []
+    if solver["jobs"]:
+        compute = (
+            f"{solver['sessions']} AIProver sessions in {solver['jobs']} "
+            f"jobs, {solver['session_hours']:.0f} session-hours"
+        )
+        if solver["gpu_hours"] is not None:
+            compute += (
+                f"; {solver['gpu_hours']:.0f} GPU-hours on "
+                f"{solver['gpus_per_server']} x {solver['gpu']} per model "
+                f"server ({solver['sessions_per_server']} sessions each)"
+            )
+        rows.append(("Compute", escape(compute)))
+    calls = sum(row["calls"] for row in costs["hosted"])
+    models = ", ".join(sorted({row["model"] for row in costs["hosted"]}))
+    rows.append(
+        (
+            "Hosted models",
+            escape(
+                f"{calls} calls to {models}, "
+                f"${costs['hosted_cost_usd']:.2f} up to the final review"
+            ),
+        )
+    )
+    return rows
 
 class ReviewStage:
 
@@ -197,6 +228,7 @@ class ReviewStage:
                     f"{agents['writer'].model}"
                 ),
             ),
+            *compute_rows(run_costs(self.trace.document)),
             ("Run", f"\\texttt{{{escape(self.run_id)}}}"),
         ]
         library_names = sorted(

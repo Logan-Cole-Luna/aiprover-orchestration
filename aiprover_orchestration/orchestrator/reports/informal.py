@@ -13,6 +13,10 @@ Compile errors go back to the writer for repair, as for the report.
 Informalize a finished run (writer and reviewer as recorded in its trace):
     python3 -m aiprover_orchestration.orchestrator.reports.informal \\
         results/<run_id>
+Reuse the writer's draft recorded in the trace (`--reuse-draft`); the check
+and the revision are new calls:
+    python3 -m aiprover_orchestration.orchestrator.reports.informal \\
+        results/<run_id> --reuse-draft
 Recompile a saved informalization without model calls:
     python3 -m aiprover_orchestration.orchestrator.reports.informal \\
         results/<run_id> --rebuild
@@ -311,9 +315,10 @@ def summary_rows(
     ]
 
 
-def informalize_run(result_dir: Path) -> dict:
+def informalize_run(result_dir: Path, reuse_draft: bool = False) -> dict:
     """Informalize a finished run from its trace, with the writer and reviewer
-    the trace records; calls are appended to logs/<run_id>/calls.jsonl."""
+    the trace records; calls are appended to logs/<run_id>/calls.jsonl. With
+    `reuse_draft`, the writer's last draft in the trace replaces a new one."""
     trace = json.loads((result_dir / "trace.json").read_text())
     run_id = trace["run_id"]
     state = restore_state(trace)
@@ -348,7 +353,17 @@ def informalize_run(result_dir: Path) -> dict:
         "reviewer": prompts.REVIEWER_SYSTEM,
     }
 
+    drafts = [
+        step["response"]
+        for step in trace["steps"]
+        if step["kind"] == "model_call"
+        and step.get("label") == "informal_write"
+        and step.get("response")
+    ]
+
     def complete(prompt: str, role: str, phase: str) -> str:
+        if reuse_draft and drafts and phase == "informal_write":
+            return drafts[-1]
         return pool.complete(
             prompt, role=role, phase=phase, system_prompt=systems[role]
         )
@@ -385,8 +400,14 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("result_dir", type=Path)
     parser.add_argument("--rebuild", action="store_true")
+    parser.add_argument(
+        "--reuse-draft",
+        action="store_true",
+        help="use the writer's last draft in the trace instead of a new one",
+    )
     arguments = parser.parse_args()
     if arguments.rebuild:
         rebuild(arguments.result_dir / "informal")
     else:
-        print(json.dumps(informalize_run(arguments.result_dir), indent=1))
+        record = informalize_run(arguments.result_dir, arguments.reuse_draft)
+        print(json.dumps(record, indent=1))
