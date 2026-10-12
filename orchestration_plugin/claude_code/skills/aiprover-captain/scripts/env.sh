@@ -4,7 +4,10 @@
 # It defines the repository locations and the functions that record a run in
 # results/<run>/trace.jsonl. Nothing here calls a model.
 
-ROOT=$(readlink -f ~/.config/aiprover_orchestration/root)
+ROOT=$(cd ~/.config/aiprover_orchestration/root && pwd -P)
+# The Nix tools of ./setup (python, jq, rg, GNU userland, pdflatex) come first, so a session
+# started outside the Nix shell uses them.
+[ -d "$ROOT/aiprover/nix/tools/bin" ] && export PATH="$ROOT/aiprover/nix/tools/bin:$PATH"
 # The AIProver configuration (model endpoint, paths): $AIPROVER_CONFIG when set,
 # else the plugin's aiprover.toml as linked by setup.sh.
 export AIPROVER_CONFIG=${AIPROVER_CONFIG:-$(readlink -f ~/.config/aiprover_orchestration/aiprover.toml)}

@@ -1,0 +1,11 @@
+--- a/leanclient/aio/client.py
++++ b/leanclient/aio/client.py
+@@ -54,7 +54,7 @@
+ )
+ from .transport import LspTransport
+ 
+-MIN_LEAN_VERSION = (4, 24)
++MIN_LEAN_VERSION = (4, 23)
+ 
+ # Lean-specific error codes (Lean.Data.Lsp.Utf16 / Watchdog)
+ _WORKER_ERROR_CODES = {-32901, -32902}  # workerExited, workerCrashed
