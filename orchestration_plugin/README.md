@@ -55,6 +55,21 @@ its tunnels over that master without prompting. When the master has closed
 budget. Without `--endpoint`, `./setup` keeps an existing `endpoint.toml`, or
 asks for one.
 
+A run takes hours, so the connection must outlive network gaps. The SSH
+master tolerates a gap or a sleep of up to 10 minutes; on macOS
+`setup.sh endpoint` keeps the Mac awake while the proxy runs (`setup.sh
+stop` ends both). When the master has dropped anyway, `setup.sh endpoint`,
+which the skill runs after a connection fault, reopens it without a prompt
+if a key, an agent or Kerberos authenticates; otherwise the user reruns it
+in a terminal. After a login with a password, `setup.sh connect` offers to
+create a key for this: a dedicated `~/.ssh/aiprover_ed25519`, installed on
+the SSH host through the open connection and restricted there to port
+forwarding to the model server (no shell; with a handoff file, reading that
+file only). A host that requires a one-time code even with a key (an
+`AuthenticationMethods` chain, as on TACC hosts) cannot reconnect
+unattended; the key is then removed from it again, and the offer is not
+repeated for that host.
+
 | Built by Nix | Linked at | Content |
 |---|---|---|
 | `.#tools` | `aiprover/nix/tools` | Python 3.12 (pygments, aiohttp), jq, ripgrep, git, curl, ssh, GNU userland, flock, pdflatex |
@@ -74,6 +89,7 @@ installed by elan into `~/.elan`, with Mathlib, the REPL and cslib in
 | `claude` | links `~/.config/aiprover_orchestration/{root,aiprover.toml}`; installs the plugin from the local marketplace (without the `claude` CLI, prints the `/plugin` commands for the app) |
 | `connect` | opens the SSH master of an SSH endpoint (asks for the host's credentials); nothing for a direct endpoint |
 | `endpoint` | `connect`, the SSH tunnel (AIProver CLI, follows a handoff file) and the local reasoning proxy |
+| `stop` | stops the reasoning proxy (and the keep-awake on macOS) |
 | `doctor` | `aiprover doctor` (environment, model endpoint, the model thinks) and a structured tool-call check |
 | `full` | `aiprover doctor --full`: as `doctor`, plus one live AIProver rollout |
 
