@@ -74,20 +74,24 @@ stated in the trace header. The user may change them.
 `R=$ROOT/results/$RUN` the record. Record each step as it happens
 (`references/run_record.md` gives the exact commands and event names).
 
-**0. Preflight.** `$AIP doctor`; note `$AIP slots`. A run needs these rows
-to PASS; stop and report if one fails: lean project built, lean toolchain,
-Mathlib canary, kernel axiom probe, harness paths, vibe, ripgrep, model
-endpoint, model thinks. Report any other failing row to the user and
+**0. Preflight.** `endpoint_up`, then `bash $ROOT/orchestration_plugin/setup.sh doctor`;
+note `$AIP slots`. `endpoint_up` brings the model server up as the harness
+reaches it: the SSH master and tunnel when the server is reached over SSH
+(the CLI follows a server job through its handoff file), then the local
+reasoning proxy, which turns tool calls a server returns as text into
+structured calls. A run needs these rows to PASS; stop and report if one
+fails: lean project built, lean toolchain, Mathlib canary, kernel axiom
+probe, harness paths, vibe, ripgrep, model endpoint, model thinks,
+structured tool calls. Report any other failing row to the user and
 continue: the harness pin and the skill-copy comparison fail while the
 orchestration's own changes to the `AIProver` submodule are in place, the
 REPL serves only `--repl` tools, and cslib matters only for a problem that
-imports `Cslib.*`. The model endpoint is the plugin's `aiprover.toml` (or
-`$AIPROVER_CONFIG`): in `ssh` mode the CLI opens and reopens the tunnel
-itself and follows the server through its handoff file. A dead SSH
-master (`control socket ... is dead`) needs MFA: give the user the
-`ssh -fNM` command from the error and wait for them to run it. A model
-server that does not answer is the user's to start; do not submit
-server jobs yourself.
+imports `Cslib.*`. A dropped SSH master is reopened by `endpoint_up` itself
+when a key or agent authenticates; when it still reports the master closed,
+the user's credentials are needed: ask them to run
+`orchestration_plugin/setup.sh connect` in their own terminal and wait for
+them. A model server that does not answer is the user's to start; do not
+submit server jobs yourself.
 
 **1. Source.** Take the problem row from `$ROOT/data/*.jsonl` by uuid
 (`jq -c 'select(.uuid=="<uuid>")'`), or write the user's statement and proof
@@ -154,7 +158,10 @@ while others run, give the free slots to running jobs with
 `$AIP grow <job> -k <n>`, in the same weighted shares.
 
 A job whose sessions were cut off by infrastructure (`infra`, `cancelled`)
-is not an attempt: `$AIP resume <job>` continues it.
+is not an attempt: run `endpoint_up`, then `$AIP resume <job>` continues it.
+A job whose samples all end `empty` within minutes points to the endpoint,
+not the lemma: run the doctor (row "structured tool calls") before
+resubmitting, and do not count the job as an attempt.
 
 **Hand-back.** Once a lemma has 3 failed jobs on its current statement, you
 diagnose it from the best sample's errors and code, as `handback.md`
@@ -194,7 +201,9 @@ gates.
 
 **8. Close.** When a sketch exists, spawn the writer and typeset its
 informalization of the verified or partial proof with `informal_build`
-(`references/subagents.md`). Write `$R/summary.json` and the trace's
+(`references/subagents.md`). When no other run uses the endpoint,
+`bash $ROOT/orchestration_plugin/setup.sh stop` ends the local proxy (on
+macOS also its keep-awake). Write `$R/summary.json` and the trace's
 closing line (`references/run_record.md`), render the pages with
 `python3 -m aiprover_orchestration.orchestrator.trace_view $R/trace.jsonl`
 (from `$ROOT`), delete `$T` once nothing in it is needed, and report:

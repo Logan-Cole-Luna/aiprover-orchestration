@@ -21,6 +21,17 @@ aiprover/bin/
 aiprover/work/
 aiprover/work_*/
 aiprover/venv_*/
+aiprover/lean_project/
+aiprover/nix/
+
+# Written by ./setup for each device
+orchestration_plugin/aiprover.toml
+orchestration_plugin/endpoint.toml
+
+# Nix
+result
+result-*
+.direnv/
 
 # Scratch space and logs
 temp/
@@ -30,7 +41,8 @@ logs/
 *.err
 results/
 libraries/
-data/
+data/*
+!data/openai_math.jsonl
 analysis/
 
 # Python

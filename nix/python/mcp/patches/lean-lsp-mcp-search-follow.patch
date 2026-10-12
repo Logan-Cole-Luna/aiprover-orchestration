@@ -1,0 +1,10 @@
+--- a/lean_lsp_mcp/search_utils.py
++++ b/lean_lsp_mcp/search_utils.py
+@@ -355,6 +355,7 @@
+     command = [
+         "rg",
+         "--json",
++        "--follow",
+         "--no-ignore",
+         "--smart-case",
+         "--hidden",
