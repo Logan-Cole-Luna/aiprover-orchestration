@@ -126,10 +126,26 @@ closes on reboot, sleep or a network change; then run `connect` again. To
 change the endpoint, run `./setup --endpoint ... --no-lean` (connection and
 doctor only).
 
+A run takes hours, so the connection must outlive network gaps. The SSH
+master tolerates a gap or a sleep of up to 10 minutes; on macOS
+`setup.sh endpoint` keeps the Mac awake while the proxy runs (`setup.sh
+stop` ends both). When the master has dropped anyway, `setup.sh endpoint`,
+which the skill runs after a connection fault, reopens it without a prompt
+if a key, an agent or Kerberos authenticates; otherwise the user reruns it
+in a terminal. After a login with a password, `setup.sh connect` offers to
+create a key for this: a dedicated `~/.ssh/aiprover_ed25519`, installed on
+the SSH host through the open connection and restricted there to port
+forwarding to the model server (no shell; with a handoff file, reading that
+file only). A host that requires a one-time code even with a key (an
+`AuthenticationMethods` chain, as on TACC hosts) cannot reconnect
+unattended; the key is then removed from it again, and the offer is not
+repeated for that host.
+
 | `orchestration_plugin/setup.sh` | Effect |
 |---|---|
 | `connect` | open the SSH master (prompts for the host's credentials) |
 | `endpoint` | `connect`, the SSH tunnel and the local reasoning proxy |
+| `stop` | stop the local reasoning proxy (and the keep-awake on macOS) |
 | `doctor` | check the environment, the endpoint and structured tool calls |
 | `full` | `doctor` plus one live AIProver rollout |
 | `claude` | reinstall the plugin (after editing the skill) |

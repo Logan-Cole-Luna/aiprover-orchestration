@@ -400,6 +400,21 @@ Results
   `~/.ssh/aiprover-<host>.sock`), `--handoff FILE` (server job on a cluster),
   `--timeout`, `--max-turns`; `dgx` and `vista` remain as shortcuts of the
   project's servers and are not documented in the README.
+- Key offer in `setup.sh connect`: after a password login it offers a
+  dedicated key (`~/.ssh/aiprover_ed25519`), installs it through the master
+  with `restrict,port-forwarding,permitopen="<server>"` (or `command="cat
+  <handoff>"`), and verifies a no-prompt login; on a host that answers
+  "publickey with partial success" the key is removed again and the host
+  remembered. Checked on the orchestration VM (`AuthenticationMethods
+  publickey,keyboard-interactive keyboard-interactive`): partial success
+  detected, key removed, `~/.ssh` restored.
+- Connection resilience (macOS device: the SSH master dropped within minutes
+  during runs, leaving sessions on the VM that never closed, i.e. network-level
+  loss): master opened with `ServerAliveCountMax=20` (10 min tolerance instead
+  of 90 s); `connect` first reopens without a prompt (`BatchMode`, works with
+  keys, agents, Kerberos); on macOS the proxy is accompanied by `caffeinate
+  -ims -w <proxy pid>`; `setup.sh stop`; `endpoint` closes a stale `ssh`
+  forward holding the tunnel port and checks the path end to end.
 - Endpoint-independent harness path: the harness always talks to a local
   reasoning proxy (`127.0.0.1:18575`), which forwards to the server directly
   or through the SSH tunnel. `./setup` writes `endpoint.toml` (connection,

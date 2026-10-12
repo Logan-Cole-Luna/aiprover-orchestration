@@ -86,8 +86,9 @@ structured tool calls. Report any other failing row to the user and
 continue: the harness pin and the skill-copy comparison fail while the
 orchestration's own changes to the `AIProver` submodule are in place, the
 REPL serves only `--repl` tools, and cslib matters only for a problem that
-imports `Cslib.*`. When `endpoint_up` reports the SSH master closed, the
-user's credentials are needed: ask them to run
+imports `Cslib.*`. A dropped SSH master is reopened by `endpoint_up` itself
+when a key or agent authenticates; when it still reports the master closed,
+the user's credentials are needed: ask them to run
 `orchestration_plugin/setup.sh connect` in their own terminal and wait for
 them. A model server that does not answer is the user's to start; do not
 submit server jobs yourself.
@@ -200,7 +201,9 @@ gates.
 
 **8. Close.** When a sketch exists, spawn the writer and typeset its
 informalization of the verified or partial proof with `informal_build`
-(`references/subagents.md`). Write `$R/summary.json` and the trace's
+(`references/subagents.md`). When no other run uses the endpoint,
+`bash $ROOT/orchestration_plugin/setup.sh stop` ends the local proxy (on
+macOS also its keep-awake). Write `$R/summary.json` and the trace's
 closing line (`references/run_record.md`), render the pages with
 `python3 -m aiprover_orchestration.orchestrator.trace_view $R/trace.jsonl`
 (from `$ROOT`), delete `$T` once nothing in it is needed, and report:
