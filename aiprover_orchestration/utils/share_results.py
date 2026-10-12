@@ -36,8 +36,13 @@ from ..server.jobs import JobStore
 COMPLETED = "completed_problems"
 IN_PROGRESS = "ip_problems"
 EXCLUDED = {"trace.json", "trace.html", "trace_replay.html"}
-# The provider's message after a failed call's exit status.
-PROVIDER_MESSAGE = re.compile(r"exit -?\d+ \(api_status=(\w+)\): .*", re.S)
+# Fields that quote a failed model call: its error, and the diagnosis of a
+# hand-back the model refused. A model call's error, or one naming the call
+# (`<backend> call failed (<role>/<phase>): ...`), quotes the provider's
+# message verbatim; a shared copy keeps the call and the HTTP status.
+ERROR_FIELDS = {"error", "diagnosis"}
+FAILED_CALL = re.compile(r"^\S+ call failed \([^)]*\)")
+HTTP_STATUS = re.compile(r"\b[45]\d\d\b")
 DEFAULT_REDACTIONS = Path("~/.config/aiprover/share_redactions.txt")
 # (text, replacement) pairs applied to every shared text (set by `main`).
 redactions: list[tuple[str, str]] = []
@@ -95,18 +100,33 @@ def latest_runs(match: str) -> dict[str, Path]:
     return latest
 
 
-def provider_status(match: re.Match) -> str:
-    return f"HTTP {match[1]}" if match[1].isdigit() else "request failed"
+def reduced_error(text: str) -> str:
+    """A failed call's error as the call and its outcome: the HTTP status,
+    a refusal, or a failed request."""
+    call = FAILED_CALL.match(text)
+    message = text[call.end():] if call else text
+    status = HTTP_STATUS.search(message)
+    if status:
+        outcome = f"HTTP {status[0]}"
+    elif "refus" in message.lower() or "safeguards" in message.lower():
+        outcome = "refused"
+    else:
+        outcome = "request failed"
+    return f"{call[0]}: {outcome}" if call else outcome
 
 
 def clean(value):
-    """`value` with the error texts of failed calls reduced to their HTTP
-    status and the redactions applied."""
+    """`value` with the error texts of failed calls reduced (`reduced_error`)
+    and the redactions applied."""
     if isinstance(value, dict):
+        model_call = value.get("kind") == "model_call"
         return {
             key: (
-                clean(PROVIDER_MESSAGE.sub(provider_status, item))
-                if key == "error" and isinstance(item, str)
+                clean(reduced_error(item))
+                if key in ERROR_FIELDS
+                and isinstance(item, str)
+                and item
+                and (model_call or FAILED_CALL.match(item))
                 else clean(item)
             )
             for key, item in value.items()

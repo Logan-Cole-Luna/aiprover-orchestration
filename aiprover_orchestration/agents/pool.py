@@ -129,7 +129,7 @@ class AgentPool:
                 record["role"],
                 _hosted(record),
                 record.get("model_usage") or {},
-                failed=record.get("error") is not None,
+                error=record.get("error"),
                 refused=_refused(record),
             )
 
@@ -143,7 +143,7 @@ class AgentPool:
                     step["role"],
                     _hosted(step),
                     {step.get("model") or "": usage} if usage else {},
-                    failed=step.get("error") is not None,
+                    error=step.get("error"),
                     refused=_refused(step),
                 )
 
@@ -152,13 +152,16 @@ class AgentPool:
         role: str,
         hosted: bool,
         model_usage: dict,
-        failed: bool = False,
+        error: str | None = None,
         refused: bool = False,
     ) -> None:
         # The budget counts the calls to hosted models that are billed: a
         # refusal is billed, a failure on a rate limit or outage is not.
+        self.claude_calls += hosted and (error is None or refused)
+        # The reported totals cover the calls the trace keeps.
+        if is_untraced(error, refused):
+            return
         self.num_calls[role] = self.num_calls.get(role, 0) + 1
-        self.claude_calls += hosted and (not failed or refused)
         for model_id, usage in model_usage.items():
             totals = self.usage_by_model.setdefault(
                 model_id,
@@ -290,7 +293,7 @@ class AgentPool:
                 role,
                 agent.hosted,
                 completion.usage,
-                failed=completion.error is not None,
+                error=completion.error,
                 refused=completion.refused,
             )
             with open(self.calls_path, "a") as f:
