@@ -40,7 +40,8 @@ logs/
 *.err
 results/
 libraries/
-data/
+data/*
+!data/openai_math.jsonl
 analysis/
 
 # Python

@@ -363,6 +363,12 @@ Results
 - Per-run model choice for orchestrator and subagent (Claude model and
   reasoning level, or AIProver trained/base) on the query server page.
 
+## 2026-10-11: Sample problem set in git
+
+- `data/openai_math.jsonl` (five problems: 332, 011, 164, 048, 259) is
+  tracked as the sample set for the aiprover-captain skill; the rest of
+  `data/` stays out of git. Source: openai/math, Apache-2.0.
+
 ## 2026-10-11: One-command setup with Nix
 
 - `./setup` (POSIX sh, after the flywheel superproject's): platform and disk
