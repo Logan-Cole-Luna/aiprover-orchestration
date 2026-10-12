@@ -10,73 +10,70 @@ The harness, every Lean check and the lean-lsp tools run on the machine of
 the Claude Code session. Only AIProver model inference goes to the model
 server, reached as the AIProver plugin reaches it (`AIProver/AIProver_plugin/README.md`).
 
-## Quick start
+## Setup
 
-You supply **where the model is**: a host to SSH into and the model's
-address as seen from it. Everything else is set up and checked by
-`setup.sh`.
-
-**0. Model server.** Use a running server, or start one with
-`AIProver/AIProver_plugin/serve/serve_aiprover.sh` (any node with enough GPU
-memory for the ~112 GB FP8 checkpoint) or
-`scripts/vista/serve_aiprover_vista.sbatch` (two Vista GH200 nodes). The
-Vista job writes its node and port to a handoff file on `$SCRATCH`.
-
-**1. Edit `aiprover.toml`, `[endpoint]`.**
-
-```toml
-mode           = "ssh"
-ssh_host       = "vista.tacc.utexas.edu"   # the host you SSH into
-ssh_user       = "<your TACC user>"
-server_handoff = "/scratch/11757/loganluna/servers/aiprover_server.txt"   # follows the server if it moves
-remote_host    = ""                        # fixed address when there is no handoff file
-remote_port    = 8060
-control_socket = "~/.ssh/vista.sock"       # TACC needs MFA: see step 2; empty for key-based ssh
-```
-
-The compute node's port is not reachable from outside TACC, hence the SSH
-hop; the tunnel is opened, checked and reopened by the AIProver CLI. For a
-server reachable directly, set `mode = "direct"` and `api_base`
-(`api_key` is sent as a bearer token). On the orchestration VM,
-`api_base = "http://127.0.0.1:18565/v1"` uses the reasoning proxy, which
-records the model's reasoning per session.
-
-**2. TACC only: open one SSH master by hand** (MFA cannot be scripted):
+One command from a fresh clone, on Linux, WSL2 or macOS:
 
 ```bash
-ssh -fNM -S ~/.ssh/vista.sock -o ServerAliveInterval=30 <user>@vista.tacc.utexas.edu
+git clone --recurse-submodules <repository url> aiprover_orchestration && cd aiprover_orchestration && ./setup --endpoint dgx --via <host>
 ```
 
-**3. Set up and verify:**
+`./setup` (repository root) checks the platform and fetches the submodules.
+It finds Nix, or offers to install it, asking first and showing the command.
+It builds the environment from `flake.nix` and writes this directory's
+`aiprover.toml` for the device. Finally it runs `setup.sh lean claude doctor`.
+`./setup --dry-run` prints every step without changing anything.
 
-```bash
-./setup.sh
-```
+| Endpoint | Model server | Connection |
+|---|---|---|
+| `--endpoint dgx [--via HOST]` | `aip-leanstral` on cic-dgx-01 (port 8040) | direct when reachable from the device (TACC network); otherwise an SSH tunnel through `HOST`, which must reach the DGX (key-based SSH, `--user`) |
+| `--endpoint vista [--user USER]` | a Vista server job | SSH tunnel to the compute node named in the job's handoff file, over an SSH master opened by hand (MFA) |
+| `--endpoint URL [--api-key KEY]` | any OpenAI-compatible endpoint serving the model | direct; the key is sent as a bearer token |
 
-| Step | Effect |
+The SSH tunnel is opened, checked and reopened by the AIProver CLI. Without
+`--endpoint`, `./setup` keeps an existing `aiprover.toml`, or asks for one.
+
+| Built by Nix | Linked at | Content |
+|---|---|---|
+| `.#tools` | `aiprover/nix/tools` | Python 3.12 (pygments, aiohttp), jq, ripgrep, git, curl, ssh, GNU userland, flock, pdflatex |
+| `.#venv-vibe` | `aiprover/nix/venv_vibe` | the harness's agent loop, mistral-vibe 2.24.2 (`nix/python/vibe/`) |
+| `.#venv-mcp` | `aiprover/nix/venv_mcp` | lean-lsp-mcp 0.30.0 with AIProver's three fixes (`nix/python/mcp/`) |
+
+The skill's `env.sh` puts `aiprover/nix/tools/bin` first on `PATH`, so a
+Claude Code app started outside the Nix shell uses the same tools. The
+virtualenvs pin exactly `AIProver/AIProver_plugin/setup/requirements-*.lock`.
+`nix develop` (or `direnv allow`) gives the same tools interactively. Lean is
+installed by elan into `~/.elan`, with Mathlib, the REPL and cslib in
+`aiprover/lean_project` (`--lean-project PATH` reuses an existing project).
+
+| `setup.sh` step | Effect |
 |---|---|
-| `deps` | Lean 4.23.0, Mathlib, REPL and cslib at `[paths].lean_project`; the harness's two venvs; ripgrep (`AIProver/AIProver_plugin/setup.sh deps` with this config) |
-| `claude` | links `~/.config/aiprover_orchestration/{root,aiprover.toml}`; installs the plugin from the local marketplace |
-| `doctor` | `aiprover doctor --full`: environment, model endpoint, one live AIProver rollout, the lean-lsp tools |
+| `lean` | elan, Lean 4.23.0, the Mathlib project with REPL and cslib (`AIProver/AIProver_plugin/setup.sh lean`); `orchestration_workspace/.lake/packages` linked to its packages |
+| `claude` | links `~/.config/aiprover_orchestration/{root,aiprover.toml}`; installs the plugin from the local marketplace (without the `claude` CLI, prints the `/plugin` commands for the app) |
+| `doctor` | `aiprover doctor`: environment, model endpoint, the model thinks |
+| `full` | `aiprover doctor --full`: as `doctor`, plus one live AIProver rollout |
 
-All PASS means ready; `AIProver/AIProver_plugin/STARTUP.md` §5 maps each
-FAIL to its fix. The skill runs `aiprover doctor` itself before every run.
+`AIProver/AIProver_plugin/STARTUP.md` §5 maps each failing doctor row to its
+fix. The skill runs `aiprover doctor` itself before every run.
 
-**4. Use it.** In Claude Code or VS Code, ask for a problem to be run with
-the aiprover-captain skill, by uuid of `data/*.jsonl` or with an informal
-statement and proof. Results are written to `results/<run_id>/`.
+## Use
 
-Needs: Linux, Python 3.12 (venvs) and ≥ 3.11 (CLI), `jq`, `claude` logged
-in, this repository with its `AIProver` submodule, ~10 GB disk (Mathlib).
-The lean-lsp MCP tools come with the AIProver plugin
-(`AIProver/AIProver_plugin/setup.sh claude`).
+Restart the Claude Code app (or VS Code). `/plugin` lists
+`aiprover-orchestration`. Open the repository and ask for a problem to be run
+with the aiprover-captain skill: by uuid of `data/*.jsonl` (not in git; copy
+the files to a new device), or with an informal statement and proof. Results
+are written to `results/<run_id>/`.
+
+To change the endpoint later, run `./setup --endpoint ... --no-lean`, or edit
+`aiprover.toml` and run `setup.sh doctor`.
 
 ## Layout
 
 | Path | Content |
 |---|---|
-| `aiprover.toml` | the one config: endpoint, runtime, paths |
-| `setup.sh` | provisioning, plugin installation, verification |
+| `aiprover.toml` | written by `./setup`: endpoint, runtime, paths (not in git) |
+| `setup.sh` | the steps inside the environment: Lean, plugin, doctor |
 | `claude_code/skills/aiprover-captain/SKILL.md` | the captain procedure |
 | `…/references/` | Lean gates, subagent prompts, run record |
-| `…/scripts/env.sh` | repository paths and the recording functions |
+| `…/scripts/env.sh` | repository paths, tools on `PATH`, recording functions |
+| `../flake.nix`, `../nix/` | the Nix environment: tools, virtualenvs, the lean-lsp-mcp patches |

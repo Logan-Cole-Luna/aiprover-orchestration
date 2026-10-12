@@ -1,33 +1,44 @@
 #!/usr/bin/env bash
 # =============================================================================
-# aiprover-captain setup: provisions what the skill and its AIProver solvers need on THIS
-# machine, installs the Claude Code plugin, then verifies. IDEMPOTENT: safe to re-run.
+# aiprover-captain setup steps inside the environment. ./setup at the repository root runs them
+# after building the Nix tools and virtualenvs and writing aiprover.toml; each step is
+# idempotent and can be rerun on its own.
 #
-#   ./setup.sh            everything: deps, claude, doctor
-#   ./setup.sh deps       elan + Lean 4.23.0, the Mathlib project (+ cslib), both venvs, ripgrep
-#                         (AIProver/AIProver_plugin/setup.sh deps, with this directory's config)
-#   ./setup.sh claude     link the config and the repository, (re)install the Claude Code plugin
-#   ./setup.sh doctor     verify only (= aiprover doctor --full)
+#   ./setup.sh lean     elan + Lean 4.23.0, the Mathlib project (+ REPL, cslib) at
+#                       [paths].lean_project (AIProver/AIProver_plugin/setup.sh lean);
+#                       orchestration_workspace/.lake/packages linked to its packages
+#   ./setup.sh claude   link the config and the repository; (re)install the Claude Code plugin
+#   ./setup.sh doctor   verify the environment and the model endpoint (aiprover doctor)
+#   ./setup.sh full     as doctor, plus one live AIProver rollout (aiprover doctor --full)
 #
-# Paths and the model endpoint come from aiprover.toml; edit that file first on a new machine.
 # Rerun `claude` after editing the skill: an installed plugin runs from a cached copy that is
-# refreshed only on reinstallation. Needs python3 >= 3.11, jq and the `claude` CLI.
+# refreshed only on reinstallation.
 # =============================================================================
 set -euo pipefail
 HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 ROOT="$(dirname "$HERE")"
 CONFIG_DIR="$HOME/.config/aiprover_orchestration"
 PLUGIN=aiprover-orchestration@aiprover-orchestration-local
+MARKETPLACE=aiprover-orchestration-local
 export AIPROVER_CONFIG="$HERE/aiprover.toml"
 AIP="$ROOT/AIProver/AIProver_plugin/bin/aiprover"
+[ -d "$ROOT/aiprover/nix/tools/bin" ] && export PATH="$ROOT/aiprover/nix/tools/bin:$PATH"
 
 say()  { printf '\n== %s\n' "$*"; }
 ok()   { printf '   ok: %s\n' "$*"; }
 die()  { printf '   FAILED: %s\n' "$*" >&2; exit 1; }
 
-step_deps() {
-  say "deps (AIProver/AIProver_plugin/setup.sh deps, config $AIPROVER_CONFIG)"
-  "$ROOT/AIProver/AIProver_plugin/setup.sh" deps
+step_lean() {
+  say "Lean (AIProver/AIProver_plugin/setup.sh lean, config $AIPROVER_CONFIG)"
+  "$ROOT/AIProver/AIProver_plugin/setup.sh" lean
+  # orchestration_workspace/ pins the same Mathlib and cslib; the module statement check
+  # builds against the packages already built in the AIProver Lean project.
+  local packages
+  packages="$("$AIP" config --shell | sed -n 's/^AIP_LEAN_PROJECT=//p')/.lake/packages"
+  mkdir -p "$ROOT/orchestration_workspace/.lake"
+  [ -e "$ROOT/orchestration_workspace/.lake/packages" ] \
+    || ln -s "$packages" "$ROOT/orchestration_workspace/.lake/packages"
+  ok "orchestration_workspace/.lake/packages -> $(readlink -f "$ROOT/orchestration_workspace/.lake/packages")"
 }
 
 link_config() {
@@ -42,11 +53,16 @@ link_config() {
 
 step_claude() {
   say "Claude Code: plugin '$PLUGIN' (skill aiprover-captain)"
-  command -v claude >/dev/null || die "claude CLI not on PATH"
-  command -v jq >/dev/null || die "jq not on PATH (the skill records its trace with it)"
+  [ -f "$HERE/aiprover.toml" ] || die "no aiprover.toml: run ./setup --endpoint ... first"
   link_config
+  if ! command -v claude >/dev/null; then
+    echo "   the claude CLI is not on PATH; install the plugin from the Claude Code app instead:"
+    echo "     /plugin marketplace add $HERE"
+    echo "     /plugin install $PLUGIN"
+    return 0
+  fi
   claude plugin marketplace add "$HERE" >/dev/null 2>&1 \
-    || claude plugin marketplace update aiprover-orchestration-local >/dev/null 2>&1 || true
+    || claude plugin marketplace update "$MARKETPLACE" >/dev/null 2>&1 || true
   claude plugin uninstall "$PLUGIN" >/dev/null 2>&1 || true
   claude plugin install "$PLUGIN" --scope user >/dev/null
   claude plugin list 2>/dev/null | grep -q "$PLUGIN" || die "plugin install failed"
@@ -55,21 +71,23 @@ step_claude() {
     || echo "   note: the lean-lsp MCP tools come with the AIProver plugin (AIProver/AIProver_plugin/setup.sh claude)"
 }
 
+# Not --agents: that check asks the agents through `claude -p`, which the skill avoids.
 step_doctor() {
-  # Not --agents: that check asks the agents through `claude -p`, which the skill avoids.
-  say "doctor --full"
-  "$AIP" doctor --full
+  say "doctor $*"
+  "$AIP" doctor "$@" || echo "   some rows failed: the skill's preflight (SKILL.md step 0) lists the rows a run needs"
+  "$AIP" slots >/dev/null 2>&1 \
+    || echo "   note: this AIProver CLI has no 'slots'/'grow': jobs then keep the sessions they start with"
 }
 
 # ---------------------------------------------------------------------------
 python3 -c 'import sys; sys.exit(sys.version_info < (3, 11))' || die "python3 >= 3.11 required"
-[ $# -eq 0 ] && set -- all
+[ $# -eq 0 ] && set -- lean claude doctor
 for step in "$@"; do
   case "$step" in
-    all)    step_deps; step_claude; step_doctor ;;
-    deps)   step_deps ;;
+    lean)   step_lean ;;
     claude) step_claude ;;
     doctor) step_doctor ;;
-    *) die "unknown step '$step' (all|deps|claude|doctor)" ;;
+    full)   step_doctor --full ;;
+    *) die "unknown step '$step' (lean|claude|doctor|full)" ;;
   esac
 done
