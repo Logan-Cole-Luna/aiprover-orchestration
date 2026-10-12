@@ -84,8 +84,9 @@ REPL serves only `--repl` tools, and cslib matters only for a problem that
 imports `Cslib.*`. The model endpoint is the plugin's `aiprover.toml` (or
 `$AIPROVER_CONFIG`): in `ssh` mode the CLI opens and reopens the tunnel
 itself and follows the server through its handoff file. A dead SSH
-master (`control socket ... is dead`) needs MFA: give the user the
-`ssh -fNM` command from the error and wait for them to run it. A model
+master (`control socket ... is dead`) needs the user's credentials: ask
+them to run `orchestration_plugin/setup.sh connect` in their own terminal
+(it asks for the password and TACC_Token) and wait for them. A model
 server that does not answer is the user's to start; do not submit
 server jobs yourself.
 

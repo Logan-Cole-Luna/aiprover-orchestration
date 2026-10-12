@@ -385,6 +385,14 @@ Results
 - `orchestration_plugin/aiprover.toml` is generated per device (absolute
   paths) and no longer tracked; `setup.sh` steps are `lean`, `claude`,
   `doctor`, `full`.
+- SSH routes authenticate as TACC logins do: `setup.sh connect` opens an SSH
+  master (`control_socket`, also for `dgx --via`) and prompts for the password
+  and `TACC_Token`; the CLI's tunnels ride it. The system ssh client is used
+  (not bundled): Nix's OpenSSH rejected Ubuntu-permitted `~/.ssh/config`
+  permissions and lacks GSSAPI and macOS `UseKeychain`. `--via` accepts
+  `~/.ssh/config` aliases; `ssh_user` is empty unless `--user` is given.
+- First device run (Linux, Nix 2.35.2): environment built, Lean and plugin
+  installed, doctor 12/14 (harness pin; endpoint, before the changes above).
 - Checked on the VM (no Nix): dry runs of every preset; the generated config
   parsed by `aiprover config`; locks against the pins.
 

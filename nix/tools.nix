@@ -15,7 +15,9 @@ pkgs.buildEnv {
     ripgrep
     git
     curl
-    openssh
+    # No ssh: the system's own client is used, with the user's ~/.ssh/config, agent and
+    # platform options (Ubuntu's permission rules, GSSAPI, macOS UseKeychain), which an
+    # unpatched Nix OpenSSH rejects.
     # GNU userland on macOS as on Linux (readlink -f, date, sed, find -quit, bash 5 for the
     # setup scripts); flock guards the Lake workspace.
     bash
