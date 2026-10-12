@@ -8,6 +8,8 @@
 #                       [paths].lean_project (AIProver/AIProver_plugin/setup.sh lean);
 #                       orchestration_workspace/.lake/packages linked to its packages
 #   ./setup.sh claude   link the config and the repository; (re)install the Claude Code plugin
+#   ./setup.sh connect  open the SSH master of an ssh-mode endpoint (asks for the password
+#                       and TACC_Token at TACC); rerun when it has closed
 #   ./setup.sh doctor   verify the environment and the model endpoint (aiprover doctor)
 #   ./setup.sh full     as doctor, plus one live AIProver rollout (aiprover doctor --full)
 #
@@ -71,6 +73,43 @@ step_claude() {
     || echo "   note: the lean-lsp MCP tools come with the AIProver plugin (AIProver/AIProver_plugin/setup.sh claude)"
 }
 
+# Opens the SSH master of an ssh-mode endpoint, once per login session. It asks for what the
+# host requires (at TACC a password, then TACC_Token); the AIProver CLI's tunnels then ride it
+# without prompting. Rerun when it has closed (reboot, sleep, network change).
+step_connect() {
+  say "SSH connection of the model endpoint"
+  local spec sock port dest
+  spec=$(python3 - "$AIPROVER_CONFIG" <<'PYEOF'
+import os, sys, tomllib
+endpoint = tomllib.load(open(sys.argv[1], "rb")).get("endpoint", {})
+if endpoint.get("mode", "ssh") == "ssh" and endpoint.get("control_socket"):
+    user = endpoint.get("ssh_user", "")
+    host = endpoint["ssh_host"]
+    print(os.path.expanduser(endpoint["control_socket"]), endpoint.get("ssh_port", 22),
+          f"{user}@{host}" if user else host)
+PYEOF
+  )
+  if [ -z "$spec" ]; then
+    ok "none needed (direct endpoint, or SSH without a control socket)"
+    return 0
+  fi
+  read -r sock port dest <<< "$spec"
+  if ssh -S "$sock" -O check "$dest" 2>/dev/null; then
+    ok "open ($dest, $sock)"
+    return 0
+  fi
+  local open=(ssh -fNM -S "$sock" -p "$port" -o ServerAliveInterval=30 -o ServerAliveCountMax=3 "$dest")
+  if [ ! -t 0 ]; then
+    echo "   not open; run in a terminal (it asks for your credentials): ${open[*]}"
+    return 0
+  fi
+  mkdir -p "$(dirname "$sock")"
+  echo "   $dest asks for your credentials (TACC: password, then TACC_Token)"
+  "${open[@]}" && ssh -S "$sock" -O check "$dest" 2>/dev/null \
+    || die "could not open the SSH connection to $dest"
+  ok "open ($dest, $sock)"
+}
+
 # Not --agents: that check asks the agents through `claude -p`, which the skill avoids.
 step_doctor() {
   say "doctor $*"
@@ -81,13 +120,14 @@ step_doctor() {
 
 # ---------------------------------------------------------------------------
 python3 -c 'import sys; sys.exit(sys.version_info < (3, 11))' || die "python3 >= 3.11 required"
-[ $# -eq 0 ] && set -- lean claude doctor
+[ $# -eq 0 ] && set -- lean claude connect doctor
 for step in "$@"; do
   case "$step" in
     lean)   step_lean ;;
     claude) step_claude ;;
+    connect) step_connect ;;
     doctor) step_doctor ;;
     full)   step_doctor --full ;;
-    *) die "unknown step '$step' (lean|claude|doctor|full)" ;;
+    *) die "unknown step '$step' (lean|claude|connect|doctor|full)" ;;
   esac
 done

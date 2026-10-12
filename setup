@@ -7,16 +7,17 @@
 #   ./setup --endpoint URL [--api-key K]  any OpenAI-compatible endpoint serving the model
 #   ./setup                               keep the existing endpoint, or ask for one
 #
-#   --user USER          SSH user for --via or vista (default: $USER)
+#   --via HOST           an SSH host or an alias of ~/.ssh/config (Host block with User and key)
+#   --user USER          SSH user, when the host's ~/.ssh/config entry does not set one
 #   --lean-project PATH  use an existing Lean project (default: aiprover/lean_project)
 #   --yes                accept every default (the Nix installer still shows what it runs)
 #   --dry-run            print what would happen; change nothing
-#   --no-lean            stop after the configuration (no Lean build, plugin install or doctor)
+#   --no-lean            skip the Lean build and the plugin installation (to change the endpoint)
 #   --installer official|determinate
 #
 # Steps: check the platform; fetch the submodules; find Nix, or offer to install it; build the
 # tools and the AIProver virtualenvs into aiprover/nix/; write orchestration_plugin/aiprover.toml;
-# then orchestration_plugin/setup.sh lean claude doctor. Every Nix command passes
+# then orchestration_plugin/setup.sh lean claude connect doctor. Every Nix command passes
 # `--extra-experimental-features 'nix-command flakes'`, so flakes need not be enabled.
 #
 # POSIX sh on purpose: it runs before anything else is installed.
@@ -33,7 +34,7 @@ LEAN=yes
 INSTALLER=official
 ENDPOINT=""
 VIA=""
-SSH_USER="${USER:-}"
+SSH_USER=""
 API_KEY="EMPTY"
 LEAN_PROJECT=""
 
@@ -45,7 +46,7 @@ die() {
   exit 1
 }
 
-usage() { sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'; }
 
 # ask QUESTION DEFAULT(y|n): yes or no from the terminal; --yes answers y.
 ask() {
@@ -178,6 +179,7 @@ write_config() {
       ssh_host="$VIA"
       remote_host="cic-dgx-01.tacc.cloud"
       remote_port=8040
+      socket="~/.ssh/aiprover-dgx.sock"
     fi
     ;;
   vista)
@@ -220,7 +222,8 @@ ssh_port = 22
 remote_host = "$remote_host"
 remote_port = $remote_port
 server_handoff = "$handoff"
-# An SSH master opened by hand (TACC requires MFA): ssh -fNM -S <socket> <user>@<ssh_host>
+# The SSH master the tunnels ride; open it with orchestration_plugin/setup.sh connect (it asks
+# for what the host requires, at TACC a password and then TACC_Token).
 control_socket = "$socket"
 ssh_options = []
 local_port = 18555
@@ -251,11 +254,6 @@ EOF
   else
     printf '%s\n' "$config" > orchestration_plugin/aiprover.toml
   fi
-  if [ "$ENDPOINT" = vista ]; then
-    say "Before the doctor, open the SSH master once (MFA):"
-    say "  ssh -fNM -S ~/.ssh/vista.sock -o ServerAliveInterval=30 $SSH_USER@vista.tacc.utexas.edu"
-    [ "$YES" = yes ] || ask "Opened?" y || true
-  fi
 }
 
 # Lean, plugin, doctor ---------------------------------------------------------------------------
@@ -264,11 +262,12 @@ finish() {
   PATH="$(pwd)/aiprover/nix/tools/bin:$PATH"
   export PATH
   if [ "$LEAN" = no ]; then
-    say "Skipped. Run later:  orchestration_plugin/setup.sh lean claude doctor"
+    step "Connection and doctor (Lean and plugin skipped)"
+    run bash orchestration_plugin/setup.sh connect doctor
     return
   fi
-  step "Lean, Claude Code plugin, doctor (the first Lean setup downloads Mathlib's cache, ~5 GB)"
-  run bash orchestration_plugin/setup.sh lean claude doctor
+  step "Lean, Claude Code plugin, connection, doctor (the first Lean setup downloads Mathlib's cache, ~5 GB)"
+  run bash orchestration_plugin/setup.sh lean claude connect doctor
 }
 
 next_steps() {
