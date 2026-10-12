@@ -10,73 +10,113 @@ The harness, every Lean check and the lean-lsp tools run on the machine of
 the Claude Code session. Only AIProver model inference goes to the model
 server, reached as the AIProver plugin reaches it (`AIProver/AIProver_plugin/README.md`).
 
-## Quick start
+## Setup
 
-You supply **where the model is**: a host to SSH into and the model's
-address as seen from it. Everything else is set up and checked by
-`setup.sh`.
-
-**0. Model server.** Use a running server, or start one with
-`AIProver/AIProver_plugin/serve/serve_aiprover.sh` (any node with enough GPU
-memory for the ~112 GB FP8 checkpoint) or
-`scripts/vista/serve_aiprover_vista.sbatch` (two Vista GH200 nodes). The
-Vista job writes its node and port to a handoff file on `$SCRATCH`.
-
-**1. Edit `aiprover.toml`, `[endpoint]`.**
-
-```toml
-mode           = "ssh"
-ssh_host       = "vista.tacc.utexas.edu"   # the host you SSH into
-ssh_user       = "<your TACC user>"
-server_handoff = "/scratch/11757/loganluna/servers/aiprover_server.txt"   # follows the server if it moves
-remote_host    = ""                        # fixed address when there is no handoff file
-remote_port    = 8060
-control_socket = "~/.ssh/vista.sock"       # TACC needs MFA: see step 2; empty for key-based ssh
-```
-
-The compute node's port is not reachable from outside TACC, hence the SSH
-hop; the tunnel is opened, checked and reopened by the AIProver CLI. For a
-server reachable directly, set `mode = "direct"` and `api_base`
-(`api_key` is sent as a bearer token). On the orchestration VM,
-`api_base = "http://127.0.0.1:18565/v1"` uses the reasoning proxy, which
-records the model's reasoning per session.
-
-**2. TACC only: open one SSH master by hand** (MFA cannot be scripted):
+One command from a fresh clone, on Linux, WSL2 or macOS:
 
 ```bash
-ssh -fNM -S ~/.ssh/vista.sock -o ServerAliveInterval=30 <user>@vista.tacc.utexas.edu
+git clone --recurse-submodules <repository url> aiprover_orchestration && cd aiprover_orchestration && ./setup --endpoint http://<model host>:<port>
 ```
 
-**3. Set up and verify:**
+`./setup` (repository root) checks the platform and fetches the submodules.
+It finds Nix, or offers to install it, asking first and showing the command.
+It builds the environment from `flake.nix` and writes this directory's
+`endpoint.toml` and `aiprover.toml` for the device. Finally it runs
+`setup.sh lean claude endpoint doctor`.
+`./setup --dry-run` prints every step without changing anything.
 
-```bash
-./setup.sh
+| Where the model server is | Command | Connection |
+|---|---|---|
+| reachable from the device | `--endpoint URL [--api-key KEY]` | direct; the key is sent as a bearer token |
+| reachable only from an SSH host | `--endpoint URL --via HOST [--user USER]` | SSH tunnel through `HOST` (a host name or an alias of `~/.ssh/config`) |
+| a scheduled job writing `node=<n> port=<p>` to a file on a login node | `--via HOST --handoff FILE` | SSH tunnel to the node the file names; a restarted job is followed |
+
+The harness never talks to the server itself: it talks to a reasoning proxy
+on the user's machine (`aiprover_orchestration/server/reasoning_proxy.py`,
+port 18575), which forwards to the server directly or through the SSH
+tunnel. The proxy turns tool calls that a server without a tool-call parser
+returns as text into structured calls, caps reply length, repairs histories
+the server would reject, and records each session's reasoning; so any
+OpenAI-compatible server of the model works, with or without vLLM's tool
+parser. `setup.sh endpoint` opens the connection and starts the proxy; the
+skill runs it before each run.
+
+```
+harness -> reasoning proxy (127.0.0.1:18575) -> server            (direct)
+harness -> reasoning proxy (127.0.0.1:18575) -> SSH tunnel -> server
 ```
 
-| Step | Effect |
+The SSH routes authenticate once per login session: `setup.sh connect` opens
+an SSH master connection and asks for what the host requires (a password, a
+one-time code, a key passphrase). The AIProver CLI opens, checks and reopens
+its tunnels over that master without prompting. When the master has closed
+(reboot, sleep, network change), the doctor and the skill report it; rerun
+`setup.sh connect`. `--timeout` and `--max-turns` set one AIProver session's
+budget. Without `--endpoint`, `./setup` keeps an existing `endpoint.toml`, or
+asks for one.
+
+A run takes hours, so the connection must outlive network gaps. The SSH
+master tolerates a gap or a sleep of up to 10 minutes; on macOS
+`setup.sh endpoint` keeps the Mac awake while the proxy runs (`setup.sh
+stop` ends both). When the master has dropped anyway, `setup.sh endpoint`,
+which the skill runs after a connection fault, reopens it without a prompt
+if a key, an agent or Kerberos authenticates; otherwise the user reruns it
+in a terminal. After a login with a password, `setup.sh connect` offers to
+create a key for this: a dedicated `~/.ssh/aiprover_ed25519`, installed on
+the SSH host through the open connection and restricted there to port
+forwarding to the model server (no shell; with a handoff file, reading that
+file only). A host that requires a one-time code even with a key (an
+`AuthenticationMethods` chain, as on TACC hosts) cannot reconnect
+unattended; the key is then removed from it again, and the offer is not
+repeated for that host.
+
+| Built by Nix | Linked at | Content |
+|---|---|---|
+| `.#tools` | `aiprover/nix/tools` | Python 3.12 (pygments, aiohttp), jq, ripgrep, git, curl, ssh, GNU userland, flock, pdflatex |
+| `.#venv-vibe` | `aiprover/nix/venv_vibe` | the harness's agent loop, mistral-vibe 2.24.2 (`nix/python/vibe/`) |
+| `.#venv-mcp` | `aiprover/nix/venv_mcp` | lean-lsp-mcp 0.30.0 with AIProver's three fixes (`nix/python/mcp/`) |
+
+The skill's `env.sh` puts `aiprover/nix/tools/bin` first on `PATH`, so a
+Claude Code app started outside the Nix shell uses the same tools. The
+virtualenvs pin exactly `AIProver/AIProver_plugin/setup/requirements-*.lock`.
+`nix develop` (or `direnv allow`) gives the same tools interactively. Lean is
+installed by elan into `~/.elan`, with Mathlib, the REPL and cslib in
+`aiprover/lean_project` (`--lean-project PATH` reuses an existing project).
+
+| `setup.sh` step | Effect |
 |---|---|
-| `deps` | Lean 4.23.0, Mathlib, REPL and cslib at `[paths].lean_project`; the harness's two venvs; ripgrep (`AIProver/AIProver_plugin/setup.sh deps` with this config) |
-| `claude` | links `~/.config/aiprover_orchestration/{root,aiprover.toml}`; installs the plugin from the local marketplace |
-| `doctor` | `aiprover doctor --full`: environment, model endpoint, one live AIProver rollout, the lean-lsp tools |
+| `lean` | elan, Lean 4.23.0, the Mathlib project with REPL and cslib (`AIProver/AIProver_plugin/setup.sh lean`); `orchestration_workspace/.lake/packages` linked to its packages |
+| `claude` | links `~/.config/aiprover_orchestration/{root,aiprover.toml}`; installs the plugin from the local marketplace (without the `claude` CLI, prints the `/plugin` commands for the app) |
+| `connect` | opens the SSH master of an SSH endpoint (asks for the host's credentials); nothing for a direct endpoint |
+| `endpoint` | `connect`, the SSH tunnel (AIProver CLI, follows a handoff file) and the local reasoning proxy |
+| `stop` | stops the reasoning proxy (and the keep-awake on macOS) |
+| `doctor` | `aiprover doctor` (environment, model endpoint, the model thinks) and a structured tool-call check |
+| `full` | `aiprover doctor --full`: as `doctor`, plus one live AIProver rollout |
 
-All PASS means ready; `AIProver/AIProver_plugin/STARTUP.md` §5 maps each
-FAIL to its fix. The skill runs `aiprover doctor` itself before every run.
+`AIProver/AIProver_plugin/STARTUP.md` §5 maps each failing doctor row to its
+fix. The skill runs `aiprover doctor` itself before every run.
 
-**4. Use it.** In Claude Code or VS Code, ask for a problem to be run with
-the aiprover-captain skill, by uuid of `data/*.jsonl` or with an informal
-statement and proof. Results are written to `results/<run_id>/`.
+## Use
 
-Needs: Linux, Python 3.12 (venvs) and ≥ 3.11 (CLI), `jq`, `claude` logged
-in, this repository with its `AIProver` submodule, ~10 GB disk (Mathlib).
-The lean-lsp MCP tools come with the AIProver plugin
-(`AIProver/AIProver_plugin/setup.sh claude`).
+Restart the Claude Code app (or VS Code). `/plugin` lists
+`aiprover-orchestration`. Open the repository and ask for a problem to be run
+with the aiprover-captain skill: by uuid of `data/*.jsonl`, or with an
+informal statement and proof. `data/openai_math.jsonl` (five problems of the
+OpenAI math release) is in git as a sample set, for example
+`OpenAIMath_164_HindmanDistinctExpressions`; copy other problem files to a
+new device. Results are written to `results/<run_id>/`.
+
+To change the endpoint later, run `./setup --endpoint ... --no-lean` (connect
+and doctor only), or edit `endpoint.toml` and run `setup.sh endpoint doctor`.
 
 ## Layout
 
 | Path | Content |
 |---|---|
-| `aiprover.toml` | the one config: endpoint, runtime, paths |
-| `setup.sh` | provisioning, plugin installation, verification |
+| `endpoint.toml` | written by `./setup`: the connection to the model server and the local proxy (not in git) |
+| `aiprover.toml` | written by `./setup`: the harness (through the proxy), runtime, paths (not in git) |
+| `setup.sh` | the steps inside the environment: Lean, plugin, doctor |
 | `claude_code/skills/aiprover-captain/SKILL.md` | the captain procedure |
 | `…/references/` | Lean gates, subagent prompts, run record |
-| `…/scripts/env.sh` | repository paths and the recording functions |
+| `…/scripts/env.sh` | repository paths, tools on `PATH`, recording functions |
+| `../flake.nix`, `../nix/` | the Nix environment: tools, virtualenvs, the lean-lsp-mcp patches |

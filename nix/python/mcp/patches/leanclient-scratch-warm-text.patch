@@ -1,0 +1,11 @@
+--- a/leanclient/aio/scratch.py
++++ b/leanclient/aio/scratch.py
+@@ -51,7 +51,7 @@
+             if self._warmed:
+                 return
+             for p in self._paths:
+-                doc = await self._client.open(p, text=self.header, wait=False)
++                doc = await self._client.open(p, text=getattr(self, "warm_text", self.header), wait=False)
+                 doc.pinned = True
+             await asyncio.gather(*(self._client.barrier(p) for p in self._paths))
+             for p in self._paths:
