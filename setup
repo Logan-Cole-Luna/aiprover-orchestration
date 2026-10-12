@@ -1,0 +1,314 @@
+#!/bin/sh
+# ./setup: from a fresh clone to a working aiprover-captain skill, on Linux, WSL2 or macOS.
+#
+#   ./setup --endpoint dgx [--via HOST]   the DGX server cic-dgx-01 (directly when reachable,
+#                                         else through an SSH tunnel via HOST)
+#   ./setup --endpoint vista --user USER  a Vista server job (handoff file, SSH master with MFA)
+#   ./setup --endpoint URL [--api-key K]  any OpenAI-compatible endpoint serving the model
+#   ./setup                               keep the existing endpoint, or ask for one
+#
+#   --user USER          SSH user for --via or vista (default: $USER)
+#   --lean-project PATH  use an existing Lean project (default: aiprover/lean_project)
+#   --yes                accept every default (the Nix installer still shows what it runs)
+#   --dry-run            print what would happen; change nothing
+#   --no-lean            stop after the configuration (no Lean build, plugin install or doctor)
+#   --installer official|determinate
+#
+# Steps: check the platform; fetch the submodules; find Nix, or offer to install it; build the
+# tools and the AIProver virtualenvs into aiprover/nix/; write orchestration_plugin/aiprover.toml;
+# then orchestration_plugin/setup.sh lean claude doctor. Every Nix command passes
+# `--extra-experimental-features 'nix-command flakes'`, so flakes need not be enabled.
+#
+# POSIX sh on purpose: it runs before anything else is installed.
+set -eu
+
+NIX_FEATURES="nix-command flakes"
+MIN_FREE_GB=15
+DGX_URL="http://cic-dgx-01.tacc.cloud:8040"
+VISTA_HANDOFF="/scratch/11757/loganluna/servers/aiprover_server.txt"
+
+YES=no
+DRY=no
+LEAN=yes
+INSTALLER=official
+ENDPOINT=""
+VIA=""
+SSH_USER="${USER:-}"
+API_KEY="EMPTY"
+LEAN_PROJECT=""
+
+say() { printf '%s\n' "$*"; }
+step() { printf '\n==> %s\n' "$*"; }
+warn() { printf 'setup: warning: %s\n' "$*" >&2; }
+die() {
+  printf 'setup: %s\n' "$*" >&2
+  exit 1
+}
+
+usage() { sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; }
+
+# ask QUESTION DEFAULT(y|n): yes or no from the terminal; --yes answers y.
+ask() {
+  [ "$YES" = yes ] && return 0
+  if [ "$2" = y ]; then hint="[Y/n]"; else hint="[y/N]"; fi
+  printf '%s %s ' "$1" "$hint"
+  read -r answer || answer=""
+  case "$answer" in
+  [Yy]*) return 0 ;;
+  [Nn]*) return 1 ;;
+  *) [ "$2" = y ] ;;
+  esac
+}
+
+run() {
+  if [ "$DRY" = yes ]; then say "would run: $*"; else "$@"; fi
+}
+
+nix_cmd() { run nix --extra-experimental-features "$NIX_FEATURES" "$@"; }
+
+# Platform ---------------------------------------------------------------------------------------
+
+check_platform() {
+  os=$(uname -s)
+  arch=$(uname -m)
+  case "$os" in
+  Linux)
+    if grep -qi microsoft /proc/version 2>/dev/null; then platform="WSL2"; else platform="Linux"; fi
+    ;;
+  Darwin) platform="macOS" ;;
+  *) die "unsupported system $os: use Linux, macOS, or Windows through WSL2" ;;
+  esac
+  case "$arch" in
+  x86_64 | amd64 | aarch64 | arm64) ;;
+  *) die "unsupported architecture $arch" ;;
+  esac
+  step "Platform: $platform ($arch)"
+  free_kb=$(df -Pk . | awk 'NR == 2 { print $4 }')
+  [ "$((free_kb / 1048576))" -ge "$MIN_FREE_GB" ] \
+    || warn "less than $MIN_FREE_GB GB free here: Mathlib and the Nix store need about that"
+}
+
+fetch_submodules() {
+  step "Submodules: AIProver/"
+  run git submodule update --init --recursive
+}
+
+# Nix --------------------------------------------------------------------------------------------
+
+load_nix() {
+  for profile in /nix/var/nix/profiles/default/etc/profile.d/nix-daemon.sh \
+    "$HOME/.nix-profile/etc/profile.d/nix.sh"; do
+    # shellcheck disable=SC1090  # the installer's own profile script
+    [ -f "$profile" ] && . "$profile"
+  done
+  command -v nix >/dev/null 2>&1
+}
+
+install_nix() {
+  case "$INSTALLER" in
+  official) command="curl -L https://nixos.org/nix/install | sh -s -- --daemon" ;;
+  determinate) command="curl -fsSL https://install.determinate.systems/nix | sh -s -- install --prefer-upstream-nix" ;;
+  *) die "unknown installer $INSTALLER (official|determinate)" ;;
+  esac
+  step "Nix: not found"
+  say "The $INSTALLER installer would run:"
+  say "  $command"
+  say "It needs sudo once, to create /nix."
+  ask "Install Nix now?" n || die "install Nix, then run ./setup again"
+  if [ "$DRY" = yes ]; then say "would run: $command"; return; fi
+  sh -c "$command"
+  load_nix || die "Nix installed but not found: open a new terminal and run ./setup again"
+}
+
+check_nix() {
+  if load_nix; then step "Nix: $(nix --version)"; else install_nix; fi
+}
+
+# Build the tools and the virtualenvs as GC roots inside the repository, so the skill finds them
+# without a Nix shell.
+build_environment() {
+  step "Environment: tools and AIProver virtualenvs (the first build downloads a few GB)"
+  run mkdir -p aiprover/nix
+  for package in tools venv-vibe venv-mcp; do
+    nix_cmd build ".#$package" --out-link "aiprover/nix/$(printf '%s' "$package" | tr - _)"
+  done
+}
+
+# Endpoint ---------------------------------------------------------------------------------------
+
+choose_endpoint() {
+  if [ -z "$ENDPOINT" ] && [ -f orchestration_plugin/aiprover.toml ]; then
+    step "Endpoint: keeping orchestration_plugin/aiprover.toml (pass --endpoint to replace it)"
+    return 1
+  fi
+  if [ -z "$ENDPOINT" ]; then
+    [ "$YES" = yes ] && die "no endpoint configured: pass --endpoint dgx|vista|URL"
+    printf 'Model endpoint (dgx, vista, or an http(s) URL): '
+    read -r ENDPOINT || die "no endpoint given"
+  fi
+  return 0
+}
+
+reachable() { curl -s -m 8 -o /dev/null -f "$1/v1/models"; }
+
+# write_config: orchestration_plugin/aiprover.toml for this device, read by the AIProver CLI.
+write_config() {
+  mode=direct
+  api_base=""
+  ssh_host=""
+  remote_host=""
+  remote_port=8060
+  handoff=""
+  socket=""
+  timeout=5400
+  turns=200
+  case "$ENDPOINT" in
+  dgx)
+    timeout=10800
+    turns=100
+    if reachable "$DGX_URL"; then
+      api_base="$DGX_URL/v1"
+    else
+      if [ -z "$VIA" ] && [ "$YES" = no ]; then
+        printf '%s is not reachable from here. SSH host that reaches it: ' "$DGX_URL"
+        read -r VIA || VIA=""
+      fi
+      [ -n "$VIA" ] || die "$DGX_URL is not reachable from here: pass --via HOST (a host that reaches it)"
+      mode=ssh
+      ssh_host="$VIA"
+      remote_host="cic-dgx-01.tacc.cloud"
+      remote_port=8040
+    fi
+    ;;
+  vista)
+    mode=ssh
+    ssh_host="vista.tacc.utexas.edu"
+    handoff="$VISTA_HANDOFF"
+    socket="~/.ssh/vista.sock"
+    ;;
+  http://* | https://*) api_base="${ENDPOINT%/}" ;;
+  *) die "unknown endpoint $ENDPOINT (dgx, vista, or an http(s) URL)" ;;
+  esac
+  [ "$mode" = ssh ] || [ -n "$api_base" ] || die "no api_base for $ENDPOINT"
+  [ "$mode" = direct ] || api_base="http://127.0.0.1:18555/v1"
+  case "$api_base" in */v1) ;; *) api_base="$api_base/v1" ;; esac
+
+  if [ "$(uname -s)" = Darwin ]; then
+    memory_gb=$(($(sysctl -n hw.memsize) / 1073741824))
+  else
+    memory_gb=$(($(awk '/^MemTotal:/ { print $2 }' /proc/meminfo) / 1048576))
+  fi
+  parallel=$((memory_gb / 5))
+  [ "$parallel" -ge 1 ] || parallel=1
+  [ "$parallel" -le 8 ] || parallel=8
+
+  root=$(pwd)
+  step "Endpoint: $ENDPOINT ($mode, $([ "$mode" = ssh ] && echo "via $ssh_host" || echo "$api_base"))"
+  config=$(
+    cat <<EOF
+# AIProver configuration of the aiprover-captain skill, written by ./setup for this device
+# (endpoint $ENDPOINT). Same format as AIProver/AIProver_plugin/aiprover.toml. Edit it freely;
+# ./setup keeps it unless --endpoint is given. After an edit: orchestration_plugin/setup.sh doctor
+
+[endpoint]
+mode = "$mode"
+# ssh mode: the host you SSH into, and the model's address as seen from it. With server_handoff
+# set, the node and port are read from that file on ssh_host (the Vista server job writes it).
+ssh_host = "$ssh_host"
+ssh_user = "$SSH_USER"
+ssh_port = 22
+remote_host = "$remote_host"
+remote_port = $remote_port
+server_handoff = "$handoff"
+# An SSH master opened by hand (TACC requires MFA): ssh -fNM -S <socket> <user>@<ssh_host>
+control_socket = "$socket"
+ssh_options = []
+local_port = 18555
+# direct mode: the endpoint itself; api_key is sent as a bearer token.
+api_base = "$api_base"
+api_key = "$API_KEY"
+# Served model id; empty = the first id /v1/models reports.
+model = ""
+
+[runtime]
+work_root = "$root/aiprover/work"
+# Concurrent AIProver sessions on this device (about 5 GB of memory each).
+max_parallel = $parallel
+timeout_sec = $timeout
+max_turns = $turns
+
+[paths]
+lean_project = "${LEAN_PROJECT:-$root/aiprover/lean_project}"
+elan_home = "~/.elan"
+vibe_venv = "$root/aiprover/nix/venv_vibe"
+mcp_venv = "$root/aiprover/nix/venv_mcp"
+rg_dir = "$root/aiprover/nix/tools/bin"
+EOF
+  )
+  if [ "$DRY" = yes ]; then
+    say "would write orchestration_plugin/aiprover.toml:"
+    printf '%s\n' "$config"
+  else
+    printf '%s\n' "$config" > orchestration_plugin/aiprover.toml
+  fi
+  if [ "$ENDPOINT" = vista ]; then
+    say "Before the doctor, open the SSH master once (MFA):"
+    say "  ssh -fNM -S ~/.ssh/vista.sock -o ServerAliveInterval=30 $SSH_USER@vista.tacc.utexas.edu"
+    [ "$YES" = yes ] || ask "Opened?" y || true
+  fi
+}
+
+# Lean, plugin, doctor ---------------------------------------------------------------------------
+
+finish() {
+  PATH="$(pwd)/aiprover/nix/tools/bin:$PATH"
+  export PATH
+  if [ "$LEAN" = no ]; then
+    say "Skipped. Run later:  orchestration_plugin/setup.sh lean claude doctor"
+    return
+  fi
+  step "Lean, Claude Code plugin, doctor (the first Lean setup downloads Mathlib's cache, ~5 GB)"
+  run bash orchestration_plugin/setup.sh lean claude doctor
+}
+
+next_steps() {
+  step "Done"
+  say "1. Restart the Claude Code app (or VS Code); /plugin lists aiprover-orchestration."
+  say "2. Open this directory and ask, for example:"
+  say "     Use the aiprover-captain skill to formalize and prove <uuid of data/*.jsonl>"
+  say "   or paste <informal_theorem>...</informal_theorem> and <informal_proof>...</informal_proof>."
+  [ -n "$(ls data/*.jsonl 2>/dev/null)" ] \
+    || say "   data/ is not in git: copy data/*.jsonl here to run problems by uuid."
+  say "Interactive shell with the same tools: nix develop (or direnv allow)."
+}
+
+main() {
+  while [ $# -gt 0 ]; do
+    case "$1" in
+    --endpoint) ENDPOINT="${2:?--endpoint needs a value}"; shift ;;
+    --endpoint=*) ENDPOINT="${1#*=}" ;;
+    --via) VIA="${2:?--via needs a host}"; shift ;;
+    --user) SSH_USER="${2:?--user needs a name}"; shift ;;
+    --api-key) API_KEY="${2:?--api-key needs a value}"; shift ;;
+    --lean-project) LEAN_PROJECT="${2:?--lean-project needs a path}"; shift ;;
+    --installer) INSTALLER="${2:?--installer needs a name}"; shift ;;
+    --yes | -y) YES=yes ;;
+    --dry-run) DRY=yes ;;
+    --no-lean) LEAN=no ;;
+    -h | --help) usage; exit 0 ;;
+    *) die "unknown option $1 (see ./setup --help)" ;;
+    esac
+    shift
+  done
+  cd "$(dirname "$0")"
+  [ -f flake.nix ] && [ -d orchestration_plugin ] || die "run ./setup from the repository root"
+  check_platform
+  fetch_submodules
+  check_nix
+  build_environment
+  if choose_endpoint; then write_config; fi
+  finish
+  next_steps
+}
+
+main "$@"

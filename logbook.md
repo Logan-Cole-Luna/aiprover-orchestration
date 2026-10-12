@@ -72,6 +72,9 @@ Results
 
 ## Todo
 
+- Nix setup: first `./setup` on a Linux device with Nix (commit the
+  generated `flake.lock`); then macOS, where the AIProver harness has not
+  run before (`setup.sh full` as acceptance test).
 - `aiprover-captain` skill: first end-to-end run in Claude Code on
   `JiatuBook_BoundedArithmetic_000004` with a model server up; compare
   with the pipeline's run of the same problem.
@@ -207,6 +210,11 @@ Results
 
 ## Decisions
 
+- Device setup uses Nix (flake, uv2nix virtualenvs) linked into
+  `aiprover/nix/`, so the skill runs from the Claude Code app without a Nix
+  shell; elan stays outside Nix (`~/.elan`), where the harness expects it.
+  The leanfinder edit of the VM's lean-lsp-mcp is not carried over: it is
+  part of the experimental Mathlib index, not of AIProver's setup.
 - The `aiprover-captain` skill makes no programmatic model calls (no
   `claude -p`, no orchestrator driver, no `aiprover expand`,
   `backtranslate` or `ask`); blind roles are subagents of the session.
@@ -354,6 +362,25 @@ Results
 - Query server with run queue, live progress and Claude call budget.
 - Per-run model choice for orchestrator and subagent (Claude model and
   reasoning level, or AIProver trained/base) on the query server page.
+
+## 2026-10-11: One-command setup with Nix
+
+- `./setup` (POSIX sh, after the flywheel superproject's): platform and disk
+  check, submodules, Nix (installed on request), `nix build` of `.#tools`,
+  `.#venv-vibe`, `.#venv-mcp` into `aiprover/nix/`, `aiprover.toml` from an
+  endpoint preset (`dgx`: direct when reachable, else SSH via `--via`;
+  `vista`; URL), then `orchestration_plugin/setup.sh lean claude doctor`.
+- `flake.nix`, `nix/tools.nix`, `nix/venvs.nix` (uv2nix, wheels only, Python
+  3.12); `nix/python/{vibe,mcp}`: pins of AIProver's `requirements-*.lock`,
+  `uv lock` for Linux and macOS (same versions; extra packages only under
+  Windows or Emscripten markers); four lean-lsp-mcp patches taken from the
+  VM's venv (`*.py.orig`), byte-identical to its patched files after
+  application.
+- `orchestration_plugin/aiprover.toml` is generated per device (absolute
+  paths) and no longer tracked; `setup.sh` steps are `lean`, `claude`,
+  `doctor`, `full`.
+- Checked on the VM (no Nix): dry runs of every preset; the generated config
+  parsed by `aiprover config`; locks against the pins.
 
 ## 2026-10-10: Interactive captain skill
 
