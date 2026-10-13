@@ -367,6 +367,12 @@ Results
 - Per-run model choice for orchestrator and subagent (Claude model and
   reasoning level, or AIProver trained/base) on the query server page.
 
+## 2026-10-13: Run records of the proved OpenAI math problems
+
+- `results/` holds the records of `OpenAIMath_011` and `OpenAIMath_332` as copied by
+  `utils.share_results`: gzipped trace, config, summary, trace page, Lean modules,
+  report and informalization. `*.gz` is stored in Git LFS.
+
 ## 2026-10-11: Sample problem set in git
 
 - `data/openai_math.jsonl` (five problems: 332, 011, 164, 048, 259) is

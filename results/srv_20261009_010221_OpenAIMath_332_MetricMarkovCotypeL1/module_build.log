@@ -1,0 +1,116 @@
+⚠ [7216/7218] Replayed Theorems.Thm_openaimath_332_metricmarkovcotypel1
+warning: Theorems/Thm_openaimath_332_metricmarkovcotypel1.lean:5:8: declaration uses 'sorry'
+⚠ [7217/7218] Replayed Solutions.Sol_openaimath_332_metricmarkovcotypel1
+warning: Solutions/Sol_openaimath_332_metricmarkovcotypel1.lean:103:17: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+warning: Solutions/Sol_openaimath_332_metricmarkovcotypel1.lean:104:8: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+warning: Solutions/Sol_openaimath_332_metricmarkovcotypel1.lean:114:17: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+warning: Solutions/Sol_openaimath_332_metricmarkovcotypel1.lean:115:8: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+warning: Solutions/Sol_openaimath_332_metricmarkovcotypel1.lean:152:15: Used `tac1 <;> tac2` where `(tac1; tac2)` would suffice
+
+Note: This linter can be disabled with `set_option linter.unnecessarySeqFocus false`
+warning: Solutions/Sol_openaimath_332_metricmarkovcotypel1.lean:209:10: this tactic is never executed
+
+Note: This linter can be disabled with `set_option linter.unreachableTactic false`
+warning: Solutions/Sol_openaimath_332_metricmarkovcotypel1.lean:227:10: this tactic is never executed
+
+Note: This linter can be disabled with `set_option linter.unreachableTactic false`
+warning: Solutions/Sol_openaimath_332_metricmarkovcotypel1.lean:209:10: 'simp [Matrix.one_apply]' tactic does nothing
+
+Note: This linter can be disabled with `set_option linter.unusedTactic false`
+warning: Solutions/Sol_openaimath_332_metricmarkovcotypel1.lean:227:10: 'simp [Matrix.one_apply]' tactic does nothing
+
+Note: This linter can be disabled with `set_option linter.unusedTactic false`
+info: Solutions/Sol_openaimath_332_metricmarkovcotypel1.lean:519:8: Try this: ring_nf
+warning: Solutions/Sol_openaimath_332_metricmarkovcotypel1.lean:661:4: this tactic is never executed
+
+Note: This linter can be disabled with `set_option linter.unreachableTactic false`
+warning: Solutions/Sol_openaimath_332_metricmarkovcotypel1.lean:661:4: 'nlinarith [hP, hQ, hpS, hcS]' tactic does nothing
+
+Note: This linter can be disabled with `set_option linter.unusedTactic false`
+warning: Solutions/Sol_openaimath_332_metricmarkovcotypel1.lean:683:8: this tactic is never executed
+
+Note: This linter can be disabled with `set_option linter.unreachableTactic false`
+warning: Solutions/Sol_openaimath_332_metricmarkovcotypel1.lean:687:8: this tactic is never executed
+
+Note: This linter can be disabled with `set_option linter.unreachableTactic false`
+warning: Solutions/Sol_openaimath_332_metricmarkovcotypel1.lean:683:8: 'field_simp' tactic does nothing
+
+Note: This linter can be disabled with `set_option linter.unusedTactic false`
+warning: Solutions/Sol_openaimath_332_metricmarkovcotypel1.lean:687:8: '(rw [hq]; field_simp)' tactic does nothing
+
+Note: This linter can be disabled with `set_option linter.unusedTactic false`
+warning: Solutions/Sol_openaimath_332_metricmarkovcotypel1.lean:1199:7: 'intros' tactic does nothing
+
+Note: This linter can be disabled with `set_option linter.unusedTactic false`
+warning: Solutions/Sol_openaimath_332_metricmarkovcotypel1.lean:1211:6: this tactic is never executed
+
+Note: This linter can be disabled with `set_option linter.unreachableTactic false`
+warning: Solutions/Sol_openaimath_332_metricmarkovcotypel1.lean:1212:6: this tactic is never executed
+
+Note: This linter can be disabled with `set_option linter.unreachableTactic false`
+warning: Solutions/Sol_openaimath_332_metricmarkovcotypel1.lean:1211:6: 'exact Summable.sum (fun i _ => (mc_L1_norm (x i)).1)' tactic does nothing
+
+Note: This linter can be disabled with `set_option linter.unusedTactic false`
+warning: Solutions/Sol_openaimath_332_metricmarkovcotypel1.lean:1212:6: '(
+  have key : ∀ s : Finset (Fin n), Summable (fun k : ℕ => ∑ i ∈ s, |x i k|) :=
+    by
+    intro s
+    refine Finset.induction_on s ?_ ?_
+    · simp
+    · intro a s ha ih
+      simpa [Finset.sum_insert ha] using ((mc_L1_norm (x a)).1).add ih
+  exact key Finset.univ)' tactic does nothing
+
+Note: This linter can be disabled with `set_option linter.unusedTactic false`
+warning: Solutions/Sol_openaimath_332_metricmarkovcotypel1.lean:1249:10: this tactic is never executed
+
+Note: This linter can be disabled with `set_option linter.unreachableTactic false`
+warning: Solutions/Sol_openaimath_332_metricmarkovcotypel1.lean:1250:10: this tactic is never executed
+
+Note: This linter can be disabled with `set_option linter.unreachableTactic false`
+warning: Solutions/Sol_openaimath_332_metricmarkovcotypel1.lean:1253:8: this tactic is never executed
+
+Note: This linter can be disabled with `set_option linter.unreachableTactic false`
+warning: Solutions/Sol_openaimath_332_metricmarkovcotypel1.lean:1249:10: '(simp only [mc_L1_affine_apply, hx i k])' tactic does nothing
+
+Note: This linter can be disabled with `set_option linter.unusedTactic false`
+warning: Solutions/Sol_openaimath_332_metricmarkovcotypel1.lean:1250:10: '(rw [mc_L1_affine_apply]; exact (hx i k).symm)' tactic does nothing
+
+Note: This linter can be disabled with `set_option linter.unusedTactic false`
+warning: Solutions/Sol_openaimath_332_metricmarkovcotypel1.lean:1253:8: 'exact Subtype.ext (funext h)' tactic does nothing
+
+Note: This linter can be disabled with `set_option linter.unusedTactic false`
+warning: Solutions/Sol_openaimath_332_metricmarkovcotypel1.lean:1352:6: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+warning: Solutions/Sol_openaimath_332_metricmarkovcotypel1.lean:2031:10: this tactic is never executed
+
+Note: This linter can be disabled with `set_option linter.unreachableTactic false`
+warning: Solutions/Sol_openaimath_332_metricmarkovcotypel1.lean:2031:10: 'exact pow_le_pow_left (pow_nonneg hq0 t) hqt (s / t)' tactic does nothing
+
+Note: This linter can be disabled with `set_option linter.unusedTactic false`
+warning: Solutions/Sol_openaimath_332_metricmarkovcotypel1.lean:2137:6: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+info: Solutions/Sol_openaimath_332_metricmarkovcotypel1.lean:2184:8: Try this: ring_nf
+info: Solutions/Sol_openaimath_332_metricmarkovcotypel1.lean:2190:10: Try this: ring_nf
+warning: Solutions/Sol_openaimath_332_metricmarkovcotypel1.lean:2505:4: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+warning: Solutions/Sol_openaimath_332_metricmarkovcotypel1.lean:2597:6: this tactic is never executed
+
+Note: This linter can be disabled with `set_option linter.unreachableTactic false`
+warning: Solutions/Sol_openaimath_332_metricmarkovcotypel1.lean:2597:6: 'linarith [h1, h2, hgc]' tactic does nothing
+
+Note: This linter can be disabled with `set_option linter.unusedTactic false`
+ℹ [7218/7218] Replayed Solutions.Check_openaimath_332_metricmarkovcotypel1
+info: Solutions/Check_openaimath_332_metricmarkovcotypel1.lean:8:0: 'solution' depends on axioms: [propext, Classical.choice, Quot.sound]
+Build completed successfully (7218 jobs).

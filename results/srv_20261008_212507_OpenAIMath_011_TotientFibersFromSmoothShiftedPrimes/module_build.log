@@ -1,0 +1,17 @@
+✔ [7215/7218] Built Definitions.Def_openaimath_011_totientfibersfromsmoothshiftedprimes (6.0s)
+⚠ [7216/7218] Built Theorems.Thm_openaimath_011_totientfibersfromsmoothshiftedprimes (6.0s)
+warning: Theorems/Thm_openaimath_011_totientfibersfromsmoothshiftedprimes.lean:5:8: declaration uses 'sorry'
+⚠ [7217/7218] Built Solutions.Sol_openaimath_011_totientfibersfromsmoothshiftedprimes (35s)
+warning: Solutions/Sol_openaimath_011_totientfibersfromsmoothshiftedprimes.lean:492:51: Used `tac1 <;> tac2` where `(tac1; tac2)` would suffice
+
+Note: This linter can be disabled with `set_option linter.unnecessarySeqFocus false`
+warning: Solutions/Sol_openaimath_011_totientfibersfromsmoothshiftedprimes.lean:492:7: 'intros' tactic does nothing
+
+Note: This linter can be disabled with `set_option linter.unusedTactic false`
+warning: Solutions/Sol_openaimath_011_totientfibersfromsmoothshiftedprimes.lean:985:4: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+warning: Solutions/Sol_openaimath_011_totientfibersfromsmoothshiftedprimes.lean:1101:8: `LT.lt.not_le` has been deprecated: Use `LT.lt.not_ge` instead
+ℹ [7218/7218] Built Solutions.Check_openaimath_011_totientfibersfromsmoothshiftedprimes (7.6s)
+info: Solutions/Check_openaimath_011_totientfibersfromsmoothshiftedprimes.lean:8:0: 'solution' depends on axioms: [propext, Classical.choice, Quot.sound]
+Build completed successfully (7218 jobs).
