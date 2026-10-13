@@ -1,0 +1,9 @@
+\contentsline {section}{\numberline {1}Setting}{1}{section.1}%
+\contentsline {section}{\numberline {2}Lemmas}{2}{section.2}%
+\contentsline {subsection}{\numberline {2.1}Fibers of the totient and products of primes}{2}{subsection.2.1}%
+\contentsline {subsection}{\numberline {2.2}Counting smooth values}{4}{subsection.2.2}%
+\contentsline {subsection}{\numberline {2.3}Elementary real estimates}{5}{subsection.2.3}%
+\contentsline {subsection}{\numberline {2.4}Assembly}{8}{subsection.2.4}%
+\contentsline {section}{\numberline {3}Proof of the theorem}{9}{section.3}%
+\contentsline {paragraph}{Relation to the source proof.}{10}{section*.4}%
+\contentsline {section}{\numberline {A}Correspondence with the formal proof}{10}{appendix.A}%

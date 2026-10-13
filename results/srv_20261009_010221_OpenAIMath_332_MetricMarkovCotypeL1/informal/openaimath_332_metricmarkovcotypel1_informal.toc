@@ -1,0 +1,14 @@
+\contentsline {section}{\numberline {1}Setting}{1}{section.1}%
+\contentsline {paragraph}{Index sets and matrices.}{1}{section*.2}%
+\contentsline {paragraph}{Series.}{2}{section*.3}%
+\contentsline {paragraph}{Resolvent parameters.}{2}{section*.4}%
+\contentsline {paragraph}{Weighted seminorms and the cubic map.}{2}{section*.5}%
+\contentsline {section}{\numberline {2}Lemmas}{3}{section.2}%
+\contentsline {subsection}{\numberline {2.1}Stationarity and powers of stochastic matrices}{3}{subsection.2.1}%
+\contentsline {subsection}{\numberline {2.2}The resolvent}{3}{subsection.2.2}%
+\contentsline {subsection}{\numberline {2.3}The cubic map and the quartic potential}{4}{subsection.2.3}%
+\contentsline {subsection}{\numberline {2.4}Cut decomposition in $\ell _1$}{8}{subsection.2.4}%
+\contentsline {subsection}{\numberline {2.5}Geometric versus Ces\`aro averages}{11}{subsection.2.5}%
+\contentsline {section}{\numberline {3}Proof of the theorem}{15}{section.3}%
+\contentsline {paragraph}{Relation to the source proof.}{16}{section*.6}%
+\contentsline {section}{\numberline {A}Correspondence with the formal proof}{17}{appendix.A}%
