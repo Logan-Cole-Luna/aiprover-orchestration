@@ -249,7 +249,8 @@ AIProver venvs and ripgrep from
 | OpenAIMath 332, metric Markov cotype of L1 | proved (2026-10-10) | 49 | faithful |
 | OpenAIMath 011, large totient fibers, conditional on (H) | proved (2026-10-11) | 20 | faithful |
 
-Further runs and their status are recorded in `logbook.md`.
+The records of both runs (trace, Lean files, report, informalization) are in
+`results/<run_id>/`. Further runs and their status are recorded in `logbook.md`.
 
 ## Future work
 
