@@ -319,6 +319,15 @@ Results
 
 ## Done
 
+- AIProver job inputs are isolated per submission
+  (`agents/aiprover.py`): the context, statement and hint files of a job
+  are written to a temporary directory of its own under
+  `temp/<run_id>/aiprover/`, removed once the CLI has copied them. Job
+  names are truncated to 60 characters, so lemmas of a run with a long id
+  share one name and cannot key these files. A job is resumed only if its
+  stored `context.lean` and `statement.lean` equal the lemma's current
+  ones; otherwise a new job is submitted.
+
 - Literature review `docs/lit_review/` (`lit_review.md`, `lit_review.xlsx`):
   30 related systems, feature matrix, gaps and ranked adoptions; MAESTRO,
   Paper2Lean and ToMAP (`docs/papers/`) read in full.

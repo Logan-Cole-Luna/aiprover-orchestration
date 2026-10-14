@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import subprocess
+import tempfile
 import threading
 import time
 import tomllib
@@ -309,6 +310,18 @@ class AIProverAgent(Agent):
         except subprocess.TimeoutExpired:
             return False
 
+    def _job_matches(self, job: str, context: str, statement: str) -> bool:
+        """True if job `job` was submitted with this context and statement."""
+        job_dir = self.work_root / "jobs" / job
+        return all(
+            (job_dir / file_name).exists()
+            and (job_dir / file_name).read_text().strip() == text.strip()
+            for file_name, text in (
+                ("context.lean", context),
+                ("statement.lean", statement),
+            )
+        )
+
     def solve(
         self,
         *,
@@ -349,6 +362,14 @@ class AIProverAgent(Agent):
                 "submitting a new job."
             )
             resume_job = None
+        if resume_job and not self._job_matches(
+            resume_job, context, statement
+        ):
+            logger.warning(
+                f"AIProver job {resume_job} was submitted with another "
+                "context or statement; submitting a new job."
+            )
+            resume_job = None
         if resume_job:
             submitted = self._cli(
                 "resume",
@@ -365,41 +386,47 @@ class AIProverAgent(Agent):
                 problem = self.work_root / "jobs" / resume_job / "problem.txt"
                 rendered = problem.read_text() if problem.exists() else ""
         else:
-            context_path = work_dir / f"{name}_context.lean"
-            statement_path = work_dir / f"{name}_statement.lean"
-            context_path.write_text(context)
-            statement_path.write_text(statement)
-            hint_args = []
-            if hint:
-                hint_path = work_dir / f"{name}_hint.txt"
-                hint_path.write_text(hint)
-                hint_args = ["--hint-file", str(hint_path)]
-            args = [
-                "--theorem-text",
-                theorem_text,
-                "--proof-text",
-                proof_text,
-                "--context",
-                str(context_path),
-                "--lean-statement",
-                str(statement_path),
-                *hint_args,
-            ]
-            rendered = self._cli("render", *args, timeout=60).stdout
-            submitted = self._cli(
-                "submit",
-                "-q",
-                "-k",
-                str(samples),
-                "--name",
-                name,
-                "--timeout",
-                str(self.timeout),
-                "--max-turns",
-                str(self.max_turns),
-                *args,
-                timeout=120,
-            )
+            # Jobs are submitted concurrently, so each keeps its input files
+            # in a directory of its own until the CLI has copied them.
+            with tempfile.TemporaryDirectory(
+                prefix=f"{name}_", dir=work_dir
+            ) as directory:
+                files = Path(directory)
+                context_path = files / "context.lean"
+                statement_path = files / "statement.lean"
+                context_path.write_text(context)
+                statement_path.write_text(statement)
+                hint_args = []
+                if hint:
+                    hint_path = files / "hint.txt"
+                    hint_path.write_text(hint)
+                    hint_args = ["--hint-file", str(hint_path)]
+                args = [
+                    "--theorem-text",
+                    theorem_text,
+                    "--proof-text",
+                    proof_text,
+                    "--context",
+                    str(context_path),
+                    "--lean-statement",
+                    str(statement_path),
+                    *hint_args,
+                ]
+                rendered = self._cli("render", *args, timeout=60).stdout
+                submitted = self._cli(
+                    "submit",
+                    "-q",
+                    "-k",
+                    str(samples),
+                    "--name",
+                    name,
+                    "--timeout",
+                    str(self.timeout),
+                    "--max-turns",
+                    str(self.max_turns),
+                    *args,
+                    timeout=120,
+                )
         job = (
             submitted.stdout.strip().splitlines()[-1]
             if submitted.stdout.strip()
