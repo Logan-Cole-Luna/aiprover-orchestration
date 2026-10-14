@@ -376,6 +376,31 @@ Results
 - Per-run model choice for orchestrator and subagent (Claude model and
   reasoning level, or AIProver trained/base) on the query server page.
 
+## 2026-10-13: Refutation and setting check
+
+- Refute action (`docs/ideas.md` 14; `docs/orchestration.md` 2.3, 3.2). A
+  statement counts as false only when Lean accepts a proof of its negation,
+  `theorem <name>_refuted : ¬ (type_of% @<name>)`, against the definitions
+  alone and with the standard axioms (`SketchStage._refutation`). At a
+  hand-back (`<refute>`) the lemma is marked refuted, no further job or
+  hand-back starts, and the prove phase ends in a replan that lists the
+  refutation, may not state the lemma again and is not counted against
+  `max_replans`. In place of a sketch (`<refutation>`) the theorem is
+  refuted and the run ends with status `disproved`
+  (`<slug>_refutation.lean`).
+- Setting check (`setting_check`, default on): before the first sketch the
+  captain proves facts about the setting (contradictory hypotheses,
+  degenerate structures, small cases) as theorems `setting_...`; the
+  compiled facts are appended to the definitions (`setting_checked`).
+- Decision: facts join the definitions rather than the sketch, so that
+  solvers, hand-backs, replans and the final modules see them without a
+  second mechanism; the target statement is unchanged.
+- Decision: a refutation is checked without the other lemmas of the
+  sketch, since unproved lemmas may themselves be false.
+- Checked against Lean with recorded replies
+  (`temp/refute_test/test_refute.py`, 14 cases: accepted and rejected
+  refutations of lemmas and of the theorem, setting facts, resume).
+
 ## 2026-10-13: Run records of the proved OpenAI math problems
 
 - `results/` holds the records of `OpenAIMath_011` and `OpenAIMath_332` as copied by
