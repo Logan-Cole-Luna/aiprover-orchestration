@@ -30,7 +30,7 @@
       "model": "aiprover",
       "config": "configs/aiprover/vista_logged.toml",
       "cli": "AIProver/AIProver_plugin/bin/aiprover",
-      "timeout": 5400,
+      "timeout": 3600,
       "max_turns": 200
     }
   },
@@ -42,7 +42,8 @@
   "lean_timeout": 300,
   "max_claude_calls": 10,
   "aiprover_session_slots": 8,
-  "aiprover_handback_after": 3,
+  "aiprover_job_sessions": 3,
+  "aiprover_handback_after": 2,
   "max_handbacks": 12,
   "final_claude_calls": 8
 }
