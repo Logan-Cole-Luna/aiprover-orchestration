@@ -1,9 +1,14 @@
-"""Proof sketch and replanning.
+"""Setting check, proof sketch, refutation and replanning.
 
-The captain decomposes the proof into lemmas (stated in full, left as
-`sorry`) and a proof of `solution` from them; the sketch must compile. After
-failed lemmas, the captain revises the sketch with the solvers' failed code
-and errors; proved lemmas whose statements are unchanged keep their proofs.
+Before planning, the captain tests the setting: facts it proves about it
+(a degenerate structure, contradictory hypotheses, a small case) join the
+definitions. The captain then decomposes the proof into lemmas (stated in
+full, left as `sorry`) and a proof of `solution` from them; the sketch must
+compile. After failed lemmas, the captain revises the sketch with the
+solvers' failed code and errors; proved lemmas whose statements are
+unchanged keep their proofs. A statement the captain judges false, the
+theorem or a lemma, counts as refuted only when Lean accepts a proof of its
+negation from the definitions with the standard axioms.
 
 Related published work (tags defined in docs/lit_review/lit_review.md §6):
 - [Similar] Informal proof to a formal sketch with `sorry` gaps closed by a
@@ -18,12 +23,15 @@ Related published work (tags defined in docs/lit_review/lit_review.md §6):
 - [Similar] Revising the global plan from failed lemmas: Goedel-Architect
   (Chung et al., ICML 2026; no code released),
   https://icml.cc/virtual/2026/82541
+- [Similar] Refutation accepted only with a negation proof or a countermodel:
+  MAESTRO §3.4 (docs/papers/34453_Maestro_Agentic_Formal_P.pdf); goal and
+  negation attempted together: HERMES, https://arxiv.org/abs/2511.18760
 """
 
 import logging
 import re
 
-from ...lean.checker import forbidden_constructs
+from ...lean.checker import forbidden_constructs, nonstandard_axioms
 from ...lean.text import drop_imports, indent, normalize
 from .. import prompts
 from ..config import MAIN_NAME
@@ -40,10 +48,131 @@ from ..structures import (
 
 logger = logging.getLogger(__name__)
 
+# Facts proved by the setting check, which join the definitions.
+SETTING_PREFIX = "setting_"
+_THEOREM_NAME = re.compile(r"^(?:theorem|lemma)\s+([^\s:({\[]+)", flags=re.M)
+
 
 class SketchStage:
 
-    def sketch(self, form: Formalization, replan_feedback: str = "") -> Sketch:
+    def _refutation(
+        self,
+        form: Formalization,
+        label: str,
+        statement: str,
+        name: str,
+        helpers: str,
+        proof: str,
+        **trace_fields,
+    ) -> tuple[str, list[str]]:
+        """Lean text proving the negation of `statement` (`theorem name
+        ...`, without proof) and the problems that reject it. It is checked
+        against the definitions alone, so that it rests on no unproved
+        lemma, and must compile with the standard axioms only."""
+        refuted = f"{name}_refuted"
+        text = "\n\n".join(
+            filter(
+                None,
+                [
+                    helpers,
+                    f"theorem {refuted} : ¬ (type_of% @{name}) := by\n"
+                    f"{indent(proof)}",
+                ],
+            )
+        )
+        problems = [
+            f"forbidden construct: {construct}"
+            for construct in forbidden_constructs(text)
+        ]
+        if problems:
+            return text, problems
+        result = self._check(
+            label,
+            self._standalone(form, f"{statement} := by sorry\n\n{text}")
+            + f"\n#print axioms {refuted}\n",
+            **trace_fields,
+        )
+        if not result.ok:
+            return text, [result.error_report()]
+        extra_axioms = nonstandard_axioms(result, refuted)
+        if extra_axioms != []:
+            return text, [
+                f"the refutation must depend on the standard axioms only; "
+                f"it depends on {extra_axioms}"
+            ]
+        return text, []
+
+    def check_setting(self, form: Formalization) -> str:
+        """Facts about the setting that the captain proves before planning:
+        Lean theorems named `setting_...`, compiled against the definitions
+        without `sorry`. Empty when the captain finds none."""
+        feedback, facts = "", ""
+        for repair in range(2):
+            reply = self._captain(
+                prompts.SETTING_CHECK_TEMPLATE.format(
+                    definitions=form.definitions,
+                    preamble=form.preamble,
+                    signature=form.signature,
+                    informal_proof=self.row["informal_proof"],
+                    feedback=feedback,
+                ),
+                phase=f"setting{repair}",
+            )
+            facts = drop_imports(extract_tag(reply, "facts"))
+            if not facts:
+                break
+            names = _THEOREM_NAME.findall(facts)
+            problems = [
+                f"forbidden construct: {construct}"
+                for construct in forbidden_constructs(facts)
+            ]
+            problems += [
+                f"`{name}` must be named `{SETTING_PREFIX}...`"
+                for name in names
+                if not name.startswith(SETTING_PREFIX)
+            ]
+            if not names:
+                problems.append("<facts> holds no theorem")
+            if not problems:
+                result = self._check(
+                    "setting",
+                    self._standalone(form, facts)
+                    + "".join(f"\n#print axioms {name}" for name in names)
+                    + "\n",
+                    repair=repair,
+                )
+                extra_axioms = sorted(
+                    {
+                        axiom
+                        for name in names
+                        for axiom in nonstandard_axioms(result, name) or []
+                    }
+                )
+                if result.ok and not extra_axioms:
+                    logger.info(f"setting facts proved: {names}")
+                    break
+                problems.append(
+                    result.error_report()
+                    if not result.ok
+                    else f"the facts depend on {extra_axioms}"
+                )
+            logger.info(f"setting check repair {repair}: {problems[0][:200]}")
+            feedback = prompts.SETTING_CHECK_REPAIR_TEMPLATE.format(
+                facts=facts, errors="\n".join(problems)[:6000]
+            )
+            facts = ""
+        self._decision("setting_checked", facts=facts)
+        return facts
+
+    def sketch(
+        self,
+        form: Formalization,
+        replan_feedback: str = "",
+        refuted: dict[str, str] | None = None,
+    ) -> Sketch:
+        """A compiled sketch, or a compiled refutation of the theorem.
+        `refuted` maps the normalized statements of refuted lemmas to their
+        names: a sketch may not state them again."""
         feedback = replan_feedback
         for repair in range(self.config.max_repairs + 1):
             reply = self._captain(
@@ -56,6 +185,34 @@ class SketchStage:
                 ),
                 phase=f"sketch{repair}",
             )
+            refutation = extract_tactics(reply, "refutation")
+            if refutation:
+                text, problems = self._refutation(
+                    form,
+                    "refutation",
+                    f"theorem {MAIN_NAME}{form.signature}",
+                    MAIN_NAME,
+                    drop_imports(extract_tag(reply, "helpers")),
+                    refutation,
+                    repair=repair,
+                )
+                if not problems:
+                    logger.info("the theorem is refuted")
+                    self._decision(
+                        "theorem_refuted", repair=repair, refutation=text
+                    )
+                    return Sketch([], "", refutation=text)
+                logger.info(f"refutation repair {repair}: {problems[0][:200]}")
+                self._decision(
+                    "sketch_rejected", repair=repair, problems=problems
+                )
+                feedback = (
+                    replan_feedback
+                    + prompts.REFUTATION_REPAIR_TEMPLATE.format(
+                        refutation=text, errors="\n".join(problems)[:6000]
+                    )
+                )
+                continue
             lemma_block = drop_imports(extract_tag(reply, "lemmas"))
             main_proof = extract_tactics(reply, "main_proof")
             lemmas = parse_lemmas(lemma_block)
@@ -82,6 +239,12 @@ class SketchStage:
                 )
             if not main_proof:
                 problems.append("empty main proof")
+            problems += [
+                f"lemma `{lemma.name}` states `{refuted[key]}`, which was "
+                f"refuted; it cannot be part of the sketch"
+                for lemma in lemmas
+                if (key := normalize(lemma.statement)) in (refuted or {})
+            ]
             if not problems:
                 candidate = Sketch(lemmas, main_proof)
                 result = self._check(
@@ -138,6 +301,11 @@ class SketchStage:
         replan interrupted before its new sketch was accepted."""
         proved = [lemma for lemma in sketch.lemmas if lemma.proved]
         failed = [lemma for lemma in sketch.lemmas if not lemma.proved]
+        refuted = {
+            normalize(lemma.statement): lemma.name
+            for lemma in failed
+            if lemma.refutation
+        }
         feedback = prompts.REPLAN_FEEDBACK_TEMPLATE.format(
             lemmas="\n\n".join(
                 f"{lemma.statement} := by sorry" for lemma in sketch.lemmas
@@ -150,8 +318,9 @@ class SketchStage:
             "replan_resumed" if resumed else "replan",
             proved=[lemma.name for lemma in proved],
             failed=[lemma.name for lemma in failed],
+            refuted=sorted(refuted.values()),
         )
-        new_sketch = self.sketch(form, feedback)
+        new_sketch = self.sketch(form, feedback, refuted)
         proofs = {normalize(lemma.statement): lemma for lemma in proved}
         kept = {
             lemma.name

@@ -30,6 +30,10 @@ class ResumeState:
     replan_pending: bool = (
         False  # a replan began but no new sketch was accepted
     )
+    setting_checked: bool = False
+    setting_facts: str = ""  # proved facts appended to the definitions
+    # Compiled refutation per (lemma name, statement).
+    refutations: dict[tuple[str, str], str] = field(default_factory=dict)
     lean_checks_done: int = 0
     previous_status: str | None = None
     restored_steps: int = 0
@@ -169,6 +173,13 @@ def restore_state(document: dict) -> ResumeState:
                         + form.issues,
                     )
                 )
+        elif event == "setting_checked":
+            state.setting_checked = True
+            state.setting_facts = step["facts"]
+        elif event == "theorem_refuted":
+            state.sketch = Sketch([], "", refutation=step["refutation"])
+            statement_of = {}
+            state.replan_pending = False
         elif event == "sketch_accepted":
             lemmas = [
                 lemma
@@ -226,6 +237,8 @@ def restore_state(document: dict) -> ResumeState:
                 state.reviewed_at[key] = step["attempts"]
                 continue
             state.handed_back.add(key)
+            if step["action"] == "refute":
+                state.refutations[key] = step["refutation"]
             if step["action"] == "split":
                 position = state.sketch.lemmas.index(target)
                 for offset, statement in enumerate(
@@ -236,8 +249,11 @@ def restore_state(document: dict) -> ResumeState:
                         statement_of[lemma.name] = lemma.statement
                         names_seen.add(lemma.name)
         elif event == "replan":
-            state.replans_started += 1
+            # A replan that follows a refutation is not counted.
+            state.replans_started += not step.get("refuted")
             state.replan_pending = True
+    if state.setting_facts and state.formalization is not None:
+        state.formalization.definitions += "\n\n" + state.setting_facts
     if state.sketch is not None:
         present = {lemma.name for lemma in state.sketch.lemmas}
         for lemma in state.sketch.lemmas:
@@ -246,6 +262,7 @@ def restore_state(document: dict) -> ResumeState:
             lemma.handed_back = key in state.handed_back
             lemma.reviewed_at = state.reviewed_at.get(key, 0)
             lemma.knowledge = state.knowledge.get(lemma.name, "")
+            lemma.refutation = state.refutations.get(key, "")
             proof = state.proofs.get(normalize(lemma.statement))
             if proof:
                 lemma.helpers, lemma.proof = proof

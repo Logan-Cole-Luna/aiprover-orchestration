@@ -9,22 +9,35 @@ sketch, and summarize failed answers for the captain.
 import re
 
 from ..agents.aiprover import AIProverSample
-from ..lean.text import opened_namespaces, split_declarations, strip_comments
+from ..lean.text import (
+    heartbeat_option,
+    opened_namespaces,
+    split_declarations,
+    strip_comments,
+)
 
 # A failed sample as shown to the captain at a replan.
 MAX_ATTEMPT_TEXT = 6000
 MAX_ATTEMPT_ERRORS = 2000
 
 
+def scope(lean_text: str) -> str:
+    """The commands an answer's declarations may rely on, as a prefix scoped
+    to one declaration: its `open` commands and a raised heartbeat limit."""
+    opened = opened_namespaces(lean_text)
+    return (
+        f"open {' '.join(opened)} in\n" if opened else ""
+    ) + heartbeat_option(lean_text)
+
+
 def answer_helpers(
     blocks: list[tuple[str, str, str]],
     lemma_name: str,
     fixed_names: set[str],
-    opened: list[str],
+    prefix: str,
 ) -> list[str]:
     """The answer's own declarations other than the lemma and the fixed
-    context, each under the answer's `open` commands, which they may rely on."""
-    prefix = f"open {' '.join(opened)} in\n" if opened else ""
+    context, each under `prefix` (the answer's `scope`)."""
     return [
         prefix + text
         for kind, name, text in blocks
@@ -38,7 +51,7 @@ def wrapped_lemma_proof(
     """(helpers, tactic proof) of `lemma_name` that keeps the answer's own theorem.
 
     The answer's theorem is kept whole as the helper `alias`, under the
-    answer's `open` commands, and the lemma is proved from it by `apply`. This
+    answer's `scope`, and the lemma is proved from it by `apply`. This
     recovers proofs that use the answer's binder names or opened namespaces,
     which do not hold under the sketch's statement; Lean still checks the
     sketch's statement.
@@ -60,11 +73,9 @@ def wrapped_lemma_proof(
         target,
         count=1,
     )
-    opened = opened_namespaces(lean_text)
-    helpers = answer_helpers(blocks, lemma_name, fixed_names, opened)
-    helpers.append(
-        (f"open {' '.join(opened)} in\n" if opened else "") + renamed
-    )
+    prefix = scope(lean_text)
+    helpers = answer_helpers(blocks, lemma_name, fixed_names, prefix)
+    helpers.append(prefix + renamed)
     proof = (
         f"first\n  | exact {alias}\n  | (intros; apply {alias} <;> assumption)"
     )
@@ -77,7 +88,9 @@ def extract_lemma_proof(
     """(helpers, tactic proof) of `lemma_name` from an AIProver answer.
 
     Helpers are the answer's own declarations other than the lemma and the
-    fixed context. A term-mode proof is returned as an `exact` tactic.
+    fixed context. A term-mode proof is returned as an `exact` tactic. If the
+    answer raises the heartbeat limit, the helpers end with that option, so
+    it applies to the lemma, which every use places directly after them.
     """
     blocks = split_declarations(lean_text)
     target = next(
@@ -96,10 +109,9 @@ def extract_lemma_proof(
         proof = body[by_match.end() :].strip("\n")
     else:
         proof = "exact (" + body.strip() + ")"
-    helpers = answer_helpers(
-        blocks, lemma_name, fixed_names, opened_namespaces(lean_text)
-    )
-    return "\n\n".join(helpers), proof
+    helpers = answer_helpers(blocks, lemma_name, fixed_names, scope(lean_text))
+    option = heartbeat_option(lean_text).strip()
+    return "\n\n".join(filter(None, [*helpers, option])), proof
 
 
 def failed_attempt(

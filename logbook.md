@@ -319,6 +319,15 @@ Results
 
 ## Done
 
+- AIProver job inputs are isolated per submission
+  (`agents/aiprover.py`): the context, statement and hint files of a job
+  are written to a temporary directory of its own under
+  `temp/<run_id>/aiprover/`, removed once the CLI has copied them. Job
+  names are truncated to 60 characters, so lemmas of a run with a long id
+  share one name and cannot key these files. A job is resumed only if its
+  stored `context.lean` and `statement.lean` equal the lemma's current
+  ones; otherwise a new job is submitted.
+
 - Literature review `docs/lit_review/` (`lit_review.md`, `lit_review.xlsx`):
   30 related systems, feature matrix, gaps and ranked adoptions; MAESTRO,
   Paper2Lean and ToMAP (`docs/papers/`) read in full.
@@ -366,6 +375,68 @@ Results
 - Query server with run queue, live progress and Claude call budget.
 - Per-run model choice for orchestrator and subagent (Claude model and
   reasoning level, or AIProver trained/base) on the query server page.
+
+## 2026-10-13: Session policy
+
+- Decisions, from the session accounting of the first 332 run: hand back
+  after 2 failed jobs (`aiprover_handback_after`, was 3); Vista session
+  limit 3,600 s (was 5,400; no verified session of that run exceeded 75
+  min); at most 3 sessions per job (`aiprover_job_sessions`, new; jobs of
+  5 or more sessions proved 1 of 15 lemmas). The DGX keeps 10,800 s.
+- A session's answer is gated when the session ends
+  (`AIProverAgent.solve(accept=...)`); the first accepted answer cancels
+  the job's remaining sessions.
+- A raised `maxHeartbeats` in an answer is kept on its helpers and on the
+  lemma, capped at 400,000 (`lean.text.heartbeat_option`).
+- The queued runs (332, P versus NP) start with these settings.
+
+## 2026-10-13: Second run of problem 332
+
+- `srv_20261013_195822_OpenAIMath_332_MetricMarkovCotypeL1` queued from
+  scratch on group `main` with the settings of the first run (5 attempts
+  per lemma, 2 replans, 60 Claude calls, 30 hand-backs, captain phases)
+  and the session policy above, to measure the run on the current code (setting check, refute action,
+  uniform hand-back schedule, semantic Mathlib index, per-run accounting).
+  The first run's records stay in
+  `results/srv_20261009_010221_OpenAIMath_332_MetricMarkovCotypeL1/`.
+- The run uses the servers of groups `main` and `openai` (two requests of
+  2 nodes). The `openai` request is held outside the worker's idle release
+  and is cancelled by hand when the run ends.
+
+## 2026-10-13: Upper-bound test on an open problem
+
+- `data/open_problems.jsonl`: P versus NP, stated in natural language
+  ($\mathsf{P}\ne\mathsf{NP}$ over Turing machines; the formalization
+  defines both classes, which Mathlib lacks). No proof is supplied.
+- Queued as `srv_20261013_184750_Open_P_vs_NP` on group `open` (Vista)
+  with the budgets of the other runs (5 attempts per lemma, 2 replans, 60
+  Claude calls, 30 hand-backs, session limit 3,600 s), setting check and
+  refute action enabled.
+
+## 2026-10-13: Refutation and setting check
+
+- Refute action (`docs/ideas.md` 14; `docs/orchestration.md` 2.3, 3.2). A
+  statement counts as false only when Lean accepts a proof of its negation,
+  `theorem <name>_refuted : ¬ (type_of% @<name>)`, against the definitions
+  alone and with the standard axioms (`SketchStage._refutation`). At a
+  hand-back (`<refute>`) the lemma is marked refuted, no further job or
+  hand-back starts, and the prove phase ends in a replan that lists the
+  refutation, may not state the lemma again and is not counted against
+  `max_replans`. In place of a sketch (`<refutation>`) the theorem is
+  refuted and the run ends with status `disproved`
+  (`<slug>_refutation.lean`).
+- Setting check (`setting_check`, default on): before the first sketch the
+  captain proves facts about the setting (contradictory hypotheses,
+  degenerate structures, small cases) as theorems `setting_...`; the
+  compiled facts are appended to the definitions (`setting_checked`).
+- Decision: facts join the definitions rather than the sketch, so that
+  solvers, hand-backs, replans and the final modules see them without a
+  second mechanism; the target statement is unchanged.
+- Decision: a refutation is checked without the other lemmas of the
+  sketch, since unproved lemmas may themselves be false.
+- Checked against Lean with recorded replies
+  (`temp/refute_test/test_refute.py`, 14 cases: accepted and rejected
+  refutations of lemmas and of the theorem, setting facts, resume).
 
 ## 2026-10-13: Run records of the proved OpenAI math problems
 
