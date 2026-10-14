@@ -100,6 +100,30 @@ def file_scoped(preamble: str) -> str:
     )
 
 
+# Lean's default `maxHeartbeats`, and the highest limit kept from an answer:
+# a proof that needs more is rejected, which bounds the cost of later builds.
+DEFAULT_HEARTBEATS = 200000
+MAX_HEARTBEATS = 400000
+
+
+def heartbeat_option(lean_text: str) -> str:
+    """`set_option maxHeartbeats N in` (with a newline) if `lean_text` raises
+    the limit above Lean's default, capped at MAX_HEARTBEATS; else empty. The
+    limit 0 (none) counts as the cap."""
+    limits = [
+        int(limit) or MAX_HEARTBEATS
+        for limit in re.findall(
+            r"^\s*set_option\s+maxHeartbeats\s+(\d+)",
+            strip_comments(lean_text),
+            re.M,
+        )
+    ]
+    limit = min(MAX_HEARTBEATS, max(limits, default=0))
+    if limit <= DEFAULT_HEARTBEATS:
+        return ""
+    return f"set_option maxHeartbeats {limit} in\n"
+
+
 def strip_leading_by(tactics: str) -> str:
     """Remove a leading `by`: tactic blocks are spliced after `:= by`."""
     return re.sub(r"^\s*by\b[ \t]*\n?", "", tactics)
