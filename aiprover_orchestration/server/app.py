@@ -3,14 +3,15 @@
 Start (single process; the job worker lives in it):
     uvicorn aiprover_orchestration.server.app:app --host 0.0.0.0 --port 8443
 
-Users authenticate with a bearer token from `configs/server/tokens.json`
-(`{"<token>": "<user name>"}`), sent as `Authorization: Bearer <token>` or
-as the `token` cookie that `POST /api/login` sets for the web page.
-With `QUERY_SERVER_AUTH=off` in the environment, no token is required and
-every visitor sees and may cancel every run (trusted testing only).
+Access is open by default: the server is run by its own users, no token
+is required, submissions are queued without approval, and every visitor
+sees and may cancel every run.
 
-A submission awaits approval; any token holder approves or rejects it,
-whether or not tokens are required for the other operations.
+With `QUERY_SERVER_AUTH=on` in the environment, users authenticate with a
+bearer token from `configs/server/tokens.json` (`{"<token>": "<user
+name>"}`), sent as `Authorization: Bearer <token>` or as the `token` cookie
+that `POST /api/login` sets for the web page, and a submission awaits
+approval by a token holder.
 """
 
 import asyncio
@@ -55,7 +56,7 @@ from .jobs import (
 from .vista import control_master_running
 
 TOKENS = CONFIG_DIR / "server" / "tokens.json"
-AUTH_REQUIRED = os.environ.get("QUERY_SERVER_AUTH", "on") != "off"
+AUTH_REQUIRED = os.environ.get("QUERY_SERVER_AUTH", "off") == "on"
 GUEST = "guest"
 INDEX_PAGE = Path(__file__).parent / "static" / "index.html"
 MAX_OPEN_JOBS_PER_USER = 3
@@ -219,7 +220,7 @@ def me(request: Request, user: str = Depends(current_user)) -> dict:
     return {
         "user": user,
         "auth_required": AUTH_REQUIRED,
-        "approver": token_user(request) is not None,
+        "approver": AUTH_REQUIRED and token_user(request) is not None,
     }
 
 
@@ -239,6 +240,8 @@ def health(user: str = Depends(current_user)) -> dict:
     running = store.in_states("running", "cancelling")
     groups = {}
     for name, group in vista.GPU_GROUPS.items():
+        if group.serverless:
+            continue
         endpoint_up, endpoint_message = endpoint_status(
             bring_up=False, group=group
         )
@@ -265,6 +268,8 @@ def health(user: str = Depends(current_user)) -> dict:
     # A group whose own server is down is served while a server it
     # borrows answers.
     for name, group in vista.GPU_GROUPS.items():
+        if group.serverless:
+            continue
         lenders = [
             lender for lender in group.borrows if groups[lender]["endpoint_up"]
         ]
@@ -363,6 +368,14 @@ def submit(body: Submission, user: str = Depends(current_user)) -> dict:
         )
     except ValueError as error:
         raise HTTPException(400, str(error))
+    if vista.GPU_GROUPS[body.gpu_group].serverless and (
+        models.checkpoint_names(selection)
+    ):
+        raise HTTPException(
+            400,
+            f"group {body.gpu_group!r} has no model server: every role, "
+            "including the subagent, must use Claude or a hosted model",
+        )
 
     if body.uuid:
         row = read_dataset().get(body.uuid)
@@ -408,14 +421,14 @@ def submit(body: Submission, user: str = Depends(current_user)) -> dict:
             "uuid": uuid,
             "title": title,
             "dataset": str(dataset),
-            "state": "awaiting_approval",
+            "state": "awaiting_approval" if AUTH_REQUIRED else "queued",
             "submitted": time.time(),
             "agents": json.dumps(selection),
             "options": json.dumps(options) if options else None,
             "gpu_group": body.gpu_group,
         }
     )
-    return {"run_id": run_id, "state": "awaiting_approval"}
+    return {"run_id": run_id, "state": store.get(run_id)["state"]}
 
 
 def library_options(body: Submission, run_id: str) -> dict:
