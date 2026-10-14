@@ -415,6 +415,7 @@ const EVENT_TEXT = {
   audit_verdict: "Audit verdict",
   setting_checked: "Setting checked",
   theorem_refuted: "Theorem refuted",
+  sketch_judged: "Sketch judged",
   sketch_accepted: "Sketch accepted",
   sketch_rejected: "Sketch rejected",
   lemma_proved: "Lemma proved",

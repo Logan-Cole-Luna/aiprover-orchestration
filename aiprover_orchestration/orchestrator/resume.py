@@ -253,7 +253,7 @@ def restore_state(document: dict) -> ResumeState:
             state.replans_started += not step.get("refuted")
             state.replan_pending = True
     if state.setting_facts and state.formalization is not None:
-        state.formalization.definitions += "\n\n" + state.setting_facts
+        state.formalization.add_setting_facts(state.setting_facts)
     if state.sketch is not None:
         present = {lemma.name for lemma in state.sketch.lemmas}
         for lemma in state.sketch.lemmas:

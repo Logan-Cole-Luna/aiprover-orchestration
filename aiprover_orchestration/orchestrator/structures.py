@@ -21,6 +21,14 @@ class Formalization:
     def statement(self) -> str:
         return f"theorem {self.theorem_name}{self.signature}:= by sorry"
 
+    def add_setting_facts(self, facts: str) -> None:
+        """Append facts proved by the setting check to the definitions. The
+        facts were compiled after the preamble and may rely on its `open`
+        commands, so they join the definitions under it."""
+        self.definitions = "\n\n".join(
+            filter(None, [self.definitions, self.preamble, facts])
+        )
+
 
 @dataclass
 class Lemma:

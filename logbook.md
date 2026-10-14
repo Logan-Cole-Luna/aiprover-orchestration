@@ -94,6 +94,9 @@ Results
 
 - Runs on the OpenAI math bank (`data/openai_math.jsonl`), starting with
   `OpenAIMath_332_MetricMarkovCotypeL1`.
+- `OpenAIMath_004_HilbertTenthOverQ`: statement first, then the Section 2
+  reduction; hypotheses (I3) and (I4) are elementary and can be run as
+  separate problems.
 - Orchestrator runs read and extend the theorem library in place of the
   single-file libraries of `libraries/`.
 - On SIGTERM the orchestrator's main thread exits while its solver threads
@@ -245,6 +248,12 @@ Results
   048 (statement only) and 259 (full proof, stretch), ranked by
   significance and Mathlib feasibility among the 130 families without a
   formalization (`docs/openai_math_problems.md`).
+- Second selection by significance in public and expert reception: 004
+  (Hilbert's tenth problem over Q; statement and Section 2 reduction
+  conditional on the inputs of Sections 3-6) and 109 (integer
+  multiplication below n log n; statement and audit). Hodge for CM abelian
+  varieties (032) and BSD (002, 006) are excluded: their statements need
+  definitions absent from Mathlib.
 - Claude roles use the Anthropic API with a per-deployment key; hosted
   open-weights and OpenAI models use the OpenAI-compatible backend.
 - Proxy reply cap below the harness client's read timeout (16,384 tokens
@@ -338,7 +347,7 @@ Results
 - Query server page: Vista server jobs as a table per GPU group (state,
   actual or Slurm-estimated start, elapsed and limit, nodes, pending
   reason, worker status), from `squeue -o %S`.
-- OpenAI math problem bank `data/openai_math.jsonl` (five problems) and
+- OpenAI math problem bank `data/openai_math.jsonl` (seven problems) and
   reference `docs/openai_math_problems.md`.
 - `docs/orchestration.md` describes the whole system: deployment, GPU
   groups and model serving, run lifecycle, AIProver sessions and the
@@ -375,6 +384,55 @@ Results
 - Query server with run queue, live progress and Claude call budget.
 - Per-run model choice for orchestrator and subagent (Claude model and
   reasoning level, or AIProver trained/base) on the query server page.
+
+## 2026-10-14: OpenAI math problems 004 and 109
+
+- openai/math unchanged in content since `fd4aeeb` (one workflow commit,
+  `1581d4c`); 004 and 109 remain without formalization.
+- `OpenAIMath_004_HilbertTenthOverQ`: hypotheses (I0)
+  Davis-Putnam-Robinson-Matiyasevich, (I1) rank one of
+  $E: y^2=x^3-d^2x$ over $\mathbb Q(\sqrt2)$, $d=75-53\sqrt2$, (I2)
+  formal-logarithm estimates, (I3) five-point height estimate, (I4)
+  contact representations, (I5) pole parity, (I6) canonical height; the
+  proof is Section 2 of the source (48 kB of TeX).
+- `OpenAIMath_109_IntegerMultiplicationBelowNLogN`: statement for one
+  multitape Turing machine (`Turing.FinTM2`, `TM2ComputableInTime` in the
+  pinned Mathlib) with time $O(n(\lg n)^{1-\kappa})$, $\kappa=2^{-182}$;
+  the proof is the source outline.
+
+## 2026-10-14: Sketches for problems without a known proof
+
+- Issue: on P versus NP the captain submitted one lemma equivalent to the
+  theorem, with a main proof that only unpacked it, and stated that no
+  progress was made.
+- Decision: the sketch prompt requires an attempt when no proof is known:
+  a named approach, lemmas each strictly simpler than the theorem, and
+  conjectural lemmas allowed (tested by solvers, hand-backs and
+  refutation). The replan prompt asks for a changed approach rather than an
+  isolated equivalent lemma.
+- The P versus NP trace was rewound to before the sketch (backup in
+  `temp/trace_backup/`) and the run requeued; formalization, audit and
+  setting check are kept.
+- Its second sketch (P ⊆ P/poly and NP ⊄ P/poly) moved the difficulty into
+  a lemma stronger than the theorem. Added a sketch judge: a second model
+  (Sonnet, captain phase `judge`) checks each compiled sketch and returns
+  REVISE for a lemma equivalent to or stronger than the theorem, an open or
+  false lemma, a lemma that is not self-contained, or bundled steps; REVISE
+  is a repair round, and the last round accepts a compiled sketch
+  (`Config.sketch_judge`, default on). The run was rewound again and
+  requeued.
+
+## 2026-10-14: Setting facts and the preamble
+
+- Issue: setting facts are compiled after the formalization's preamble
+  (its `open` commands) but were appended to the definitions, which
+  precede it. For `OpenAIMath_004_HilbertTenthOverQ`, whose definitions
+  are in `namespace H10Q` and whose preamble is `open H10Q`, every sketch
+  failed on the same unknown identifier inside the facts, and the run
+  ended after the sketch repair budget.
+- Fix: `Formalization.add_setting_facts` appends the preamble and the facts
+  together (pipeline and resume). The run's last sketch compiles with it.
+  004 is requeued to resume from its trace on group `openai`.
 
 ## 2026-10-13: Session policy
 

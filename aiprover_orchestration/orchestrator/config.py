@@ -110,6 +110,9 @@ class Config:
     # hypotheses, degenerate structures); facts it proves join the
     # definitions.
     setting_check: bool = True
+    # A second model judges each compiled sketch; a REVISE verdict counts as a
+    # failed repair round, except in the last round.
+    sketch_judge: bool = True
     max_audit_rounds: int = 2  # formalization revisions after REVISE
     lean_parallel: int = 6
     lean_timeout: int = 300
