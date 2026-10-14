@@ -328,6 +328,17 @@ Results
 
 ## Done
 
+- Query server access is open by default: users run the server
+  themselves, so no token is needed and submissions are queued without
+  approval. Tokens, per-user visibility and approval remain available with
+  `QUERY_SERVER_AUTH=on` (`server/app.py`, `docs/server.md`).
+
+- GPU group `cpu` on the query server (`server/vista.py`): a group
+  without a model server, for runs whose roles all use Claude or hosted
+  models (for example Claude as captain and subagent). Submissions to it
+  that select AIProver for any role are rejected; its runs have their own
+  run slots and never wait for a Vista or DGX server.
+
 - AIProver job inputs are isolated per submission
   (`agents/aiprover.py`): the context, statement and hint files of a job
   are written to a temporary directory of its own under

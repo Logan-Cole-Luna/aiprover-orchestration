@@ -450,7 +450,7 @@ class Worker(threading.Thread):
                 # A run that needs no model server does not wait for
                 # another run's server.
                 candidate = self._serverless_job(name, queued)
-            elif not group.job_name:
+            elif not group.job_name and not group.serverless:
                 # A persistent server's runs wait until it answers, rather
                 # than failing on it.
                 endpoint_up, message = endpoint_status(False, group)

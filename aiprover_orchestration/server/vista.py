@@ -47,16 +47,20 @@ CHECKPOINTS = {
 @dataclass(frozen=True)
 class GpuGroup:
     """A group of runs sharing a model server. A group without a Slurm job
-    name uses a persistent server (the DGX), which is never submitted."""
+    name uses a persistent server (the DGX), which is never submitted; a
+    group without a solver config has no model server (CPU only)."""
 
     name: str
-    job_name: str  # Slurm job name of the group's server jobs
-    handoff: str  # file on Vista where the server job writes its node and port
-    tunnel_config: Path  # ssh-mode AIProver config: opens and probes the tunnel
-    solver_config: (
-        str  # AIProver config of the group's runs (through the proxy)
-    )
-    proxy_port: int  # reasoning proxy (server/reasoning_proxy.py)
+    # Slurm job name of the group's server jobs.
+    job_name: str = ""
+    # File on Vista where the server job writes its node and port.
+    handoff: str = ""
+    # ssh-mode AIProver config: opens and probes the tunnel.
+    tunnel_config: Path | None = None
+    # AIProver config of the group's runs (through the proxy).
+    solver_config: str = ""
+    # Reasoning proxy (server/reasoning_proxy.py).
+    proxy_port: int = 0
     # Groups whose model servers this group's runs also use: its reasoning
     # proxy pools their tunnels with its own (`--upstream`).
     borrows: tuple[str, ...] = ()
@@ -64,6 +68,10 @@ class GpuGroup:
     # where it is not known.
     gpu: str = ""
     gpus: int = 0
+
+    @property
+    def serverless(self) -> bool:
+        return not self.solver_config
 
     @property
     def endpoint(self) -> str:
@@ -117,6 +125,8 @@ GPU_GROUPS = {
         "configs/aiprover/dgx.toml",
         18566,
     ),
+    # Runs whose roles all use Claude or hosted models: no model server.
+    "cpu": GpuGroup("cpu"),
 }
 
 
