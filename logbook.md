@@ -400,6 +400,28 @@ Results
   pinned Mathlib) with time $O(n(\lg n)^{1-\kappa})$, $\kappa=2^{-182}$;
   the proof is the source outline.
 
+## 2026-10-14: Sketches for problems without a known proof
+
+- Issue: on P versus NP the captain submitted one lemma equivalent to the
+  theorem, with a main proof that only unpacked it, and stated that no
+  progress was made.
+- Decision: the sketch prompt requires an attempt when no proof is known:
+  a named approach, lemmas each strictly simpler than the theorem, and
+  conjectural lemmas allowed (tested by solvers, hand-backs and
+  refutation). The replan prompt asks for a changed approach rather than an
+  isolated equivalent lemma.
+- The P versus NP trace was rewound to before the sketch (backup in
+  `temp/trace_backup/`) and the run requeued; formalization, audit and
+  setting check are kept.
+- Its second sketch (P ⊆ P/poly and NP ⊄ P/poly) moved the difficulty into
+  a lemma stronger than the theorem. Added a sketch judge: a second model
+  (Sonnet, captain phase `judge`) checks each compiled sketch and returns
+  REVISE for a lemma equivalent to or stronger than the theorem, an open or
+  false lemma, a lemma that is not self-contained, or bundled steps; REVISE
+  is a repair round, and the last round accepts a compiled sketch
+  (`Config.sketch_judge`, default on). The run was rewound again and
+  requeued.
+
 ## 2026-10-14: Setting facts and the preamble
 
 - Issue: setting facts are compiled after the formalization's preamble
