@@ -295,7 +295,7 @@ class Orchestration(
                 with self._timed("sketch"):
                     facts = self.check_setting(form)
                 if facts:
-                    form.definitions += "\n\n" + facts
+                    form.add_setting_facts(facts)
             summary["formalization"] = asdict(form)
             replans_used = state.replans_started
             if state.sketch is None:
