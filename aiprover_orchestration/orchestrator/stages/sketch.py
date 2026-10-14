@@ -257,6 +257,25 @@ class SketchStage:
                         f"sketch compiles with {len(lemmas)} "
                         f"lemma(s): {names}"
                     )
+                    issues = self._judge_sketch(form, candidate, repair)
+                    if issues and repair < self.config.max_repairs:
+                        problems.append(
+                            "The sketch compiles, but a reviewer rejected "
+                            "its decomposition:\n" + issues
+                        )
+                        logger.info(f"sketch repair {repair}: judged REVISE")
+                        self._decision(
+                            "sketch_rejected", repair=repair, problems=problems
+                        )
+                        feedback = (
+                            replan_feedback
+                            + prompts.SKETCH_REPAIR_TEMPLATE.format(
+                                lemmas=lemma_block,
+                                main_proof=main_proof,
+                                errors="\n".join(problems),
+                            )
+                        )
+                        continue
                     self._decision(
                         "sketch_accepted",
                         repair=repair,
@@ -273,6 +292,36 @@ class SketchStage:
                 errors="\n".join(problems),
             )
         raise RuntimeError("sketch did not compile within the repair budget")
+
+    def _judge_sketch(
+        self, form: Formalization, sketch: Sketch, repair: int
+    ) -> str:
+        """A second model's objections to a compiled sketch's decomposition
+        (a lemma equivalent to or stronger than the theorem, an open or false
+        lemma, a lemma that is not self-contained or bundles several steps);
+        empty if it accepts the sketch or judging is off."""
+        if not self.config.sketch_judge:
+            return ""
+        reply = self._captain(
+            prompts.SKETCH_JUDGE_TEMPLATE.format(
+                signature=form.signature,
+                informal_proof=self.row["informal_proof"],
+                lemmas="\n\n".join(
+                    f"{lemma.statement} := by sorry" for lemma in sketch.lemmas
+                ),
+                main_proof=sketch.main_proof,
+            ),
+            phase=f"judge_sketch{repair}",
+        )
+        verdict = extract_tag(reply, "verdict").upper()
+        issues = extract_tag(reply, "issues")
+        self._decision(
+            "sketch_judged", repair=repair, verdict=verdict, issues=issues
+        )
+        logger.info(f"sketch judge {repair}: verdict {verdict}")
+        if verdict.startswith("ACCEPT"):
+            return ""
+        return issues or "verdict: " + (verdict or "none given")
 
     def _sketch_body(
         self, form: Formalization, sketch: Sketch, use_proofs: bool = False
