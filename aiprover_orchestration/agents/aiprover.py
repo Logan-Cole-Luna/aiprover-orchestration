@@ -322,6 +322,45 @@ class AIProverAgent(Agent):
             )
         )
 
+    @staticmethod
+    def _sample(summary: dict, position: int) -> AIProverSample:
+        """A session's summary, as the harness wrote it, with its answer,
+        transcript and reasoning read from the session's directory."""
+        lean_file = summary.get("lean_file")
+        directory = sample_dir(lean_file, summary.get("sample"))
+        return AIProverSample(
+            index=summary.get("sample", position),
+            status=summary.get("status", "unknown"),
+            lean=(
+                Path(lean_file).read_text(errors="replace") if lean_file else ""
+            ),
+            turns=summary.get("turns"),
+            tool_calls=summary.get("tool_calls"),
+            elapsed_sec=summary.get("elapsed_sec"),
+            ending=session_ending(summary),
+            check=lean_check_summary(summary.get("check")),
+            session=read_session(directory),
+            reasoning=read_reasoning(directory),
+            problems=list((summary.get("check") or {}).get("problems") or []),
+        )
+
+    def _finished(self, job: str, offered: set[int]) -> list[AIProverSample]:
+        """Sessions of the running `job` that finished with an answer since
+        the last call; their indices are added to `offered`."""
+        samples = []
+        sessions = self.work_root / "jobs" / job
+        for path in sorted(sessions.glob("s*/summary.json")):
+            try:
+                summary = json.loads(path.read_text())
+            except (OSError, json.JSONDecodeError):
+                continue
+            index = summary.get("sample")
+            if index in offered or not summary.get("lean_file"):
+                continue
+            offered.add(index)
+            samples.append(self._sample(summary, len(offered)))
+        return samples
+
     def solve(
         self,
         *,
@@ -335,6 +374,7 @@ class AIProverAgent(Agent):
         resume_job: str | None = None,
         on_start: Callable[[str], None] | None = None,
         hint: str = "",
+        accept: Callable[[AIProverSample], bool] | None = None,
     ) -> AIProverJob:
         """Run one AIProver job and return its samples (blocks until done).
 
@@ -344,7 +384,9 @@ class AIProverAgent(Agent):
         submitted. `on_start` receives the job id once the job runs, so that an
         interruption can still find it. If the installed CLI cannot resume, a
         new job is submitted instead. `hint` is guidance added to a new job's
-        problem (the harness's `--hint-file`)."""
+        problem (the harness's `--hint-file`). `accept` is offered each
+        session's answer once as the session finishes; when it returns True
+        the job's remaining sessions are cancelled."""
         if STOPPING.is_set():
             raise Terminated
         work_dir.mkdir(parents=True, exist_ok=True)
@@ -442,6 +484,7 @@ class AIProverAgent(Agent):
             )
         if on_start:
             on_start(job)
+        offered: set[int] = set()
         try:
             while (
                 not STOPPING.is_set()
@@ -454,7 +497,13 @@ class AIProverAgent(Agent):
                 ).returncode
                 == 3
             ):
-                pass
+                if accept and any(
+                    accept(sample)
+                    for sample in self._finished(job, offered)
+                ):
+                    # The settled job reports the sessions cut off here as
+                    # cancelled.
+                    self._cli("cancel", job, timeout=60)
             if STOPPING.is_set():
                 raise Terminated
         except BaseException:
@@ -471,31 +520,8 @@ class AIProverAgent(Agent):
                 time.time() - start,
                 error=(result.stderr or result.stdout)[-1000:],
             )
-        job_samples = []
-        for sample in payload.get("samples", []):
-            lean_file = sample.get("lean_file")
-            lean = (
-                Path(lean_file).read_text(errors="replace") if lean_file else ""
-            )
-            job_samples.append(
-                AIProverSample(
-                    index=sample.get("sample", len(job_samples)),
-                    status=sample.get("status", "unknown"),
-                    lean=lean,
-                    turns=sample.get("turns"),
-                    tool_calls=sample.get("tool_calls"),
-                    elapsed_sec=sample.get("elapsed_sec"),
-                    ending=session_ending(sample),
-                    check=lean_check_summary(sample.get("check")),
-                    session=read_session(
-                        sample_dir(lean_file, sample.get("sample"))
-                    ),
-                    reasoning=read_reasoning(
-                        sample_dir(lean_file, sample.get("sample"))
-                    ),
-                    problems=list(
-                        (sample.get("check") or {}).get("problems") or []
-                    ),
-                )
-            )
+        job_samples = [
+            self._sample(sample, position)
+            for position, sample in enumerate(payload.get("samples", []))
+        ]
         return AIProverJob(job, rendered, job_samples, time.time() - start)

@@ -117,7 +117,7 @@ harness -> reasoning proxy (127.0.0.1:18575) -> SSH tunnel -> server
 `--via` is required. `--via` takes a host name or an alias of
 `~/.ssh/config`, whose `User` and key then apply. `--timeout SEC` and
 `--max-turns N` set the budget of one AIProver session (default 5400 s,
-200 turns); a slower server needs a longer clock.
+200 turns; served runs use 3600 s); a slower server needs a longer clock.
 
 SSH routes authenticate once: `orchestration_plugin/setup.sh connect` opens
 an SSH master connection and asks for what the host requires; the AIProver

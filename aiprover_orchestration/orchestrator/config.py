@@ -124,6 +124,8 @@ class Config:
     # `workers` per job.
     # Each job takes a share weighted by its lemma's failed attempts.
     aiprover_session_slots: int = 0
+    # Sessions of one job, including those added while it runs; 0 = no limit.
+    aiprover_job_sessions: int = 0
     # Completed failed jobs after which a lemma is handed back to the captain
     # (prove it, split it, restate it, or retry); 0 = never.
     aiprover_handback_after: int = 0
