@@ -1,5 +1,5 @@
 
-A previous sketch was attempted. Solvers proved some lemmas and failed on others. Revise the sketch: keep proved lemmas verbatim if they are still useful (they will not be re-proved), and replace or split the failed ones into easier steps. Each failed lemma lists the solvers' last attempts, most complete first, with Lean's errors: they show where the proof stalled. A step left as `sorry` or a `have` that does not compile can become a lemma of its own, and a statement that resists proof may need to be restated.
+A previous sketch was attempted. Solvers proved some lemmas and failed on others. Revise the sketch: keep proved lemmas verbatim if they are still useful (they will not be re-proved), and replace or split the failed ones into easier steps. Each failed lemma lists the solvers' last attempts, most complete first, with Lean's errors: they show where the proof stalled. A step left as `sorry` or a `have` that does not compile can become a lemma of its own, and a statement that resists proof may need to be restated. A failed lemma marked FALSE was refuted in Lean: do not state it again, and plan around what its refutation shows; if it shows the theorem itself to be false, refute the theorem.
 
 <previous_lemmas>
 {lemmas}

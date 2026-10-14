@@ -37,9 +37,13 @@ ALGORITHM = [
     {
         "stage": "sketch",
         "actor": "captain (orchestrator model)",
-        "description": "Decompose the proof: lemmas stated in full and left as "
-        "`sorry`, plus a sorry-free proof of `solution` from "
-        "them. The sketch must compile.",
+        "description": "Test the setting first: facts the captain proves about "
+        "it (contradictory hypotheses, a degenerate structure) "
+        "join the definitions. Then decompose the proof: lemmas "
+        "stated in full and left as `sorry`, plus a sorry-free "
+        "proof of `solution` from them. The sketch must compile. "
+        "A theorem the captain judges false is refuted instead, "
+        "by a compiled proof of its negation.",
     },
     {
         "stage": "prove",
@@ -52,7 +56,8 @@ ALGORITHM = [
     {
         "stage": "sketch",
         "actor": "captain (orchestrator model)",
-        "description": "If a lemma is not proved within budget, the captain "
+        "description": "If a lemma is not proved within budget or is refuted "
+        "by a compiled proof of its negation, the captain "
         "revises the sketch; proved lemmas with unchanged "
         "statements are reused.",
     },
@@ -98,7 +103,13 @@ class Config:
     agents: dict = field(default_factory=dict)
     workers: int = 4  # parallel solver chains per lemma
     max_repairs: int = 4  # Lean-error feedback rounds per chain
-    max_replans: int = 2  # sketch revisions after failed lemmas
+    # Sketch revisions after failed lemmas; a revision that follows the
+    # refutation of a lemma is not counted.
+    max_replans: int = 2
+    # The captain tests the setting before planning (contradictory
+    # hypotheses, degenerate structures); facts it proves join the
+    # definitions.
+    setting_check: bool = True
     max_audit_rounds: int = 2  # formalization revisions after REVISE
     lean_parallel: int = 6
     lean_timeout: int = 300
@@ -113,6 +124,8 @@ class Config:
     # `workers` per job.
     # Each job takes a share weighted by its lemma's failed attempts.
     aiprover_session_slots: int = 0
+    # Sessions of one job, including those added while it runs; 0 = no limit.
+    aiprover_job_sessions: int = 0
     # Completed failed jobs after which a lemma is handed back to the captain
     # (prove it, split it, restate it, or retry); 0 = never.
     aiprover_handback_after: int = 0

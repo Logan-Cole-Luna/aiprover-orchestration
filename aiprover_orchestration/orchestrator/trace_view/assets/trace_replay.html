@@ -612,7 +612,7 @@ function nodeState(node, t) {
   if (node.handback !== undefined && t >= node.replied) {
     const action = node.handback?.action;
     const line = { proof: "captain's proof kept ✓", split: "split; proof kept ✓", restate: "lemma restated",
-      retry: "retry unchanged", rejected: "reply rejected by Lean" }[action] || "reply received";
+      refute: "lemma refuted in Lean ✓", retry: "retry unchanged", rejected: "reply rejected by Lean" }[action] || "reply received";
     return { phase: "done", status: action === "proof" || action === "split" ? "ok" : action === "rejected" ? "fail" : "neutral", line };
   }
   if (t < node.replied) {
