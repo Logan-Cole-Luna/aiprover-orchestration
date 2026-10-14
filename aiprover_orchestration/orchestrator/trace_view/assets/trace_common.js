@@ -413,6 +413,8 @@ const EVENT_TEXT = {
   formalization_compiled: "Formalization compiles",
   formalization_rejected: "Formalization rejected",
   audit_verdict: "Audit verdict",
+  setting_checked: "Setting checked",
+  theorem_refuted: "Theorem refuted",
   sketch_accepted: "Sketch accepted",
   sketch_rejected: "Sketch rejected",
   lemma_proved: "Lemma proved",

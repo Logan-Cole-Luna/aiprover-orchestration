@@ -35,12 +35,16 @@ class Lemma:
     handed_back: bool = False  # handed back to the captain for this statement
     reviewed_at: int = 0  # attempts when the captain last asked for a retry
     knowledge: str = ""  # notes carried to the next jobs (knowledge.py)
+    refutation: str = ""  # compiled Lean proof of the statement's negation
 
 
 @dataclass
 class Sketch:
     lemmas: list[Lemma]
     main_proof: str
+    # Compiled Lean proof that the theorem itself is false; such a sketch
+    # has no lemmas and ends the run as `disproved`.
+    refutation: str = ""
 
 
 # ── Parsing ────────────────────────────────────────────────────────────────
@@ -151,6 +155,12 @@ def dependency_order(lemmas: list[Lemma]) -> list[Lemma]:
 
 def failed_lemma_text(lemma: Lemma) -> str:
     """A failed lemma as listed in the replan and hand-back prompts."""
+    if lemma.refutation:
+        return (
+            f"{lemma.statement}\nThis lemma is FALSE. Lean accepted this "
+            f"proof of its negation:\n<refutation>\n{lemma.refutation}\n"
+            f"</refutation>"
+        )
     parts = [
         lemma.statement,
         f"Last Lean errors:\n{lemma.last_errors or '(none recorded)'}",

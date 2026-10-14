@@ -590,6 +590,7 @@ EXPORT_FOLDERS = {
 }
 STATUS_TEXT = {
     "proved": "proved; the Lean proof compiles and is verified",
+    "disproved": "disproved; Lean accepts a proof of the statement's negation",
     "lemmas_unproved": "not proved; some lemmas have no Lean proof",
     "failed": "not proved; the run stopped before a proof",
 }

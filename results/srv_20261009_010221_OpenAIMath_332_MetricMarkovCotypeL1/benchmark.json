@@ -1,0 +1,372 @@
+{
+ "run_id": "srv_20261009_010221_OpenAIMath_332_MetricMarkovCotypeL1",
+ "status": "proved",
+ "wall_seconds": 155331.8,
+ "phase_seconds": {
+  "sketch": 626.6,
+  "prove": 162525.3,
+  "assemble": 280.3,
+  "review": 44.5,
+  "report": 1399.3,
+  "informal": 4493.1
+ },
+ "usage_by_model": {
+  "claude-opus-5-5": {
+   "output_tokens": 510099,
+   "cost_usd": 21.782405400000002
+  },
+  "claude-sonnet-5-5": {
+   "output_tokens": 1008,
+   "cost_usd": 0.0153172
+  }
+ },
+ "costs": {
+  "hosted": [
+   {
+    "role": "captain",
+    "model": "claude-opus-5-5",
+    "purpose": "handback",
+    "calls": 21,
+    "output_tokens": 165321,
+    "cost_usd": 8.567867399999999
+   },
+   {
+    "role": "writer",
+    "model": "claude-opus-5-5",
+    "purpose": "report_write",
+    "calls": 2,
+    "output_tokens": 108851,
+    "cost_usd": 3.677836
+   },
+   {
+    "role": "captain",
+    "model": "claude-opus-5-5",
+    "purpose": "sketch",
+    "calls": 2,
+    "output_tokens": 69394,
+    "cost_usd": 1.9994368
+   },
+   {
+    "role": "writer",
+    "model": "claude-opus-5-5",
+    "purpose": "informal_write",
+    "calls": 1,
+    "output_tokens": 55709,
+    "cost_usd": 1.85506
+   },
+   {
+    "role": "reviewer",
+    "model": "claude-opus-5-5",
+    "purpose": "report_check",
+    "calls": 1,
+    "output_tokens": 5949,
+    "cost_usd": 1.0894426
+   },
+   {
+    "role": "reviewer",
+    "model": "claude-opus-5-5",
+    "purpose": "informal_check",
+    "calls": 1,
+    "output_tokens": 6659,
+    "cost_usd": 1.0019066
+   },
+   {
+    "role": "writer",
+    "model": "claude-opus-5-5",
+    "purpose": "report_revise",
+    "calls": 1,
+    "output_tokens": 31323,
+    "cost_usd": 0.8805319999999999
+   },
+   {
+    "role": "writer",
+    "model": "claude-opus-5-5",
+    "purpose": "report_repair",
+    "calls": 1,
+    "output_tokens": 30908,
+    "cost_usd": 0.868392
+   },
+   {
+    "role": "writer",
+    "model": "claude-opus-5-5",
+    "purpose": "informal_revise",
+    "calls": 1,
+    "output_tokens": 29271,
+    "cost_usd": 0.809252
+   },
+   {
+    "role": "reviewer",
+    "model": "claude-opus-5-5",
+    "purpose": "review",
+    "calls": 1,
+    "output_tokens": 3439,
+    "cost_usd": 0.8078919999999999
+   },
+   {
+    "role": "captain",
+    "model": "claude-opus-5-5",
+    "purpose": "formalize",
+    "calls": 1,
+    "output_tokens": 2370,
+    "cost_usd": 0.119856
+   },
+   {
+    "role": "captain",
+    "model": "claude-opus-5-5",
+    "purpose": "judge",
+    "calls": 1,
+    "output_tokens": 905,
+    "cost_usd": 0.104932
+   },
+   {
+    "role": "auditor",
+    "model": "claude-sonnet-5-5",
+    "purpose": "audit",
+    "calls": 1,
+    "output_tokens": 1008,
+    "cost_usd": 0.0153172
+   }
+  ],
+  "hosted_cost_usd": 21.7977,
+  "solver": {
+   "model": "aiprover",
+   "jobs": 119,
+   "sessions": 298,
+   "session_hours": 378.86,
+   "gpu": "NVIDIA GH200 (H100, 96 GB)",
+   "gpus_per_server": 2,
+   "sessions_per_server": 8,
+   "gpu_hours": 94.72
+  }
+ },
+ "server": {
+  "sampled_seconds": 172795.7,
+  "requests": 205109.0,
+  "prompt_tokens": 18467452279.0,
+  "generation_tokens": 169223068.0,
+  "generation_tokens_per_second": 979.325,
+  "requests_running": {
+   "count": 5566,
+   "mean": 14.652,
+   "median": 14.0,
+   "p90": 26.0,
+   "max": 39.0
+  },
+  "requests_waiting": {
+   "count": 5566,
+   "mean": 0.039,
+   "median": 0.0,
+   "p90": 0.0,
+   "max": 9.0
+  },
+  "kv_cache_usage": {
+   "count": 5566,
+   "mean": 0.541,
+   "median": 0.497,
+   "p90": 0.94,
+   "max": 1.644
+  },
+  "mean_context_tokens": 89433.253,
+  "mean_generation_tokens": 802.542,
+  "mean_queue_seconds": 0.056,
+  "mean_time_to_first_token_seconds": 0.699,
+  "mean_inter_token_seconds": 0.039,
+  "mean_request_seconds": 31.233,
+  "preemptions": 2.0,
+  "prefix_cache_hit_rate": 0.979,
+  "spec_acceptance_rate": null,
+  "spec_tokens_per_step": null
+ },
+ "sessions": {
+  "sessions": 314,
+  "jobs": 119,
+  "session_seconds": {
+   "count": 298,
+   "mean": 4576.89,
+   "median": 5406.2,
+   "p90": 5406.3,
+   "max": 5406.8
+  },
+  "turns_per_session": {
+   "count": 120,
+   "mean": 139.117,
+   "median": 193.0,
+   "p90": 214,
+   "max": 236
+  },
+  "tool_calls_per_session": {
+   "count": 314,
+   "mean": 51.025,
+   "median": 0.0,
+   "p90": 203,
+   "max": 232
+  },
+  "tool_calls_by_name": {
+   "read_file": 2309,
+   "bash": 1423,
+   "write_file": 1036,
+   "m_lean_diagnostic_messages": 2770,
+   "m_lean_hover_info": 174,
+   "m_lean_file_outline": 17,
+   "m_lean_goal": 844,
+   "edit": 2924,
+   "m_lean_local_search": 480,
+   "m_lean_run_code": 1640,
+   "m_lean_multi_attempt": 155,
+   "m_lean_term_goal": 14,
+   "grep": 1647,
+   "m_lean_verify": 29,
+   "task": 13,
+   "m_lean_loogle": 86,
+   "todo": 74,
+   "(malformed call)": 5,
+   "m_lean_state_search": 4,
+   "m_lean_sync": 1,
+   "search_replace": 4,
+   "lean_search": 1,
+   "m_lean_completions": 3,
+   "m_lean_leansearch": 16,
+   "gzip": 1,
+   "search": 1,
+   "m_lean_declaration_file": 4,
+   "m_lean_coe": 1,
+   "m_lean_build": 10,
+   "skill": 2,
+   "lean_goal": 8,
+   "lean_hover_info": 2,
+   "m_lean_multiply_attempt": 1,
+   "lean_local_search": 3,
+   "lean_run_code": 27,
+   "m_lean_util_goal": 1,
+   "m_lean_leanfinder": 49,
+   "lean_lean_hover_info": 9,
+   "lean_lean_goal": 4,
+   "lean_lean_loogle": 27,
+   "lean_loogle": 6,
+   "leansearch": 5,
+   "leaninder": 132,
+   "leanfinder": 5,
+   "leanhover_info": 1,
+   "lean_leanfinder": 5,
+   "lean_leansearch": 3,
+   "lean_lean_leansearch": 3,
+   "lean_leanstate_search": 2,
+   "lean_leanloogle": 38,
+   "lean-lsp_lean_goal": 2,
+   "lean-lsp_lean_diagnostic_messages": 1
+  },
+  "endings": {
+   "finished": 78,
+   "turn limit": 58,
+   "timeout": 178
+  },
+  "verified_sessions": 21,
+  "turn_context_tokens": {
+   "count": 39160,
+   "mean": 95092.744,
+   "median": 85756.5,
+   "p90": 171016,
+   "max": 227882
+  },
+  "turn_seconds": {
+   "count": 39199,
+   "mean": 31.361,
+   "median": 5.28,
+   "p90": 74.54,
+   "max": 738.22
+  },
+  "requests_in_flight": {
+   "count": 39199,
+   "mean": 15.012,
+   "median": 14,
+   "p90": 25,
+   "max": 39
+  },
+  "truncated_turns": 162
+ },
+ "model_calls": {
+  "captain": {
+   "seconds": {
+    "count": 25,
+    "mean": 80.172,
+    "median": 48.8,
+    "p90": 203.4,
+    "max": 326.9
+   },
+   "cost_usd": 10.7921
+  },
+  "auditor": {
+   "seconds": {
+    "count": 1,
+    "mean": 8.0,
+    "median": 8.0,
+    "p90": 8.0,
+    "max": 8.0
+   },
+   "cost_usd": 0.0153
+  },
+  "solver": {
+   "seconds": {
+    "count": 119,
+    "mean": 4124.594,
+    "median": 5126.4,
+    "p90": 6212.5,
+    "max": 8247.3
+   },
+   "cost_usd": 0.0
+  },
+  "reviewer": {
+   "seconds": {
+    "count": 3,
+    "mean": 50.433,
+    "median": 52.4,
+    "p90": 63.3,
+    "max": 63.3
+   },
+   "cost_usd": 2.8992
+  },
+  "writer": {
+   "seconds": {
+    "count": 6,
+    "mean": 304.117,
+    "median": 290.65,
+    "p90": 436.9,
+    "max": 436.9
+   },
+   "cost_usd": 8.0911
+  }
+ },
+ "lean_checks": {
+  "seconds": {
+   "count": 114,
+   "mean": 19.839,
+   "median": 16.4,
+   "p90": 34.7,
+   "max": 44.3
+  },
+  "passed": 55
+ },
+ "machine": {
+  "load1": {
+   "count": 5581,
+   "mean": 72.419,
+   "median": 4.312,
+   "p90": 338.024,
+   "max": 797.953
+  },
+  "mem_available_gb": {
+   "count": 5581,
+   "mean": 53.63,
+   "median": 57.151,
+   "p90": 86.084,
+   "max": 109.073
+  },
+  "lean_processes": {
+   "count": 5581,
+   "mean": 95.682,
+   "median": 61,
+   "p90": 228,
+   "max": 561
+  }
+ }
+}

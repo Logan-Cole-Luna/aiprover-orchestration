@@ -117,7 +117,7 @@ harness -> reasoning proxy (127.0.0.1:18575) -> SSH tunnel -> server
 `--via` is required. `--via` takes a host name or an alias of
 `~/.ssh/config`, whose `User` and key then apply. `--timeout SEC` and
 `--max-turns N` set the budget of one AIProver session (default 5400 s,
-200 turns); a slower server needs a longer clock.
+200 turns; served runs use 3600 s); a slower server needs a longer clock.
 
 SSH routes authenticate once: `orchestration_plugin/setup.sh connect` opens
 an SSH master connection and asks for what the host requires; the AIProver
@@ -249,7 +249,8 @@ AIProver venvs and ripgrep from
 | OpenAIMath 332, metric Markov cotype of L1 | proved (2026-10-10) | 49 | faithful |
 | OpenAIMath 011, large totient fibers, conditional on (H) | proved (2026-10-11) | 20 | faithful |
 
-Further runs and their status are recorded in `logbook.md`.
+The records of both runs (trace, Lean files, report, informalization) are in
+`results/<run_id>/`. Further runs and their status are recorded in `logbook.md`.
 
 ## Future work
 

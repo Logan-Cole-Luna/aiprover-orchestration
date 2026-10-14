@@ -48,9 +48,12 @@ FORMALIZE_FEEDBACK_TEMPLATE = template("formalize_feedback")
 AUDITOR_TEMPLATE = template("auditor")
 JUDGE_READBACK_TEMPLATE = template("judge_readback")
 
-# Sketch, replan and hand-back.
+# Setting check, sketch, replan and hand-back.
+SETTING_CHECK_TEMPLATE = template("setting_check")
+SETTING_CHECK_REPAIR_TEMPLATE = template("setting_check_repair")
 SKETCH_TEMPLATE = template("sketch")
 SKETCH_REPAIR_TEMPLATE = template("sketch_repair")
+REFUTATION_REPAIR_TEMPLATE = template("refutation_repair")
 REPLAN_FEEDBACK_TEMPLATE = template("replan_feedback")
 HANDBACK_TEMPLATE = template("handback")
 HANDBACK_REPAIR_TEMPLATE = template("handback_repair")

@@ -5,7 +5,8 @@ completed jobs per lemma statement. Jobs share `aiprover_session_slots`
 sessions, weighted towards lemmas with more failures. Every sample's proof
 passes the same Lean gate as chat solvers. After `aiprover_handback_after`
 failures a lemma is handed back to the captain, who proves, splits, restates
-it, or asks for a retry.
+or refutes it, or asks for a retry. A refuted lemma ends the phase once the
+running jobs return, and the sketch is revised.
 
 Related published work (tags defined in docs/lit_review/lit_review.md §6):
 - [Similar] Splitting a lemma the prover fails on into subgoals: Hilbert
@@ -18,6 +19,7 @@ Related published work (tags defined in docs/lit_review/lit_review.md §6):
 """
 
 import logging
+import math
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -84,11 +86,17 @@ class AIProverStage:
         sessions_in_flight: dict[str, int] = {}
         running_jobs: dict[str, str] = {}  # lemma name -> its AIProver job
         in_handback: set[str] = set()  # lemmas waiting on the captain
+        # Set once a lemma is refuted: the sketch must change, so no further
+        # job or hand-back starts and the phase ends with the running jobs.
+        refuted = threading.Event()
+        if any(lemma.refutation for lemma in sketch.lemmas):
+            refuted.set()
         max_attempts = max(1, self.config.aiprover_attempts_per_lemma)
         # Concurrent lemma jobs; 0 for no limit, under which a lemma added
         # by a split starts at once rather than after a running lemma.
         concurrency = self.config.aiprover_lemma_concurrency or MAX_LEMMA_JOBS
         handback_after = self.config.aiprover_handback_after
+        job_sessions = self.config.aiprover_job_sessions or math.inf
         # Declarations found and searches that failed, over the run's
         # sessions; every job receives it.
         mathlib = knowledge.MathlibMap.from_steps(
@@ -143,7 +151,7 @@ class AIProverStage:
                 * weight(lemma)
                 // (weight(lemma) + sum(map(weight, rivals)))
             )
-            return max(1, min(free, share))
+            return max(1, min(free, share, job_sessions))
 
         def maybe_handback(lemma: Lemma) -> None:
             nonlocal handbacks
@@ -153,6 +161,7 @@ class AIProverStage:
                 or lemma.handed_back
                 or lemma.attempts - lemma.reviewed_at < handback_after
                 or stopped.is_set()
+                or refuted.is_set()
             ):
                 return
             if (
@@ -187,6 +196,8 @@ class AIProverStage:
                     return
                 try:
                     self._handback(form, sketch, lemma, sketch_lock, submit)
+                    if lemma.refutation:
+                        refuted.set()
                 except AgentRefusal as error:
                     # The captain's model refuses this prompt (a safety
                     # classifier), so asking again would fail the same way:
@@ -212,7 +223,7 @@ class AIProverStage:
             # with enough failures (after a resume) goes to the captain first.
             while not lemma.proved and not stopped.is_set():
                 maybe_handback(lemma)
-                if lemma.proved or exhausted(lemma):
+                if lemma.proved or exhausted(lemma) or refuted.is_set():
                     break
                 servers = solver.servers()
                 with sketch_lock:
@@ -232,14 +243,16 @@ class AIProverStage:
                 and lemma.name not in sessions_in_flight
                 and lemma.name not in in_handback
                 and not exhausted(lemma)
+                and not refuted.is_set()
             )
 
         def rebalance() -> None:
             """Give running jobs the session slots freed while they run (a
             finished session, a proved lemma), which a job sized at its
             start cannot receive. Slots go to new jobs first: running jobs
-            grow only while no lemma waits to start one, and only into slots
-            free on both the model servers and this machine."""
+            grow only while no lemma waits to start one, only into slots
+            free on both the model servers and this machine, and up to
+            `aiprover_job_sessions` sessions each."""
             slots = self.config.aiprover_session_slots
             while slots and not finished.wait(REBALANCE_SECONDS):
                 if stopped.is_set():
@@ -269,13 +282,17 @@ class AIProverStage:
                         key=weight,
                         reverse=True,
                     )
-                if free < 1 or not growing:
+                if free < 1 or not growing or refuted.is_set():
                     continue
                 total = sum(map(weight, growing))
                 left = free
                 for lemma in growing:
-                    share = min(left, max(1, free * weight(lemma) // total))
-                    added = solver.grow(jobs[lemma.name], share)
+                    share = min(
+                        left,
+                        max(1, free * weight(lemma) // total),
+                        job_sessions - live[lemma.name],
+                    )
+                    added = share > 0 and solver.grow(jobs[lemma.name], share)
                     if not added:
                         continue
                     left -= added
@@ -341,6 +358,18 @@ class AIProverStage:
                 )
                 + f", attempt {lemma.attempts + 1}/{max_attempts}"
             )
+            errors: list[str] = []
+            gated: set[int] = set()
+
+            def gate(sample) -> bool:
+                """Gate a sample once, against the sketch's current names."""
+                gated.add(sample.index)
+                with sketch_lock:
+                    sketch_names = {other.name for other in sketch.lemmas}
+                return gate_sample(
+                    lemma, sample, stubs, fixed_names, sketch_names, errors
+                )
+
             job = solver.solve(
                 name=f"{self.run_id}_{lemma.name}"[:60],
                 theorem_text=theorem_text,
@@ -352,6 +381,9 @@ class AIProverStage:
                 resume_job=resume_job,
                 hint=knowledge.hint(lemma.knowledge, mathlib_text()),
                 on_start=lambda job_id: started(lemma, key, job_id),
+                # A session's answer is gated when the session ends; the
+                # first accepted one ends the job's other sessions.
+                accept=gate,
             )
             with sketch_lock:
                 for sample in job.samples:
@@ -387,14 +419,12 @@ class AIProverStage:
                     for sample in job.samples
                 ],
             )
-            errors = [job.error] if job.error else []
-            with sketch_lock:
-                sketch_names = {other.name for other in sketch.lemmas}
-            for sample in ranked:
-                if gate_sample(
-                    lemma, sample, stubs, fixed_names, sketch_names, errors
-                ):
-                    return
+            if job.error:
+                errors.insert(0, job.error)
+            if lemma.proved or any(
+                gate(sample) for sample in ranked if sample.index not in gated
+            ):
+                return
             # A lost model server is an infrastructure failure, not a failed
             # lemma: the run stops and resumes this lemma instead of
             # replanning.
@@ -587,9 +617,9 @@ class AIProverStage:
         """Hand a lemma the solvers keep failing on back to the captain.
 
         The captain proves it, splits it into new lemmas (handed to solvers
-        through `submit`), restates it, or asks for a retry. Every proof and
-        statement it proposes is checked by Lean before it is applied; one
-        repair is allowed.
+        through `submit`), restates it, refutes it, or asks for a retry.
+        Every proof, statement and refutation it proposes is checked by Lean
+        before it is applied; one repair is allowed.
         """
         lemma.handed_back = True
         with sketch_lock:
@@ -639,6 +669,7 @@ class AIProverStage:
             proof = extract_tactics(reply, "proof")
             split_block = drop_imports(extract_tag(reply, "split"))
             restated = extract_tag(reply, "restate")
+            refutation = extract_tactics(reply, "refute")
             if "<knowledge>" in reply:
                 # Applied with whichever action follows: the next sessions
                 # on this lemma, or its new statement, start from it.
@@ -694,6 +725,30 @@ class AIProverStage:
                         )
                         return
                     problems.append(result.error_report())
+            elif refutation:
+                text, rejections = self._refutation(
+                    form,
+                    f"{lemma.name}_refuted",
+                    lemma.statement,
+                    lemma.name,
+                    helpers,
+                    refutation,
+                    lemma=lemma.name,
+                    worker="captain",
+                )
+                if not rejections:
+                    with sketch_lock:
+                        lemma.refutation = text
+                    logger.info(f"{lemma.name} refuted by the captain")
+                    self._decision(
+                        "lemma_handback",
+                        lemma=lemma.name,
+                        action="refute",
+                        diagnosis=diagnosis,
+                        refutation=text,
+                    )
+                    return
+                problems += rejections
             elif proof:
                 new_lemmas = parse_lemmas(split_block) if split_block else []
                 clashes = [

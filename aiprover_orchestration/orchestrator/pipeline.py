@@ -27,6 +27,7 @@ from .config import (
     ALGORITHM,
     FILE_HEADER,
     LEAN_ENVIRONMENT,
+    MAIN_NAME,
     Config,
     slug_from_problem,
 )
@@ -48,6 +49,7 @@ OUTCOME_FIELDS = (
     "error",
     "error_kind",
     "checks",
+    "refutation",
     "review",
     "report",
     "informal",
@@ -285,10 +287,16 @@ class Orchestration(
                         feedback=state.formalize_feedback,
                         first_round=state.audit_rounds_done,
                     )
-            summary["formalization"] = asdict(form)
             if not form.verdict.startswith("FAITHFUL"):
+                summary["formalization"] = asdict(form)
                 summary["status"] = "unfaithful_formalization"
                 return summary
+            if self.config.setting_check and not state.setting_checked:
+                with self._timed("sketch"):
+                    facts = self.check_setting(form)
+                if facts:
+                    form.definitions += "\n\n" + facts
+            summary["formalization"] = asdict(form)
             replans_used = state.replans_started
             if state.sketch is None:
                 with self._timed("sketch"):
@@ -299,11 +307,25 @@ class Orchestration(
                     with self._timed("sketch"):
                         sketch = self.replan(form, sketch, resumed=True)
             while True:
+                if sketch.refutation:
+                    summary["status"] = "disproved"
+                    summary["refutation"] = sketch.refutation
+                    (self.result_dir / f"{self.slug}_refutation.lean").write_text(
+                        self._standalone(
+                            form,
+                            f"theorem {MAIN_NAME}{form.signature}:= by sorry"
+                            f"\n\n{sketch.refutation}",
+                        )
+                    )
+                    return summary
                 with self._timed("prove"):
                     self.prove(form, sketch)
                 if all(lemma.proved for lemma in sketch.lemmas):
                     break
-                if replans_used >= self.config.max_replans:
+                # A refuted lemma makes the sketch unprovable: its revision
+                # is not charged to the replan budget.
+                refuted = any(lemma.refutation for lemma in sketch.lemmas)
+                if replans_used >= self.config.max_replans and not refuted:
                     summary["status"] = "lemmas_unproved"
                     with self._timed("informal"):
                         summary["informal"] = self.informalize(
@@ -313,7 +335,7 @@ class Orchestration(
                 logger.info("some lemmas failed; replanning")
                 with self._timed("sketch"):
                     sketch = self.replan(form, sketch)
-                replans_used += 1
+                replans_used += not refuted
             with self._timed("assemble"):
                 standalone, checks = self.assemble(form, sketch)
             summary["checks"] = checks

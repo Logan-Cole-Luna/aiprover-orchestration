@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import subprocess
+import tempfile
 import threading
 import time
 import tomllib
@@ -309,6 +310,57 @@ class AIProverAgent(Agent):
         except subprocess.TimeoutExpired:
             return False
 
+    def _job_matches(self, job: str, context: str, statement: str) -> bool:
+        """True if job `job` was submitted with this context and statement."""
+        job_dir = self.work_root / "jobs" / job
+        return all(
+            (job_dir / file_name).exists()
+            and (job_dir / file_name).read_text().strip() == text.strip()
+            for file_name, text in (
+                ("context.lean", context),
+                ("statement.lean", statement),
+            )
+        )
+
+    @staticmethod
+    def _sample(summary: dict, position: int) -> AIProverSample:
+        """A session's summary, as the harness wrote it, with its answer,
+        transcript and reasoning read from the session's directory."""
+        lean_file = summary.get("lean_file")
+        directory = sample_dir(lean_file, summary.get("sample"))
+        return AIProverSample(
+            index=summary.get("sample", position),
+            status=summary.get("status", "unknown"),
+            lean=(
+                Path(lean_file).read_text(errors="replace") if lean_file else ""
+            ),
+            turns=summary.get("turns"),
+            tool_calls=summary.get("tool_calls"),
+            elapsed_sec=summary.get("elapsed_sec"),
+            ending=session_ending(summary),
+            check=lean_check_summary(summary.get("check")),
+            session=read_session(directory),
+            reasoning=read_reasoning(directory),
+            problems=list((summary.get("check") or {}).get("problems") or []),
+        )
+
+    def _finished(self, job: str, offered: set[int]) -> list[AIProverSample]:
+        """Sessions of the running `job` that finished with an answer since
+        the last call; their indices are added to `offered`."""
+        samples = []
+        sessions = self.work_root / "jobs" / job
+        for path in sorted(sessions.glob("s*/summary.json")):
+            try:
+                summary = json.loads(path.read_text())
+            except (OSError, json.JSONDecodeError):
+                continue
+            index = summary.get("sample")
+            if index in offered or not summary.get("lean_file"):
+                continue
+            offered.add(index)
+            samples.append(self._sample(summary, len(offered)))
+        return samples
+
     def solve(
         self,
         *,
@@ -322,6 +374,7 @@ class AIProverAgent(Agent):
         resume_job: str | None = None,
         on_start: Callable[[str], None] | None = None,
         hint: str = "",
+        accept: Callable[[AIProverSample], bool] | None = None,
     ) -> AIProverJob:
         """Run one AIProver job and return its samples (blocks until done).
 
@@ -331,7 +384,9 @@ class AIProverAgent(Agent):
         submitted. `on_start` receives the job id once the job runs, so that an
         interruption can still find it. If the installed CLI cannot resume, a
         new job is submitted instead. `hint` is guidance added to a new job's
-        problem (the harness's `--hint-file`)."""
+        problem (the harness's `--hint-file`). `accept` is offered each
+        session's answer once as the session finishes; when it returns True
+        the job's remaining sessions are cancelled."""
         if STOPPING.is_set():
             raise Terminated
         work_dir.mkdir(parents=True, exist_ok=True)
@@ -347,6 +402,14 @@ class AIProverAgent(Agent):
             logger.warning(
                 f"AIProver job {resume_job} is not in {self.work_root}; "
                 "submitting a new job."
+            )
+            resume_job = None
+        if resume_job and not self._job_matches(
+            resume_job, context, statement
+        ):
+            logger.warning(
+                f"AIProver job {resume_job} was submitted with another "
+                "context or statement; submitting a new job."
             )
             resume_job = None
         if resume_job:
@@ -365,41 +428,47 @@ class AIProverAgent(Agent):
                 problem = self.work_root / "jobs" / resume_job / "problem.txt"
                 rendered = problem.read_text() if problem.exists() else ""
         else:
-            context_path = work_dir / f"{name}_context.lean"
-            statement_path = work_dir / f"{name}_statement.lean"
-            context_path.write_text(context)
-            statement_path.write_text(statement)
-            hint_args = []
-            if hint:
-                hint_path = work_dir / f"{name}_hint.txt"
-                hint_path.write_text(hint)
-                hint_args = ["--hint-file", str(hint_path)]
-            args = [
-                "--theorem-text",
-                theorem_text,
-                "--proof-text",
-                proof_text,
-                "--context",
-                str(context_path),
-                "--lean-statement",
-                str(statement_path),
-                *hint_args,
-            ]
-            rendered = self._cli("render", *args, timeout=60).stdout
-            submitted = self._cli(
-                "submit",
-                "-q",
-                "-k",
-                str(samples),
-                "--name",
-                name,
-                "--timeout",
-                str(self.timeout),
-                "--max-turns",
-                str(self.max_turns),
-                *args,
-                timeout=120,
-            )
+            # Jobs are submitted concurrently, so each keeps its input files
+            # in a directory of its own until the CLI has copied them.
+            with tempfile.TemporaryDirectory(
+                prefix=f"{name}_", dir=work_dir
+            ) as directory:
+                files = Path(directory)
+                context_path = files / "context.lean"
+                statement_path = files / "statement.lean"
+                context_path.write_text(context)
+                statement_path.write_text(statement)
+                hint_args = []
+                if hint:
+                    hint_path = files / "hint.txt"
+                    hint_path.write_text(hint)
+                    hint_args = ["--hint-file", str(hint_path)]
+                args = [
+                    "--theorem-text",
+                    theorem_text,
+                    "--proof-text",
+                    proof_text,
+                    "--context",
+                    str(context_path),
+                    "--lean-statement",
+                    str(statement_path),
+                    *hint_args,
+                ]
+                rendered = self._cli("render", *args, timeout=60).stdout
+                submitted = self._cli(
+                    "submit",
+                    "-q",
+                    "-k",
+                    str(samples),
+                    "--name",
+                    name,
+                    "--timeout",
+                    str(self.timeout),
+                    "--max-turns",
+                    str(self.max_turns),
+                    *args,
+                    timeout=120,
+                )
         job = (
             submitted.stdout.strip().splitlines()[-1]
             if submitted.stdout.strip()
@@ -415,6 +484,7 @@ class AIProverAgent(Agent):
             )
         if on_start:
             on_start(job)
+        offered: set[int] = set()
         try:
             while (
                 not STOPPING.is_set()
@@ -427,7 +497,13 @@ class AIProverAgent(Agent):
                 ).returncode
                 == 3
             ):
-                pass
+                if accept and any(
+                    accept(sample)
+                    for sample in self._finished(job, offered)
+                ):
+                    # The settled job reports the sessions cut off here as
+                    # cancelled.
+                    self._cli("cancel", job, timeout=60)
             if STOPPING.is_set():
                 raise Terminated
         except BaseException:
@@ -444,31 +520,8 @@ class AIProverAgent(Agent):
                 time.time() - start,
                 error=(result.stderr or result.stdout)[-1000:],
             )
-        job_samples = []
-        for sample in payload.get("samples", []):
-            lean_file = sample.get("lean_file")
-            lean = (
-                Path(lean_file).read_text(errors="replace") if lean_file else ""
-            )
-            job_samples.append(
-                AIProverSample(
-                    index=sample.get("sample", len(job_samples)),
-                    status=sample.get("status", "unknown"),
-                    lean=lean,
-                    turns=sample.get("turns"),
-                    tool_calls=sample.get("tool_calls"),
-                    elapsed_sec=sample.get("elapsed_sec"),
-                    ending=session_ending(sample),
-                    check=lean_check_summary(sample.get("check")),
-                    session=read_session(
-                        sample_dir(lean_file, sample.get("sample"))
-                    ),
-                    reasoning=read_reasoning(
-                        sample_dir(lean_file, sample.get("sample"))
-                    ),
-                    problems=list(
-                        (sample.get("check") or {}).get("problems") or []
-                    ),
-                )
-            )
+        job_samples = [
+            self._sample(sample, position)
+            for position, sample in enumerate(payload.get("samples", []))
+        ]
         return AIProverJob(job, rendered, job_samples, time.time() - start)
