@@ -37,6 +37,8 @@ import tomllib
 import urllib.request
 from pathlib import Path
 
+import psutil
+
 from ..paths import (
     AIPROVER_CLI,
     CONFIG_DIR,
@@ -247,21 +249,19 @@ def process_alive(pid: int | None, run_id: str) -> bool:
     if not pid:
         return False
     try:
-        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
-        state = (
-            Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+        process = psutil.Process(pid)
+        return (
+            process.status() != psutil.STATUS_ZOMBIE
+            and run_id in process.cmdline()
         )
-    except OSError:
+    except psutil.Error:
         return False
-    return state != "Z" and run_id.encode() in cmdline
 
 
 def run_process_alive(run_id: str) -> bool:
     """True if any live orchestrator process belongs to run `run_id`."""
     return any(
-        process_alive(int(entry.name), run_id)
-        for entry in Path("/proc").iterdir()
-        if entry.name.isdigit()
+        process_alive(process.pid, run_id) for process in psutil.process_iter()
     )
 
 
@@ -450,7 +450,7 @@ class Worker(threading.Thread):
                 # A run that needs no model server does not wait for
                 # another run's server.
                 candidate = self._serverless_job(name, queued)
-            elif not group.job_name:
+            elif not group.job_name and not group.serverless:
                 # A persistent server's runs wait until it answers, rather
                 # than failing on it.
                 endpoint_up, message = endpoint_status(False, group)

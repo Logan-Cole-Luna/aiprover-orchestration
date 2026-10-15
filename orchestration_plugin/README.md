@@ -15,7 +15,7 @@ server, reached as the AIProver plugin reaches it (`AIProver/AIProver_plugin/REA
 One command from a fresh clone, on Linux, WSL2 or macOS:
 
 ```bash
-git clone --recurse-submodules <repository url> aiprover_orchestration && cd aiprover_orchestration && ./setup --endpoint http://<model host>:<port>
+git clone --recurse-submodules https://github.com/Logan-Cole-Luna/aiprover-orchestration aiprover_orchestration && cd aiprover_orchestration && ./setup --endpoint http://<model host>:<port>
 ```
 
 `./setup` (repository root) checks the platform and fetches the submodules.
@@ -27,6 +27,7 @@ It builds the environment from `flake.nix` and writes this directory's
 
 | Where the model server is | Command | Connection |
 |---|---|---|
+| none | `--endpoint none` | no model server: Claude subagents prove the lemmas; the doctor checks Lean only |
 | reachable from the device | `--endpoint URL [--api-key KEY]` | direct; the key is sent as a bearer token |
 | reachable only from an SSH host | `--endpoint URL --via HOST [--user USER]` | SSH tunnel through `HOST` (a host name or an alias of `~/.ssh/config`) |
 | a scheduled job writing `node=<n> port=<p>` to a file on a login node | `--via HOST --handoff FILE` | SSH tunnel to the node the file names; a restarted job is followed |

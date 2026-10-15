@@ -34,8 +34,9 @@ import time
 import urllib.request
 from pathlib import Path
 
+import psutil
+
 SAMPLE_SECONDS = 30
-_PROC = Path("/proc")
 
 
 def parse_prometheus(text: str) -> dict[str, float]:
@@ -58,19 +59,13 @@ def parse_prometheus(text: str) -> dict[str, float]:
 
 def machine_load() -> dict:
     """Load average, available memory and Lean processes of this machine."""
-    meminfo = dict(
-        line.split(":", 1)
-        for line in (_PROC / "meminfo").read_text().splitlines()
+    lean_processes = sum(
+        process.info["name"] == "lean"
+        for process in psutil.process_iter(["name"])
     )
-    lean_processes = 0
-    for entry in _PROC.iterdir():
-        try:
-            lean_processes += (entry / "comm").read_text().strip() == "lean"
-        except OSError:
-            continue
     return {
         "load1": os.getloadavg()[0],
-        "mem_available_gb": int(meminfo["MemAvailable"].split()[0]) / 2**20,
+        "mem_available_gb": psutil.virtual_memory().available / 2**30,
         "lean_processes": lean_processes,
     }
 
