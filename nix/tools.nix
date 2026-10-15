@@ -6,10 +6,15 @@
 pkgs.buildEnv {
   name = "aiprover-orchestration-tools";
   paths = with pkgs; [
-    # The skill's helpers, the trace pages (pygments) and the reasoning proxy (aiohttp).
+    # The skill's helpers, the trace pages (pygments), the reasoning proxy (aiohttp), and the
+    # query server and pipeline (fastapi, uvicorn, anthropic, psutil).
     (python312.withPackages (ps: [
       ps.pygments
       ps.aiohttp
+      ps.fastapi
+      ps.uvicorn
+      ps.anthropic
+      ps.psutil
     ]))
     jq
     ripgrep
