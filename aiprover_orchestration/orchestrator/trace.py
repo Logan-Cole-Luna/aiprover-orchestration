@@ -6,9 +6,10 @@ Each step is a model call, a Lean check, or an orchestration decision. The
 file is rewritten atomically after every step so it can be inspected while
 the run is in progress.
 
-A model call that the provider's safety classifier refused records the
-provider, not the run: it is not traced (the call log keeps it), and a
-continued trace drops such calls recorded earlier (`without_untraced_calls`).
+A model call that failed on the account's usage limit, or that the
+provider's safety classifier refused, records the account or the provider,
+not the run: it is not traced (the call log keeps it), and a continued trace
+drops such calls recorded earlier (`without_untraced_calls`).
 
     python -m aiprover_orchestration.orchestrator.trace results/<run_id> ...
 
@@ -21,18 +22,33 @@ import argparse
 import gzip
 import json
 import os
+import re
 import threading
 import time
 from pathlib import Path
+
+# Error text of a call refused by the account's session or usage limit.
+USAGE_LIMIT = re.compile(r"(?:session|usage|weekly) limit", re.IGNORECASE)
+
 
 # Error text of a request declined by the model's safety classifier.
 REFUSAL_MARKER = "safeguards flagged"
 
 
+def is_usage_limit(error: str | None) -> bool:
+    return bool(error) and bool(USAGE_LIMIT.search(error))
+
+
 def is_untraced(error: str | None, refused: bool = False) -> bool:
-    """A failed call that is left out of the trace: a refusal by the
-    provider's safety classifier."""
-    return refused or REFUSAL_MARKER in (error or "")
+    """A failed call that is left out of the trace: a usage limit or a
+    refusal by the provider's safety classifier."""
+    return refused or is_usage_limit(error) or REFUSAL_MARKER in (error or "")
+
+
+def _without_limit_error(outcome: dict | None) -> dict | None:
+    if outcome and is_usage_limit(outcome.get("error")):
+        return {**outcome, "error": "", "error_kind": ""}
+    return outcome
 
 
 def _without_steps(document: dict, removed: set[int]) -> dict:
@@ -58,8 +74,9 @@ def _without_steps(document: dict, removed: set[int]) -> dict:
 
 
 def without_untraced_calls(document: dict) -> dict:
-    """The trace document without refused model calls."""
-    return _without_steps(
+    """The trace document without model calls that failed on a usage limit
+    or were refused, and with outcomes stripped of usage-limit errors."""
+    cleaned = _without_steps(
         document,
         {
             position
@@ -68,6 +85,12 @@ def without_untraced_calls(document: dict) -> dict:
             and is_untraced(step.get("error"), bool(step.get("refused")))
         },
     )
+    for resumption in cleaned["resumptions"]:
+        resumption["previous_outcome"] = _without_limit_error(
+            resumption.get("previous_outcome")
+        )
+    cleaned["outcome"] = _without_limit_error(document.get("outcome"))
+    return cleaned
 
 
 def rewound(document: dict, at_step: int) -> dict:
@@ -253,7 +276,7 @@ class Trace:
 
 def main() -> None:
     """Repair the traces of runs not in progress (a running run rewrites its
-    trace): refused calls are always removed."""
+    trace): usage-limit failures and refused calls are always removed."""
     parser = argparse.ArgumentParser(description=main.__doc__)
     parser.add_argument("directories", nargs="+", type=Path)
     parser.add_argument(

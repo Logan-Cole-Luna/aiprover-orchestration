@@ -14,6 +14,10 @@ export AIPROVER_CONFIG=${AIPROVER_CONFIG:-$(readlink -f ~/.config/aiprover_orche
 AIP=$ROOT/AIProver/AIProver_plugin/bin/aiprover
 WS=$ROOT/orchestration_workspace
 JOBS=$("$AIP" config --shell | sed -n 's/^AIP_WORK_ROOT=//p')/jobs
+# The lemma solver: AIProver jobs, or Claude subagents when ./setup configured no model server
+# (endpoint mode none).
+SOLVER=$(python3 -c 'import sys, tomllib; print("claude" if tomllib.load(open(sys.argv[1], "rb"))["endpoint"].get("mode") == "none" else "aiprover")' \
+    "$ROOT/orchestration_plugin/endpoint.toml" 2>/dev/null || echo aiprover)
 
 # Brings the model server up as the harness reaches it: SSH master and tunnel when the endpoint
 # is reached over SSH, then the local reasoning proxy. Returns non-zero when the SSH master is
@@ -31,14 +35,16 @@ trace_start() {
 import json, os, sys, time
 from aiprover_orchestration.orchestrator import prompts
 from aiprover_orchestration.orchestrator.config import ALGORITHM, LEAN_ENVIRONMENT
-run, problem, theorem, captain = sys.argv[1:]
+run, problem, theorem, captain, solver_kind = sys.argv[1:]
 config = json.load(open("configs/orchestrator/aiprover_vista_served.json"))
 solver = {**config.pop("agents")["solver"], "config": os.environ["AIPROVER_CONFIG"]}
+if solver_kind == "claude":
+    solver = {"backend": "claude_code", "model": "sonnet"}
 print(json.dumps({
     "run_id": run,
     "problem": json.load(open(problem)),
     "theorem_name": theorem,
-    "models": {"orchestrator": captain, "worker": "aiprover"},
+    "models": {"orchestrator": captain, "worker": solver_kind},
     "agents": {"captain": {"backend": "claude_code", "model": captain},
                "solver": solver},
     "config": config,
@@ -51,7 +57,7 @@ print(json.dumps({
     "driver": "aiprover-captain skill",
     "started": time.strftime("%Y-%m-%dT%H:%M:%S"),
     "time": int(time.time()),
-}))' "$run" "$problem" "$theorem" "$captain") > "$ROOT/results/$run/trace.jsonl"
+}))' "$run" "$problem" "$theorem" "$captain" "$SOLVER") > "$ROOT/results/$run/trace.jsonl"
 }
 
 # Appends one step. Arguments: run id, then jq options and a filter that
