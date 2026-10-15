@@ -179,7 +179,7 @@ summary .note { color: var(--muted); font-weight: 400; font-size: 0.85rem; margi
         <small class="models-note" id="models-note">Roles that use AIProver must use the same version.</small>
         <label for="gpu-group">GPU group</label>
         <select id="gpu-group" style="max-width:240px"><option value="main">main</option></select>
-        <small class="models-note">Each group has its own model server on Vista; runs of a group share it.</small>
+        <small class="models-note">Each group has its own model server on Vista; runs of a group share it. Group <code>cpu</code> has none: every role, including the subagent, must use Claude or a hosted model.</small>
       </details>
       <div class="row" style="margin-top:16px">
         <button id="submit">Submit</button>
@@ -238,7 +238,7 @@ async function start() {
   $("user").textContent = me.approver ? `${me.user} (approver)`
     : me.auth_required ? me.user : "open access";
   $("logout").classList.toggle("hidden", !me.approver);
-  $("approver-login").classList.toggle("hidden", me.approver);
+  $("approver-login").classList.toggle("hidden", me.approver || !me.auth_required);
   $("login").classList.add("hidden");
   $("app").classList.remove("hidden");
   const problems = await api("/api/problems");

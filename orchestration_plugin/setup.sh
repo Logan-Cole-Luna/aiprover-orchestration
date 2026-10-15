@@ -15,7 +15,8 @@
 #                       also keeps the Mac awake while it runs); the skill runs it before a
 #                       run and after a connection fault
 #   ./setup.sh stop     stop the reasoning proxy (and the keep-awake) after the runs
-#   ./setup.sh doctor   verify the environment and the model endpoint (aiprover doctor)
+#   ./setup.sh doctor   verify the environment and the model endpoint (aiprover doctor);
+#                       without a model server (endpoint mode none), the environment only
 #   ./setup.sh full     as doctor, plus one live AIProver rollout (aiprover doctor --full)
 #
 # Rerun `claude` after editing the skill: an installed plugin runs from a cached copy that is
@@ -33,6 +34,11 @@ AIP="$ROOT/AIProver/AIProver_plugin/bin/aiprover"
 [ -d "$ROOT/aiprover/nix/tools/bin" ] && export PATH="$ROOT/aiprover/nix/tools/bin:$PATH"
 
 say()  { printf '\n== %s\n' "$*"; }
+# The endpoint mode of endpoint.toml: direct, ssh, or none (no model server).
+endpoint_mode() {
+  python3 -c 'import sys, tomllib; print(tomllib.load(open(sys.argv[1], "rb"))["endpoint"].get("mode", "ssh"))' \
+    "$ENDPOINT_CONFIG"
+}
 ok()   { printf '   ok: %s\n' "$*"; }
 die()  { printf '   FAILED: %s\n' "$*" >&2; exit 1; }
 
@@ -223,6 +229,11 @@ close_stale_forward() {
 # followed through a handoff file by the AIProver CLI), then the local reasoning proxy in front
 # of it. The proxy runs detached; it is restarted when its upstream has changed.
 step_endpoint() {
+  if [ "$(endpoint_mode)" = none ]; then
+    say "Model server"
+    ok "none (Claude subagents prove the lemmas)"
+    return 0
+  fi
   step_connect
   say "Tunnel and reasoning proxy"
   local mode listen upstream max_reply_tokens tunnel_port socket dest
@@ -367,6 +378,11 @@ PYEOF
 # Not --agents: that check asks the agents through `claude -p`, which the skill avoids.
 step_doctor() {
   say "doctor $*"
+  if [ "$(endpoint_mode)" = none ]; then
+    "$AIP" doctor "$@" \
+      || echo "   some rows failed: without a model server, the model rows are expected to fail"
+    return 0
+  fi
   "$AIP" doctor "$@" || echo "   some rows failed: the skill's preflight (SKILL.md step 0) lists the rows a run needs"
   check_tool_calls
   "$AIP" slots >/dev/null 2>&1 \

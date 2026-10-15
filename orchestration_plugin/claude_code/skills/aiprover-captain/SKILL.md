@@ -14,7 +14,7 @@ every captain decision is yours, made in this session.
 |---|---|---|
 | Captain | you | Formalize; judge the read-back; write and revise the sketch; answer hand-backs; assemble |
 | Auditor | subagent, `model: sonnet` | Blind read-back of the Lean statement; never sees the source |
-| Solver | AIProver jobs | Prove one lemma per job, several independent sessions per job |
+| Solver | AIProver jobs, or subagents `model: sonnet` without a model server | Prove one lemma per job (several independent sessions) or per subagent attempt |
 | Reviewer | fresh subagent, `model: opus` | Referee the verified file against the source |
 | Writer | fresh subagent, `model: opus` | Informalization of the verified proof |
 
@@ -34,7 +34,8 @@ directory, given when the skill loads.
 ```
 
 It sets `ROOT` (the repository), `AIP` (the AIProver CLI), `WS`
-(`orchestration_workspace/`), `JOBS`, and the recording functions
+(`orchestration_workspace/`), `JOBS`, `SOLVER` (`aiprover`, or `claude` when
+`./setup --endpoint none` configured no model server), and the recording functions
 `trace_start`, `trace_step`, `traced_check`, `traced_job` and
 `traced_subagent` (`references/run_record.md`).
 
@@ -74,7 +75,11 @@ stated in the trace header. The user may change them.
 `R=$ROOT/results/$RUN` the record. Record each step as it happens
 (`references/run_record.md` gives the exact commands and event names).
 
-**0. Preflight.** `endpoint_up`, then `bash $ROOT/orchestration_plugin/setup.sh doctor`;
+**0. Preflight.** With `SOLVER=claude` there is no model server: run the
+doctor, which then requires only the Lean rows (lean project built, lean
+toolchain, Mathlib canary, kernel axiom probe), skip `endpoint_up` and
+`$AIP slots`, and prove lemmas as step 5 states for subagents. Otherwise:
+`endpoint_up`, then `bash $ROOT/orchestration_plugin/setup.sh doctor`;
 note `$AIP slots`. `endpoint_up` brings the model server up as the harness
 reaches it: the SSH master and tunnel when the server is reached over SSH
 (the CLI follows a server job through its handoff file), then the local
@@ -145,6 +150,13 @@ concurrent lemmas):
       --context "$T/L/context.lean" --lean-statement "$T/L/statement.lean" \
       --theorem "$T/L/theorem.md" --proof "$T/proof.md"
   ```
+
+With `SOLVER=claude`, each attempt on `L` is a solver subagent
+(`references/subagents.md`) in place of a job: spawn one per unproved lemma
+at once, gate each reply as a hand-back `proof`, and record `lemma_proved`
+(`worker: "subagent"`) or `solver_budget_exhausted` with its errors. A failed
+attempt counts as a failed job; the next subagent receives its errors. The
+budgets, hand-backs and replans below are unchanged.
 
 Then `$AIP wait <all job ids> --any --timeout 540` in the foreground with
 the Bash timeout at 600000 ms; repeat while it returns rc 3. Do not poll

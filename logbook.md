@@ -254,8 +254,10 @@ Results
   multiplication below n log n; statement and audit). Hodge for CM abelian
   varieties (032) and BSD (002, 006) are excluded: their statements need
   definitions absent from Mathlib.
-- Claude roles use the Anthropic API with a per-deployment key; hosted
-  open-weights and OpenAI models use the OpenAI-compatible backend.
+- Claude roles run on a Claude subscription (the logged-in `claude` CLI,
+  `agents/claude_cli.py`) or on the Anthropic API (`agents/claude.py`),
+  chosen by `CLAUDE_AUTH`, else by whether `ANTHROPIC_API_KEY` is set;
+  hosted open-weights and OpenAI models use the OpenAI-compatible backend.
 - Proxy reply cap below the harness client's read timeout (16,384 tokens
   at 29 tokens/s against 720 s).
 - AIProver `verified` requires the target statement verbatim; other fixed
@@ -328,6 +330,21 @@ Results
 
 ## Done
 
+- Run-process lookup of the query server's worker and the run's machine
+  samples (load, memory, Lean processes) through `psutil`, so the server
+  and the pipeline run on macOS as on Linux; `psutil` is in the Nix
+  environment.
+- Query server access is open by default: users run the server
+  themselves, so no token is needed and submissions are queued without
+  approval. Tokens, per-user visibility and approval remain available with
+  `QUERY_SERVER_AUTH=on` (`server/app.py`, `docs/server.md`).
+
+- GPU group `cpu` on the query server (`server/vista.py`): a group
+  without a model server, for runs whose roles all use Claude or hosted
+  models (for example Claude as captain and subagent). Submissions to it
+  that select AIProver for any role are rejected; its runs have their own
+  run slots and never wait for a Vista or DGX server.
+
 - AIProver job inputs are isolated per submission
   (`agents/aiprover.py`): the context, statement and hint files of a job
   are written to a temporary directory of its own under
@@ -384,6 +401,24 @@ Results
 - Query server with run queue, live progress and Claude call budget.
 - Per-run model choice for orchestrator and subagent (Claude model and
   reasoning level, or AIProver trained/base) on the query server page.
+
+## 2026-10-14: Claude subscription backend on main
+
+- Backend `claude` resolves to the subscription agent (`claude -p` with
+  tools, settings and MCP servers off) or the API agent; usage-limit
+  failures of a subscription are left out of traces, as refusals are
+  (`orchestrator/trace.py`).
+
+## 2026-10-14: Skill without a model server
+
+- `./setup --endpoint none` (or an empty answer at the endpoint prompt):
+  `endpoint.toml` with `mode = "none"`; `setup.sh endpoint` does nothing and
+  `setup.sh doctor` checks the environment only. The skill's `env.sh` sets
+  `SOLVER=claude`, and each lemma attempt is a solver subagent
+  (`model: sonnet`, the pipeline's `solver.md` prompts) gated as a hand-back
+  proof; budgets, hand-backs and replans are unchanged. Lean checks run on
+  the device's CPU.
+- READMEs: clone command with the repository URL.
 
 ## 2026-10-14: OpenAI math problems 004 and 109
 

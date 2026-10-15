@@ -13,7 +13,9 @@ built from a specification in the run configuration:
     {"backend": "claude", "model": "claude-opus-5-5",
      "phases": {"judge": {"model": "claude-sonnet-5-5"}}}
 
-`claude` calls the Anthropic API (key in `ANTHROPIC_API_KEY`).
+`claude` calls Claude through the Anthropic API when `ANTHROPIC_API_KEY` is
+set, otherwise through the logged-in `claude` CLI (Claude subscription);
+`CLAUDE_AUTH=api` or `CLAUDE_AUTH=subscription` selects one explicitly.
 `openai_compatible` covers any server that implements the OpenAI chat
 completions schema: a local vLLM server, or a hosted provider named by
 `provider` (`openai`, `huggingface`, `openrouter`). `aiprover` runs the AIProver
@@ -32,6 +34,7 @@ probes every role's agent.
 import importlib
 import json
 import logging
+import os
 import threading
 import time
 from pathlib import Path
@@ -39,13 +42,30 @@ from pathlib import Path
 from ..orchestrator.trace import REFUSAL_MARKER, is_untraced
 from .base import Agent, AgentCallError, AgentRefusal, Completion
 from .claude import ClaudeAgent
+from .claude_cli import ClaudeCLIAgent
 from .openai_compatible import OpenAICompatibleAgent
 
 logger = logging.getLogger(__name__)
 
 
+CLAUDE_AGENTS = {"api": ClaudeAgent, "subscription": ClaudeCLIAgent}
+
+
+def claude_agent(**options) -> Agent:
+    """A Claude agent on the API (a key is set) or on the subscription of
+    the logged-in `claude` CLI; `CLAUDE_AUTH` overrides the choice."""
+    auth = os.environ.get("CLAUDE_AUTH") or (
+        "api" if os.environ.get("ANTHROPIC_API_KEY") else "subscription"
+    )
+    if auth not in CLAUDE_AGENTS:
+        raise ValueError(
+            f"CLAUDE_AUTH={auth!r}; expected one of {sorted(CLAUDE_AGENTS)}"
+        )
+    return CLAUDE_AGENTS[auth](**options)
+
+
 BACKENDS = {
-    "claude": ClaudeAgent,
+    "claude": claude_agent,
     "openai_compatible": OpenAICompatibleAgent,
 }
 
@@ -298,8 +318,9 @@ class AgentPool:
             )
             with open(self.calls_path, "a") as f:
                 f.write(json.dumps(record) + "\n")
-        # A refusal concerns the provider, not the run: it stays in the call
-        # log and is left out of the trace.
+        # A usage-limit failure or a refusal concerns the account or the
+        # provider, not the run: it stays in the call log and is left out of
+        # the trace.
         if self.trace is not None and not is_untraced(
             completion.error, completion.refused
         ):

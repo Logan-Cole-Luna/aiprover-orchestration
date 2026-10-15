@@ -5,6 +5,7 @@
 #   ./setup --endpoint URL --via HOST           a server reachable only from HOST: SSH tunnel
 #   ./setup --via HOST --handoff FILE           a server job that writes its node and port to FILE
 #                                               on HOST (`node=<n> port=<p>`), followed on restart
+#   ./setup --endpoint none                     no model server: Claude subagents prove the lemmas
 #   ./setup                                     keep the existing endpoint, or ask for one
 #
 #   --via HOST           an SSH host or an alias of ~/.ssh/config
@@ -57,7 +58,7 @@ die() {
   exit 1
 }
 
-usage() { sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; }
 
 # ask QUESTION DEFAULT(y|n): yes or no from the terminal; --yes answers y.
 ask() {
@@ -154,9 +155,10 @@ choose_endpoint() {
     return 1
   fi
   if [ -z "$ENDPOINT$HANDOFF" ]; then
-    [ "$YES" = yes ] && die "no endpoint configured: pass --endpoint URL (see ./setup --help)"
-    printf 'Model server URL (http://host:port): '
-    read -r ENDPOINT || die "no endpoint given"
+    [ "$YES" = yes ] && die "no endpoint configured: pass --endpoint URL or none (see ./setup --help)"
+    printf 'Model server URL (http://host:port; empty for none, Claude proves the lemmas): '
+    read -r ENDPOINT || ENDPOINT=""
+    ENDPOINT=${ENDPOINT:-none}
   fi
   return 0
 }
@@ -191,10 +193,15 @@ write_config() {
   timeout="${TIMEOUT:-$timeout}"
   turns="${TURNS:-$turns}"
   case "$ENDPOINT" in
-  "" | http://* | https://*) ;;
-  *) die "unknown endpoint $ENDPOINT: give the model server's URL (http://host:port)" ;;
+  "" | none | http://* | https://*) ;;
+  *) die "unknown endpoint $ENDPOINT: give the model server's URL (http://host:port) or none" ;;
   esac
-  if [ -n "$ENDPOINT" ] && [ -z "$HANDOFF" ] && reachable "${ENDPOINT%/}"; then
+  if [ "$ENDPOINT" = none ]; then
+    # No model server: the harness configuration keeps the Lean paths only, and the skill's
+    # solvers are Claude subagents.
+    mode=none
+    api_base="http://127.0.0.1:$PROXY_PORT/v1"
+  elif [ -n "$ENDPOINT" ] && [ -z "$HANDOFF" ] && reachable "${ENDPOINT%/}"; then
     api_base="${ENDPOINT%/}"
   else
     if [ -z "$VIA" ] && [ "$YES" = no ]; then
@@ -218,7 +225,7 @@ write_config() {
     fi
   fi
   [ "$mode" = ssh ] || [ -n "$api_base" ] || die "no api_base for $ENDPOINT"
-  [ "$mode" = direct ] || api_base="http://127.0.0.1:$TUNNEL_PORT/v1"
+  [ "$mode" != ssh ] || api_base="http://127.0.0.1:$TUNNEL_PORT/v1"
   case "$api_base" in */v1) ;; *) api_base="$api_base/v1" ;; esac
 
   if [ "$(uname -s)" = Darwin ]; then
@@ -233,6 +240,8 @@ write_config() {
   root=$(pwd)
   if [ "$mode" = ssh ]; then
     target="${ENDPOINT:-server named in $handoff} via $ssh_host"
+  elif [ "$mode" = none ]; then
+    target="no model server; Claude subagents prove the lemmas"
   else
     target="$api_base"
   fi
@@ -252,6 +261,7 @@ write_config() {
 
 [endpoint]
 mode = "$mode"
+# none: no model server (the skill's solvers are Claude subagents).
 # ssh mode: the host you SSH into, and the model's address as seen from it. With server_handoff
 # set, the node and port are read from that file on ssh_host (a server job writes it).
 ssh_host = "$ssh_host"
