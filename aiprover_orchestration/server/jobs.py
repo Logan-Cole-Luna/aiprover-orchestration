@@ -794,8 +794,23 @@ class Worker(threading.Thread):
                 if spec.get("backend") == "aiprover":
                     spec["timeout"] = timeout
         captain = config["agents"]["captain"]
-        if options.get("captain_phases") and captain["backend"] == "claude":
-            captain["phases"] = json.loads(CAPTAIN_PHASES.read_text())
+        phases = options.get("captain_phases")
+        if phases and captain["backend"] == "claude":
+            # `true` selects the default phases, a name the file
+            # captain_phases_<name>.json.
+            path = (
+                CAPTAIN_PHASES
+                if phases is True
+                else CAPTAIN_PHASES.with_name(f"captain_phases_{phases}.json")
+            )
+            # The selection's choices (the judges' tools) are kept.
+            selected = captain.get("phases") or {}
+            captain["phases"] = json.loads(path.read_text())
+            for prefix, overrides in selected.items():
+                captain["phases"][prefix] = {
+                    **captain["phases"].get(prefix, {}),
+                    **overrides,
+                }
         config_path.write_text(json.dumps(config, indent=1))
         arguments = [
             sys.executable,

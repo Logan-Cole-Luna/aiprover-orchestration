@@ -9,7 +9,8 @@ class Completion:
 
     `usage` maps each model id that served the call to a dict with the keys
     `inputTokens`, `outputTokens` and `costUSD` (one naming for all
-    backends, so that traces are uniform).
+    backends, so that traces are uniform). Backends with prompt caching add
+    `cacheReadInputTokens` and `cacheCreationInputTokens`.
     """
 
     text: str = ""

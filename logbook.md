@@ -402,6 +402,50 @@ Results
 - Per-run model choice for orchestrator and subagent (Claude model and
   reasoning level, or AIProver trained/base) on the query server page.
 
+## 2026-10-16: Problem 164 proved; slides
+
+- `srv_20261008_212508_OpenAIMath_164_HindmanDistinctExpressions` proved
+  (2026-10-15 23:26): Corollary 1.2 with Theorem 1.1 as the hypothesis
+  `HindmanFSFP.Thm11`; 15 lemmas, 839 lines of Lean, standard axioms only,
+  final review faithful; 8.7 h on the DGX solver, 26 sessions, $1.07 of
+  Claude usage without the LaTeX write-up.
+- `slides/aiprover_orchestration_openai_math.pptx`: seven slides (method,
+  formalization of 332, results for 332, 011 and 164, run trace, cost,
+  conclusions and future work) taken unchanged from the AI4Math talk;
+  comments and author records removed, an unused template photo
+  recompressed (1.7 MB).
+
+## 2026-10-16: DGX group of a cloned checkout
+
+- GPU group `dgx` resolves its harness configuration and proxy port in
+  `server/vista.py` (`dgx_configs`): `configs/aiprover/dgx.toml` and port
+  18566 for the deployment whose `work_root` it names; otherwise, after
+  `./setup`, the checkout's `orchestration_plugin/aiprover.toml` and the
+  `[proxy].listen` port of its `endpoint.toml`. `server/models.py` derives
+  `VERSION_ENDPOINTS` and `HARNESS_CONFIGS` from the group.
+- `orchestration_plugin/setup.sh endpoint` starts the reasoning proxy with
+  `--model` (`[endpoint].model`, else the first id of `/v1/models`) and
+  records it in `aiprover/work/proxy.json`; the orchestrator's model roles
+  request the name `aiprover`, which the DGX does not serve.
+- Clean-clone test on the orchestration VM in `~/test/` (README only,
+  `./setup --endpoint dgx`): doctor 17/18 with a live rollout verified on
+  the DGX; the failing row is the harness pin, expected while the
+  orchestration's changes to the `AIProver` submodule are in place. A query
+  server run with every role on the DGX reached the sketch phase.
+
+## 2026-10-15: Result rows in the dataset format
+
+- The informalization writes `results/<run_id>/<slug>_result.jsonl`: the
+  problem's fields, with the informalization's statement (through the main
+  theorem) and proof, plus `latex_macros`, `formal_proof` (Lean source) and
+  `machine_verified` (`orchestrator/reports/informal.py`). `--rebuild`
+  rewrites it without model calls.
+- The query server lists it as `result.jsonl` and places it at the root of
+  the export zip.
+- Rows written for runs `srv_20261013_195822` (332) and
+  `srv_20261008_212507` (011). The 011 row has no `domain`: its trace
+  predates that field.
+
 ## 2026-10-14: Claude subscription backend on main
 
 - Backend `claude` resolves to the subscription agent (`claude -p` with
@@ -456,6 +500,115 @@ Results
   is a repair round, and the last round accepts a compiled sketch
   (`Config.sketch_judge`, default on). The run was rewound again and
   requeued.
+- Problem 004: the judge rejected the compiled sketches of rounds 1 and 3
+  and round 4 did not compile, so the sketch phase failed. The sketch stage
+  now accepts the last compiled sketch when the rounds end without an
+  accepted one. Retry waits of agent calls (`agents/pool.py`) end when the
+  run is terminated, so a cancel does not wait for a rate-limit retry.
+- P versus NP cancelled; 004 moved to group `open` to use its server
+  (1070334) and resumed.
+- 2026-10-16: `Open_WordEquations_Length` cancelled after 7.5 h of proving
+  with no lemma proved (its sketch reduces the problem to a length-preserving
+  quadratization, which is the open step). Problem 004 resumed on the DGX in
+  its place (DGX solver, 6 lemmas and slots, its hand-back and Claude limits
+  of 120 and 220 kept), so it needs no Vista SUs.
+- 2026-10-16: Claude-alone baseline for problem 164
+  (`temp/claude_alone_164/`). One headless Claude Code session
+  (`claude-opus-5-5`, high effort, Bash and file tools, subagents, no web,
+  no project settings) receives the informal statement and proof of the
+  dataset record and must formalize and prove Corollary 1.2 with Theorem 1.1
+  as a hypothesis, on a project pinned to Lean and Mathlib v4.23.0. Caps:
+  6 h and 40 USD. Cost is the sum of `modelUsage[*].costUSD` of the CLI
+  result, the field the orchestration records, compared with 164's
+  formalize-and-prove cost of 0.82 USD. Run 1: proved in 3.4 min and 7
+  turns for 0.62 USD (Opus 17.9K output, 228K cache-read, 26.9K
+  cache-write tokens); `Hindman.lean` (314 lines) compiles with the
+  standard axioms, Theorem 1.1 is a `Prop` hypothesis, and the statement
+  reads as faithful (independent review pending). Against 8.7 h for the
+  orchestration, whose AIProver sessions proved 13 of 15 lemmas.
+- 2026-10-16: prompt caching disabled for `claude_cli` calls
+  (`DISABLE_PROMPT_CACHING=1`). Probes with the orchestration's flags: the
+  CLI writes each prompt to the one-hour cache at twice the input price and
+  reads it only when the prompt prefix repeats, which orchestration prompts
+  rarely do (shared prefix 2% of prompt text in 164, 30% in 332). Input was
+  50% (164) and 55% (332) of Claude cost, so the change lowers Claude cost
+  by about a quarter. Cache token counts are now kept in the usage of each
+  call and in the run totals. Prompt layout for cache reuse is idea 30.
+  Running processes (004) keep the previous setting until restarted.
+- 2026-10-16: Lean tools for the Claude captain, on by default
+  (`agents/claude_cli.py`, `agents/pool.py` `role_spec`). A call with tools
+  runs in a scratch Lake project under `temp/lean_tools/` (removed after the
+  call) with Write, Edit, Read, Glob, Grep and the single shell command
+  `lake env lean`; other commands and files outside the project are denied
+  (probed), and a call is limited to 10 USD. Off by default for the
+  formalization and sketch judges, the auditor, the reviewer and the writer.
+  The form has a tools choice per Claude role and one for the orchestrator's
+  judges; `captain_phases` now merges with the selection's phase choices.
+  Motivation: in 004, 16 blind sketch calls cost 21.84 USD and 68 hand-backs
+  36.98 USD; Claude with a compiler proved 164 in 3.4 min. 004 cancelled on
+  the DGX and resumed at 09:37 with captain tools (limits and economy phases
+  unchanged).
+- 2026-10-16: audit of the captain tool sandbox (decoy files, benign
+  commands only). Denied: Read and Write outside the project (absolute,
+  relative, through the packages symlink), shell commands other than
+  `lake env lean` and `echo` (cat, ls, grep, find, printenv, touch, python3,
+  curl, pipes, redirects, substitution, variable prefixes). Found: unscoped
+  Glob and Grep rules searched any path; now scoped to the project and the
+  real package tree (verified). Open issue: `lake env lean` executes the
+  file's `#eval` code with the user's rights (decoy read, process spawn and
+  file write outside the project verified); the pipeline's own compile gate
+  and the AIProver sessions share this exposure. systemd user sandboxing is
+  ineffective on this host (user namespaces restricted by AppArmor);
+  Landlock is available.
+- 2026-10-16: two layers around every Lean elaboration (pipeline checks and
+  module builds, and the captain's tools). (1) `EXECUTION_PATTERNS` in
+  `lean/checker.py`: constructs that run code are rejected before
+  elaboration and added to the forbidden constructs; no match in 13,882 Lean
+  files of past runs and sessions. (2) `lean/sandbox.py`: Landlock (ABI 4)
+  limits Lean to reading the toolchain, packages and the checked file's
+  directory, writing in the project or workspace, executing the toolchain,
+  ELF loader and `git`, no TCP, and a minimal environment; it refuses to run
+  without Landlock. The captain's shell command is now `lean-check`
+  (`lean/tool_check.py`), which accepts only Lean files inside its project.
+  Verified with decoys: reads outside, writes outside, process spawns and
+  network access are blocked; checks and builds pass (9 s and 18 s). Lake
+  runs `git` to check package sources, and without it tries to clone them
+  again, so `git` is executable in the sandbox (no shell, no TCP).
+- `Open_WordEquations_Length` moved to group `dgx`, after 164 (`after`),
+  with the DGX solver and the settings of 164; it needs no Vista SUs.
+- Problem 004 (2026-10-15 18:30): `max_handbacks` raised to 120 and
+  `max_claude_calls` to 220 after the 60 hand-back limit was reached; then
+  cancelled with its Vista server 1072443 (about 4.4 h of 12 unused) to save
+  SUs until the allocation is renewed. State at cancellation: 84 lemmas, 69
+  resolved, 15 open; the trace resumes with the new limits.
+- Problem 109 cancelled (2026-10-15): its two open lemmas are the
+  Harvey-van der Hoeven multiplier and the paper's reduction, each an
+  explicit multitape Turing machine construction for which neither Mathlib
+  nor CSLib provides the means; the captain's last four splits each
+  restated a single lemma. Its trace is kept for a conditional rerun.
+  Problem 164 (Corollary 1.2 from Theorem 1.1) resumed on the DGX in its
+  place, from its audited formalization, with the `economy` captain phases,
+  150 Claude calls, 60 hand-backs and 6 lemmas.
+- Replay tree (`trace_replay.html`): lemmas split by a hand-back are laid
+  out as subtrees below that hand-back instead of beside the sketch's
+  lemmas, so edges run downward; jobs without the kept proof are one node
+  with a coloured mark per session (click to show the sessions); lemma
+  nodes show their split depth and `subtree k/n`. The 109 tree narrowed
+  from 7,428 to 2,416 px.
+- Problem 004 after its server ended (2026-10-15): 199 of 211 sessions of
+  the prove phase reached the 60-minute limit, with 25 to 40 sessions on one
+  server configured for 8. Its options now cap lemmas and session slots at
+  8, set a 7200 s session limit, raise `max_handbacks` from 30 (reached) to
+  60, and select the `economy` captain phases (hand-backs on Sonnet 5.5),
+  since the subscription's session limit blocked a hand-back for 3 h.
+- Problem 004 resumed on 1072443 (2026-10-15 11:04) and reached its
+  run-wide `max_claude_calls` of 60 (65 billed calls), which stopped
+  hand-backs. The budget is now 150; the run was stopped and resumed from
+  its trace at 11:42.
+- Open problem `Open_WordEquations_Length` (decidability of word equations
+  with length constraints) added to `data/open_problems.jsonl`. Its run is
+  queued in group `open` after 004 (`after`): the allocation cannot cover a
+  third 12-hour server job, and the OpenAIMath runs have priority.
 
 ## 2026-10-14: Setting facts and the preamble
 
