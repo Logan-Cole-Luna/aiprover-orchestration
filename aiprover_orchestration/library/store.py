@@ -10,13 +10,11 @@ Related published work (tags defined in docs/lit_review/lit_review.md §6):
   blueprints, https://github.com/PatrickMassot/leanblueprint
 """
 
-import json
-import sqlite3
-import threading
 import time
 from pathlib import Path
 
 from ..paths import LIBRARY_DATABASE
+from ..utils.sqlite import SqliteStore
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS items (
@@ -54,14 +52,6 @@ JSON_COLUMNS = ("tags", "axioms")
 SKETCH_STATES = ("SKETCH_ACCEPTED", "ACCEPTED")
 
 
-def _decode(row: sqlite3.Row) -> dict:
-    record = dict(row)
-    for column in JSON_COLUMNS:
-        if column in record:
-            record[column] = json.loads(record[column])
-    return record
-
-
 def implied_proofs(proved: set[int], sketches: list[dict]) -> set[int]:
     """Theorems proved by `proved` together with the given sketches.
 
@@ -82,38 +72,13 @@ def implied_proofs(proved: set[int], sketches: list[dict]) -> set[int]:
     return closure
 
 
-class Store:
+class Store(SqliteStore):
     """Thread-safe access to one library database."""
 
+    json_columns = JSON_COLUMNS
+
     def __init__(self, path: Path = LIBRARY_DATABASE):
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self._connection = sqlite3.connect(path, check_same_thread=False)
-        self._connection.row_factory = sqlite3.Row
-        self._lock = threading.Lock()
-        with self._lock:
-            self._connection.executescript(SCHEMA)
-
-    def _execute(self, query: str, parameters: tuple = ()) -> list[dict]:
-        with self._lock:
-            rows = self._connection.execute(query, parameters).fetchall()
-            self._connection.commit()
-        return [_decode(row) for row in rows]
-
-    def _insert(self, table: str, record: dict) -> int:
-        record = {
-            key: json.dumps(value) if key in JSON_COLUMNS else value
-            for key, value in record.items()
-        }
-        columns = ", ".join(record)
-        placeholders = ", ".join("?" for _ in record)
-        with self._lock:
-            cursor = self._connection.execute(
-                f"INSERT INTO {table} ({columns}) VALUES ({placeholders})",
-                tuple(record.values()),
-            )
-            self._connection.commit()
-        return cursor.lastrowid
+        super().__init__(path, SCHEMA)
 
     # Items ---------------------------------------------------------------
 
@@ -173,15 +138,7 @@ class Store:
         )
 
     def update_submission(self, submission_id: int, **values) -> None:
-        values = {
-            key: json.dumps(value) if key in JSON_COLUMNS else value
-            for key, value in values.items()
-        }
-        assignments = ", ".join(f"{column} = ?" for column in values)
-        self._execute(
-            f"UPDATE submissions SET {assignments} WHERE id = ?",
-            (*values.values(), submission_id),
-        )
+        self._update("submissions", {"id": submission_id}, values)
 
     def add_edges(self, submission_id: int, child_ids: set[int]) -> None:
         for child_id in child_ids:

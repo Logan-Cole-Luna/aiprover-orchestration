@@ -28,7 +28,6 @@ import logging
 import os
 import re
 import signal
-import sqlite3
 import subprocess
 import sys
 import threading
@@ -48,6 +47,7 @@ from ..paths import (
     STATE_DIR,
     TEMP_DIR,
 )
+from ..utils.sqlite import SqliteStore
 from . import models, vista
 from .vista import run_command
 
@@ -82,6 +82,7 @@ PROGRESS_EVENTS = (
     "sketch_accepted",
     "lemma_proved",
     "replan",
+    "backjump",
 )
 OPEN_STATES = ("awaiting_approval", "queued", "running", "cancelling")
 # Per-run options the worker uses itself rather than passing to run.py:
@@ -303,43 +304,23 @@ def progress_count(run_id: str) -> int:
     return sum(step.get("event") in PROGRESS_EVENTS for step in steps)
 
 
-class JobStore:
+class JobStore(SqliteStore):
     """SQLite-backed job records; safe to share between threads."""
 
     def __init__(self, path: Path = DATABASE):
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self._connection = sqlite3.connect(path, check_same_thread=False)
-        self._connection.row_factory = sqlite3.Row
-        self._lock = threading.Lock()
-        with self._lock:
-            self._connection.executescript(SCHEMA)
-            for statement in MIGRATIONS:
-                try:
-                    self._connection.execute(statement)
-                except sqlite3.OperationalError:
-                    pass  # column exists
-            self._connection.commit()
-
-    def _execute(self, query: str, parameters: tuple = ()) -> list[dict]:
-        with self._lock:
-            rows = self._connection.execute(query, parameters).fetchall()
-            self._connection.commit()
-        return [dict(row) for row in rows]
+        super().__init__(path, SCHEMA, MIGRATIONS)
 
     def add(self, job: dict) -> None:
-        columns = ", ".join(job)
-        placeholders = ", ".join("?" for _ in job)
-        self._execute(
-            f"INSERT INTO jobs ({columns}) VALUES ({placeholders})",
-            tuple(job.values()),
-        )
+        self._insert("jobs", job)
 
     def update(self, run_id: str, **values) -> None:
-        assignments = ", ".join(f"{column} = ?" for column in values)
-        self._execute(
-            f"UPDATE jobs SET {assignments} WHERE run_id = ?",
-            (*values.values(), run_id),
-        )
+        self._update("jobs", {"run_id": run_id}, values)
+
+    def transition(self, run_id: str, expected: str, /, **values) -> bool:
+        """Update the job only if its state is `expected`; False if it is
+        not (another thread changed it first)."""
+        where = {"run_id": run_id, "state": expected}
+        return self._update("jobs", where, values) == 1
 
     def get(self, run_id: str) -> dict | None:
         rows = self._execute("SELECT * FROM jobs WHERE run_id = ?", (run_id,))
@@ -460,8 +441,7 @@ class Worker(threading.Thread):
                 if not endpoint_up:
                     candidate = None
             if candidate is not None:
-                self._execute(candidate)
-                started = True
+                started = self._execute(candidate) or started
         self._maintain_servers(running)
         if not started:
             time.sleep(POLL_SECONDS)
@@ -779,7 +759,9 @@ class Worker(threading.Thread):
             return False
         return read_summary(job["run_id"]).get("error_kind") != "interrupted"
 
-    def _execute(self, job: dict) -> None:
+    def _execute(self, job: dict) -> bool:
+        """Start a queued job; False if it left the queue meanwhile (a
+        cancellation while the worker probed the servers)."""
         run_id = job["run_id"]
         # Restarts after infrastructure failures are made by the worker, which
         # waits for a new model server; run.py's own restarts would not.
@@ -838,30 +820,43 @@ class Worker(threading.Thread):
             arguments += ["--problem-uuid", job["uuid"]]
         output_path = TEMP_DIR / f"{run_id}.out"
         output_path.parent.mkdir(exist_ok=True)
-        with open(output_path, "a") as output:
-            process = subprocess.Popen(
-                arguments,
-                cwd=ROOT,
-                stdout=output,
-                stderr=subprocess.STDOUT,
-                env={
-                    **os.environ,
-                    "PYTHONPATH": str(ROOT),
-                    "AIPROVER_CONFIG": str(group.tunnel_config),
-                },
-                start_new_session=True,
-            )
-        self.running[run_id] = process
-        self.store.update(
+        if not self.store.transition(
             run_id,
+            "queued",
             state="running",
-            pid=process.pid,
+            pid=None,
             started=job["started"] or time.time(),
-        )
+        ):
+            logger.info(f"{run_id} left the queue before it started")
+            return False
+        try:
+            with open(output_path, "a") as output:
+                process = subprocess.Popen(
+                    arguments,
+                    cwd=ROOT,
+                    stdout=output,
+                    stderr=subprocess.STDOUT,
+                    env={
+                        **os.environ,
+                        "PYTHONPATH": str(ROOT),
+                        "AIPROVER_CONFIG": str(group.tunnel_config),
+                    },
+                    start_new_session=True,
+                )
+        except OSError:
+            self.store.transition(run_id, "running", state="queued")
+            raise
+        self.running[run_id] = process
+        self.store.update(run_id, pid=process.pid)
+        # A cancellation between the start and the recorded pid found no
+        # process to signal.
+        if self.store.get(run_id)["state"] == "cancelling":
+            os.kill(process.pid, signal.SIGTERM)
         logger.info(
             f"started {run_id} (pid {process.pid}, {group.name}); "
             f"{len(self.running)} runs in progress"
         )
+        return True
 
     def _finish(self, job: dict) -> None:
         run_id = job["run_id"]
@@ -902,41 +897,42 @@ class Worker(threading.Thread):
         logger.info(f"{run_id}: {state} ({status})")
 
     def approve(self, run_id: str, approver: str) -> bool:
-        job = self.store.get(run_id)
-        if job is None or job["state"] != "awaiting_approval":
+        if not self.store.transition(
+            run_id, "awaiting_approval", state="queued", approved_by=approver
+        ):
             return False
-        self.store.update(run_id, state="queued", approved_by=approver)
         logger.info(f"{run_id} approved by {approver}")
         return True
 
     def reject(self, run_id: str, approver: str) -> bool:
-        job = self.store.get(run_id)
-        if job is None or job["state"] != "awaiting_approval":
+        if not self.store.transition(
+            run_id,
+            "awaiting_approval",
+            state="rejected",
+            approved_by=approver,
+            ended=time.time(),
+        ):
             return False
-        self.store.update(
-            run_id, state="rejected", approved_by=approver, ended=time.time()
-        )
         logger.info(f"{run_id} rejected by {approver}")
         return True
 
     def cancel(self, run_id: str) -> bool:
         """Withdraw or dequeue a job, or stop a running one; False if it is not
         open."""
-        job = self.store.get(run_id)
-        if job is None or job["state"] not in (
-            "awaiting_approval",
-            "queued",
-            "running",
-        ):
+        for state in ("awaiting_approval", "queued"):
+            if self.store.transition(
+                run_id, state, state="cancelled", ended=time.time()
+            ):
+                return True
+        if not self.store.transition(run_id, "running", state="cancelling"):
             return False
-        if job["state"] != "running":
-            self.store.update(run_id, state="cancelled", ended=time.time())
-            return True
-        self.store.update(run_id, state="cancelling")
         # SIGTERM to the orchestrator only: it unwinds, cancels its AIProver
-        # jobs and records the interruption in the trace.
-        try:
-            os.kill(job["pid"], signal.SIGTERM)
-        except (OSError, TypeError):
-            pass
+        # jobs and records the interruption in the trace. A run whose pid is
+        # not yet recorded is signalled by the worker that starts it.
+        pid = self.store.get(run_id)["pid"]
+        if pid:
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except OSError:
+                pass
         return True

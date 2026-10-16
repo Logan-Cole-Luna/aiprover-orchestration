@@ -579,13 +579,24 @@ async def check_upstreams(app: web.Application) -> None:
                 url + "/v1/models", timeout=ClientTimeout(total=10)
             ) as reply:
                 models = (await reply.json())["data"]
-        except (ClientError, asyncio.TimeoutError, KeyError, ValueError) as e:
+            # A server still loading may list no model yet.
+            served = next(
+                (model for model in models if model["id"] == app["model"]),
+                models[0],
+            )
+        except (
+            ClientError,
+            asyncio.TimeoutError,
+            KeyError,
+            ValueError,
+            TypeError,
+            IndexError,
+        ) as e:
             upstreams.down(url, e)
             continue
         if url not in upstreams.healthy:
             logger.info(f"upstream {url} reachable")
         upstreams.healthy.add(url)
-        served = next((m for m in models if m["id"] == app["model"]), models[0])
         if served.get("max_model_len"):
             contexts.append(served["max_model_len"])
     context = min(contexts, default=None) or app["max_model_len"]
@@ -597,7 +608,12 @@ async def check_upstreams(app: web.Application) -> None:
 async def monitor_upstreams(app: web.Application) -> None:
     while True:
         await asyncio.sleep(HEALTH_SECONDS)
-        await check_upstreams(app)
+        try:
+            await check_upstreams(app)
+        except Exception:  # noqa: BLE001
+            # A failed pass must not end the monitoring: a server marked
+            # down would never be used again.
+            logger.exception("upstream check failed")
 
 
 async def start(app: web.Application) -> None:

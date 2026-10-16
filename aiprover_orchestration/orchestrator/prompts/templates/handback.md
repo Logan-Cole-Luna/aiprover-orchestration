@@ -29,6 +29,11 @@ Solver agents have failed {attempts} times to prove the lemma `{lemma_name}` of 
 </carried_knowledge>
 The carried knowledge is given to every new solver session on this lemma: what earlier sessions searched, read, reasoned and wrote.
 
+<learned_clauses>
+{clauses}
+</learned_clauses>
+Learned clauses hold for the whole run (refuted statements, routes that failed and why, causes of earlier conflicts); do not propose what they exclude.
+
 Actions:
 1. Prove it yourself, when the attempts show the missing step or the lemma is routine: <proof>tactic proof of `{lemma_name}` as stated (the text after `:= by`)</proof>, optionally with <helpers>helper declarations, each named `{lemma_name}_...`</helpers>. The proof may use the lemmas listed before `{lemma_name}`.
 2. Split it, when one step is hard on its own: <split>new lemma statements `theorem name <binders> : <type> := by sorry`, one per declaration, with new names</split> and <proof>a proof of `{lemma_name}` from them and the earlier lemmas</proof>. The new lemmas are placed before `{lemma_name}` and handed to solvers.
@@ -37,5 +42,7 @@ Actions:
 5. Refute it, when the statement is false and no added hypothesis that the main proof can supply would repair it: <refute>tactic proof of `¬ (the statement of {lemma_name})` (the text after `:= by`)</refute>, optionally with <helpers>helper declarations, each named `{lemma_name}_...`</helpers>. It is compiled as `theorem {lemma_name}_refuted : ¬ (type_of% @{lemma_name})` against the definitions alone, without the other lemmas, and counts only if Lean accepts it with the standard axioms. A refuted lemma is never attempted again: no new jobs start, and you revise the sketch with the refutation in hand. Suspecting that a lemma is false is not a refutation; test a small case first, and restate (action 3) when a hypothesis is merely missing.
 
 With any action, you may replace the carried knowledge with <knowledge>notes for the next sessions</knowledge>: keep the findings that help, remove directions you judge wrong, and add the approach or Mathlib declarations you expect to work. An empty <knowledge></knowledge> clears it; without the tag it is kept.
+
+With any action, you may also add learned clauses, one per <clause>fact</clause> tag: a fact that holds beyond this lemma and that later sessions and your later decisions should not rediscover, such as a declaration absent from Mathlib, the Mathlib lemma that does the step, or why a route fails.
 
 Begin with <diagnosis>one or two sentences</diagnosis>, then the tags of one action. Lean code goes inside the tags without Markdown fences.

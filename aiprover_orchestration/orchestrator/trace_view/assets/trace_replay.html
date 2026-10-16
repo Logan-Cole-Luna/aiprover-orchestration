@@ -136,6 +136,12 @@ svg.exporting *, svg.exporting { transition: none !important; animation: none !i
 .rnode.s-fail rect.body { fill: var(--fail-soft); stroke: var(--fail); }
 .rnode.s-late rect.body { fill: url(#hatch); stroke: var(--muted); stroke-dasharray: 4 3; }
 .rnode.s-late text { fill: var(--muted); }
+.rnode rect.mark { fill: var(--surface-2); stroke: var(--line); stroke-width: 1; }
+.rnode rect.mark.m-run { fill: var(--accent-soft); stroke: var(--accent); }
+.rnode rect.mark.m-ok { fill: var(--ok); stroke: var(--ok); }
+.rnode rect.mark.m-fail { fill: var(--fail); stroke: var(--fail); }
+.rnode rect.mark.m-warn { fill: var(--warn); stroke: var(--warn); }
+.rnode rect.mark.m-empty, .rnode rect.mark.m-late { fill: var(--muted); stroke: var(--muted); opacity: 0.45; }
 .rnode .status.s-ok, .rnode .status.s-win { fill: var(--ok); }
 .rnode .status.s-fail { fill: var(--fail); }
 .rnode .status.s-run { fill: var(--accent); }
@@ -291,7 +297,7 @@ const NODE_LINES = {
   assemble: ["eyebrow", "title", "subtitle", "status"],
   final: ["eyebrow", "title", "subtitle", "status"],
 };
-const LINE_HEIGHT = { eyebrow: 16, title: 19, subtitle: 16, status: 16 };
+const LINE_HEIGHT = { eyebrow: 16, title: 19, subtitle: 16, marks: 16, status: 16 };
 const PAD_TOP = 9, PAD_BOTTOM = 14;   // bottom padding holds the progress bar
 const LANE = 160, ROW = 118;
 
@@ -300,7 +306,7 @@ const edges = [];
 const byId = new Map();
 
 function addNode(node) {
-  const lines = NODE_LINES[node.kind];
+  const lines = node.lines || NODE_LINES[node.kind];
   const h = PAD_TOP + sum(lines.map(line => LINE_HEIGHT[line])) + PAD_BOTTOM;
   Object.assign(node, { w: NODE_WIDTH[node.kind], h, lines });
   nodes.push(node);
@@ -324,14 +330,23 @@ function callNode(call, fields) {
 
 // Each accepted sketch is drawn as a tree: the sketch fans out left to right
 // into its lemmas, and the attempts on each lemma stack downward beneath it
-// (AIProver: one block per job, its parallel sessions below; chat solvers:
-// one lane per chain). A replan starts the next sketch's tree below; lemmas
-// it keeps from an earlier sketch appear as single nodes.
+// (AIProver: one block per job; chat solvers: one lane per chain). Lemmas
+// split off by a hand-back form subtrees below it. A replan starts the next
+// sketch's tree below; lemmas it keeps from an earlier sketch appear as
+// single nodes.
 const LEMMA_GAP = 60, KEPT_GAP = 30, SESSION_STEP = NODE_WIDTH.attempt + 14;
 // Sessions of a large job wrap into rows; a lower row is shifted by half a
 // step so the edges of the row above pass between its nodes.
 const SESSIONS_PER_ROW = 4, SESSION_ROW = 92;
 const sessionRows = count => Math.ceil(count / SESSIONS_PER_ROW);
+// A job without the kept proof is one node with a mark per session;
+// opening it shows its sessions as nodes.
+const expandedJobs = new Set();
+const compactJob = job => !expandedJobs.has(job.index)
+  && !jobLanes(job).some(w => sampleOutcome(job, w).state === "win");
+// Colour of a session's mark: compiled, Lean errors, sorry, or no answer.
+const markState = o => ({ win: "ok", ok: "ok", fail: "fail", late: "late" }[o.state]
+  || { verified: "ok", sorry: "warn", error: "fail", rejected: "fail" }[o.sample?.status] || "empty");
 const sessionSpan = count => (Math.min(count, SESSIONS_PER_ROW) + (count > SESSIONS_PER_ROW ? 0.5 : 0)) * SESSION_STEP - 14;
 
 function buildLayout() {
@@ -382,68 +397,75 @@ function buildLayout() {
     const replanAt = next ? (decisions.find(d => d.event === "replan" && d.index > event.index && d.index < next.index)
       || next).elapsed_seconds : null;
     const inSection = step => step.index > event.index && (!next || step.index < next.index);
-    // The sketch's lemmas, with lemmas split off by a hand-back before their parent.
+    // Lemmas split off by a hand-back form a subtree beneath their parent:
+    // they hang below the hand-back that created them, so every edge runs
+    // downward and the tree shows how the proof was decomposed.
     const splits = decisions.filter(d => d.event === "lemma_handback" && d.action === "split" && inSection(d));
-    const statements = [...(event.lemmas || [])];
-    for (const split of splits) {
-      const at = statements.findIndex(st => lemmaName(st) === split.lemma);
-      statements.splice(Math.max(0, at), 0, ...(split.new_lemmas || []));
-    }
-    const names = statements.map(lemmaName).filter(Boolean);
+    const statements = [...(event.lemmas || []), ...splits.flatMap(split => split.new_lemmas || [])];
     const statementOf = name => statements.find(st => lemmaName(st) === name);
-    const splitFrom = new Map(splits.flatMap(split => (split.new_lemmas || []).map(st => [lemmaName(st), split])));
+    const splitFrom = new Map(splits.flatMap(split => (split.new_lemmas || [])
+      .map(st => [lemmaName(st), split]).filter(([child]) => child && child !== split.lemma)));
+    const childrenOf = name => splits.filter(split => split.lemma === name)
+      .flatMap(split => (split.new_lemmas || []).map(lemmaName)).filter(child => splitFrom.get(child)?.lemma === name);
+    const depthOf = name => splitFrom.has(name) ? 1 + depthOf(splitFrom.get(name).lemma) : 0;
+    const descendantsOf = name => childrenOf(name).flatMap(child => [child, ...descendantsOf(child)]);
+    const names = (event.lemmas || []).map(lemmaName).filter(Boolean);
     const reused = new Set(decisions.filter(d => d.event === "lemma_reused" && inSection(d)).map(d => d.lemma));
     const earlier = name => sketchEvents.slice(0, k).some(e => (e.lemmas || []).some(st => lemmaName(st) === name));
     winners = []; keptNodes = [];
     const handbackNodes = new Map(), pendingSplitEdges = [];
 
-    // Lemma columns left to right, centred under the sketch; a column is as
-    // wide as the most sessions any of its jobs ran.
+    // A column is as wide as its widest job: a compact job is one node, an
+    // expanded one spans its sessions. A subtree is as wide as the larger of
+    // its column and the row of its children's subtrees.
+    const jobsOf = name => calls.filter(c => isJob(c) && c.lemma === name && inSection(c));
     const columnWidth = name => {
       if (reused.has(name)) return NODE_WIDTH.lemma;
       if (!jobsByLemma.size) return chatWidth;
-      const lanes = Math.max(0, ...calls.filter(c => isJob(c) && c.lemma === name && inSection(c)).map(jobSamples));
-      return Math.max(NODE_WIDTH.lemma, lanes ? NODE_WIDTH.job : 0, lanes ? sessionSpan(lanes) : 0);
+      return Math.max(NODE_WIDTH.lemma, ...jobsOf(name).map(job =>
+        compactJob(job) ? NODE_WIDTH.job : Math.max(NODE_WIDTH.job, sessionSpan(jobSamples(job)))));
     };
-    const widths = names.map(columnWidth);
-    // Kept lemmas sit closer together than lemmas with attempts beneath them.
-    const gaps = names.map((name, i) => !i ? 0 : reused.has(name) && reused.has(names[i - 1]) ? KEPT_GAP : LEMMA_GAP);
-    const total = sum(widths) + sum(gaps);
-    let cursor = -total / 2;
-    const lemmaY = y + ROW + 20, attemptTop = lemmaY + ROW;
-    let deepest = lemmaY, minX = 0;
-    names.forEach((name, i) => {
-      cursor += gaps[i];
-      const x = cursor + widths[i] / 2;
-      cursor += widths[i];
-      minX = Math.min(minX, x - widths[i] / 2);
-      const middle = i === Math.floor(names.length / 2);
+    const rowWidth = list => sum(list.map(subtreeWidth)) + LEMMA_GAP * Math.max(0, list.length - 1);
+    const subtreeWidth = name => Math.max(columnWidth(name), rowWidth(childrenOf(name)));
+    let deepest = y + ROW + 20, minX = 0;
+
+    // Places a lemma, its attempts, and below them the subtrees of the
+    // lemmas split from it; `top` marks a lemma of the sketch itself.
+    const placeLemma = (name, x, lemmaY, top) => {
+      const width = subtreeWidth(name);
+      minX = Math.min(minX, x - width / 2);
+      deepest = Math.max(deepest, lemmaY);
+      const middle = top && top.index === Math.floor(names.length / 2);
+      const band = top && top.index === 0 ? "Prove" : null;
       if (reused.has(name)) {
         const node = addNode({ id: `lemma:${k}:${name}`, kind: "lemma", role: "solver", x, y: lemmaY,
           start: event.elapsed_seconds, end: event.elapsed_seconds, lemma: name, carried: true,
           statement: statementOf(name), win: lemmaWins.get(name), title: name,
-          subtitle: "proved in an earlier sketch", band: i === 0 ? "Prove" : null });
+          subtitle: "proved in an earlier sketch", band });
         addEdge(sketchNode, node, "captain", { label: middle ? "kept and delegated lemmas" : "" });
         keptNodes.push(node);
         return;
       }
       const win = lemmaWins.get(name);
       const sectionWin = win && inSection(win) ? win : null;
+      const depth = depthOf(name);
+      const descendants = descendantsOf(name).map(child => lemmaWins.get(child)).map(w => w && inSection(w) ? w : null);
       const lemmaNode = addNode({ id: `lemma:${k}:${name}`, kind: "lemma", role: "solver", x, y: lemmaY,
         start: splitFrom.get(name)?.elapsed_seconds ?? event.elapsed_seconds,
         end: sectionWin ? sectionWin.elapsed_seconds : (replanAt ?? runEndTime),
         closeAt: sectionWin ? null : (replanAt ?? (outcome.status ? runEndTime : null)), replanned: replanAt != null,
-        lemma: name, win: sectionWin, title: name, statement: statementOf(name),
-        subtitle: splitFrom.has(name) ? `split from ${splitFrom.get(name).lemma}` : earlier(name) ? "restated after replan" : k ? "new in this sketch" : jobsByLemma.size
+        lemma: name, win: sectionWin, title: name, statement: statementOf(name), subtree: descendants,
+        subtitle: depth ? `depth ${depth} · split from ${splitFrom.get(name).lemma}` : earlier(name) ? "restated after replan" : k ? "new in this sketch" : jobsByLemma.size
           ? `AIProver · ${cfg.workers ?? 1} sessions per job` : `${workers.length} solvers in parallel`,
-        band: i === 0 ? "Prove" : null });
+        band });
       if (splitFrom.has(name)) pendingSplitEdges.push([splitFrom.get(name), lemmaNode]);
       else addEdge(sketchNode, lemmaNode, "captain", { label: middle ? (k ? "kept and delegated lemmas" : "delegates lemmas") : "" });
+      let bottom = lemmaY;
 
       if (jobsByLemma.size) {
-        // Jobs and hand-backs stack downward; every session of a job feeds
-        // the next item.
-        let upstream = [lemmaNode], previousItem = null, jy = attemptTop;
+        // Jobs and hand-backs stack downward; every session of an expanded
+        // job feeds the next item, a compact job feeds it directly.
+        let upstream = [lemmaNode], previousItem = null, jy = lemmaY + ROW;
         const items = calls.filter(c => inSection(c) && ((isJob(c) && c.lemma === name) || handbackLemma(c) === name))
           .sort((a, b) => a.index - b.index);
         items.forEach(item => {
@@ -456,28 +478,34 @@ function buildLayout() {
               u === Math.floor((upstream.length - 1) / 2) ? { label: "hand-back" } : {}));
             if (decision?.action === "proof" || decision?.action === "split") winners.push(node);
             if (decision) handbackNodes.set(decision.index, node);
-            upstream = [node]; previousItem = item; jy += ROW;
-            deepest = Math.max(deepest, node.y);
+            upstream = [node]; previousItem = item; bottom = jy; jy += ROW;
             return;
           }
           const job = item;
           const lanes = jobLanes(job);
           const outcomes = lanes.map(w => sampleOutcome(job, w));
           const start = Math.min(...outcomes.map(o => o.start));
+          const compact = compactJob(job);
           const jobNode = addNode({ id: `j${job.index}`, kind: "job", x, y: jy, step: job, role: "solver",
-            start, replied: job.elapsed_seconds, end: job.elapsed_seconds, outcomes, lemma: name,
+            start, replied: job.elapsed_seconds, end: job.elapsed_seconds, outcomes, lemma: name, compact,
+            lines: compact ? ["title", "subtitle", "marks", "status"] : null,
             title: `AIProver job ${jobNumber(job)}`,
             subtitle: `${formatClock(start)} · ${formatDuration(job.elapsed_seconds - start)} · ${plural(lanes.length, "session")}` });
           const label = !previousItem ? "" : isHandback(previousItem) ? "after hand-back" : transitionText(previousItem, job);
           upstream.forEach((up, u) => addEdge(up, jobNode, "solver",
             label && u === Math.floor((upstream.length - 1) / 2) ? { label } : {}));
+          previousItem = job; bottom = jy;
+          if (compact) {
+            upstream = [jobNode]; jy += ROW;
+            return;
+          }
           const perRow = Math.min(lanes.length, SESSIONS_PER_ROW);
           upstream = lanes.map((sampleIndex, w) => {
             const outcome = outcomes[w];
             const row = Math.floor(w / SESSIONS_PER_ROW), column = w % SESSIONS_PER_ROW;
             const shift = row % 2 ? 0.5 : (lanes.length > SESSIONS_PER_ROW ? -0.5 : 0);
             const ay = jy + ROW + row * SESSION_ROW;
-            deepest = Math.max(deepest, ay);
+            bottom = Math.max(bottom, ay);
             const node = addNode({ id: `a${job.index}s${sampleIndex}`, kind: "attempt",
               x: x + (column - (perRow - 1) / 2 + shift / 2) * SESSION_STEP, y: ay,
               step: job, check: outcome.check, role: "solver", sample: sampleIndex, outcome,
@@ -490,33 +518,51 @@ function buildLayout() {
             if (outcome.state === "win") winners.push(node);
             return node;
           });
-          previousItem = job; jy += 2 * ROW + (sessionRows(lanes.length) - 1) * SESSION_ROW;
+          jy += 2 * ROW + (sessionRows(lanes.length) - 1) * SESSION_ROW;
         });
-        return;
+      } else {
+        // Chat solvers: one lane per chain, its repair rounds stacked downward.
+        workers.forEach((worker, w) => {
+          const laneX = x + (w - (workers.length - 1) / 2) * LANE;
+          let upstream = lemmaNode;
+          calls.filter(c => c.lemma === name && c.worker === worker && inSection(c))
+            .sort((a, b) => a.index - b.index).forEach((call, r) => {
+              const ay = lemmaY + ROW + r * ROW;
+              bottom = Math.max(bottom, ay);
+              const node = addNode({ id: `a${call.index}`, kind: "attempt", x: laneX, y: ay, ...callNode(call, {
+                title: `solver ${worker} · r${call.round}`, subtitle: `#${call.index} · ${formatClock(callStart(call))}`,
+                lemma: name, worker }) });
+              const label = upstream.kind === "attempt" ? transitionText(upstream.step, call) : "";
+              addEdge(upstream, node, "solver", label ? { repair: label === "errors", label } : {});
+              upstream = node;
+              if (sectionWin && sameAttempt(sectionWin, call)) winners.push(node);
+            });
+        });
       }
-      // Chat solvers: one lane per chain, its repair rounds stacked downward.
-      workers.forEach((worker, w) => {
-        const laneX = x + (w - (workers.length - 1) / 2) * LANE;
-        let upstream = lemmaNode;
-        calls.filter(c => c.lemma === name && c.worker === worker && inSection(c))
-          .sort((a, b) => a.index - b.index).forEach((call, r) => {
-            const ay = attemptTop + r * ROW;
-            deepest = Math.max(deepest, ay);
-            const node = addNode({ id: `a${call.index}`, kind: "attempt", x: laneX, y: ay, ...callNode(call, {
-              title: `solver ${worker} · r${call.round}`, subtitle: `#${call.index} · ${formatClock(callStart(call))}`,
-              lemma: name, worker }) });
-            const label = upstream.kind === "attempt" ? transitionText(upstream.step, call) : "";
-            addEdge(upstream, node, "solver", label ? { repair: label === "errors", label } : {});
-            upstream = node;
-            if (sectionWin && sameAttempt(sectionWin, call)) winners.push(node);
-          });
+      deepest = Math.max(deepest, bottom);
+      const children = childrenOf(name);
+      let cursor = x - rowWidth(children) / 2;
+      children.forEach(child => {
+        const childWidth = subtreeWidth(child);
+        placeLemma(child, cursor + childWidth / 2, bottom + ROW + 20, null);
+        cursor += childWidth + LEMMA_GAP;
       });
+    };
+
+    // The sketch's lemmas left to right, centred under the sketch; kept
+    // lemmas sit closer together than lemmas with attempts beneath them.
+    const widths = names.map(subtreeWidth);
+    const gaps = names.map((name, i) => !i ? 0 : reused.has(name) && reused.has(names[i - 1]) ? KEPT_GAP : LEMMA_GAP);
+    let cursor = -(sum(widths) + sum(gaps)) / 2;
+    names.forEach((name, i) => {
+      cursor += gaps[i];
+      placeLemma(name, cursor + widths[i] / 2, y + ROW + 20, { index: i });
+      cursor += widths[i];
     });
     // A split lemma hangs from the hand-back that created it.
     for (const [split, lemmaNode] of pendingSplitEdges) {
-      const from = handbackNodes.get(split.index);
-      if (from) addEdge(from, lemmaNode, "captain", { label: "split" });
-      else addEdge(sketchNode, lemmaNode, "captain");
+      const from = handbackNodes.get(split.index) || byId.get(`lemma:${k}:${split.lemma}`);
+      addEdge(from || sketchNode, lemmaNode, "captain", { label: "split" });
     }
     y = deepest + 30;
     bypass = minX - 40;
@@ -572,15 +618,25 @@ buildLayout();
 
 // Node status at trace time t --------------------------------------------------------
 
+// Conflict-driven backjumps (cdcl.py): each retracts a subtree of lemmas.
+const backjumps = steps.filter(step => step.event === "backjump");
+
 function nodeState(node, t) {
   if (t < node.start) return { phase: "hidden" };
   if (node.kind === "problem" || node.kind === "root") return { phase: "done", status: "neutral", line: node.kind === "root" ? `${callsByRole("captain").length} calls in this run` : "" };
   if (node.kind === "lemma") {
     if (node.carried) return { phase: "done", status: "ok", line: "kept ✓" };
-    if (node.win && t >= node.win.elapsed_seconds) return { phase: "done", status: "ok", line: `proved · ${winnerText(node.win)}` };
+    if (backjumps.some(b => (b.retracted || []).includes(node.lemma) && t >= b.elapsed_seconds))
+      return { phase: "done", status: "neutral", line: "retracted by a backjump" };
+    // A split lemma's own proof uses its parts; the count says how many
+    // lemmas of its subtree are proved.
+    const parts = node.subtree?.length
+      ? ` · subtree ${node.subtree.filter(w => w && t >= w.elapsed_seconds).length}/${node.subtree.length}` : "";
+    if (node.win && t >= node.win.elapsed_seconds)
+      return { phase: "done", status: "ok", line: parts ? `proved by split${parts}` : `proved · ${winnerText(node.win)}` };
     if (node.closeAt != null && t >= node.closeAt)
-      return { phase: "done", status: "fail", line: node.replanned ? "not proved · to replan" : "not proved" };
-    return { phase: "running", status: "run", line: "solvers working", progress: null };
+      return { phase: "done", status: "fail", line: (node.replanned ? "not proved · to replan" : "not proved") + parts };
+    return { phase: "running", status: "run", line: "solvers working" + parts, progress: null };
   }
   if (node.kind === "job") {
     if (t < node.replied) {
@@ -686,6 +742,9 @@ function nodeMarkup(node) {
       text += `<text x="${left + (hasChip ? 26 : 14)}" y="${baseline}" class="t1${mono ? " mono" : ""}">${escapeHTML(clip(node.title || "", fit.title))}</text>`;
     } else if (line === "subtitle") {
       text += `<text x="${left + 14}" y="${baseline}" class="t3">${escapeHTML(clip(node.subtitle || "", fit.subtitle))}</text>`;
+    } else if (line === "marks") {
+      text += node.outcomes.map((o, i) => `<rect class="mark" data-mark="${i}" x="${left + 14 + i * 14}" `
+        + `y="${baseline - 10}" width="10" height="10" rx="2"><title>session ${i}: ${escapeHTML(o.text)}</title></rect>`).join("");
     } else if (line === "status") {
       statusY = baseline;
     }
@@ -755,6 +814,15 @@ function updateGraph(t) {
     node.progressEl.style.display = showBar ? "" : "none";
     if (showBar) node.progressEl.setAttribute("width", Math.max(0, Math.min(1, state.progress)) * (node.w - 20));
     node.state = state;
+    if (node.compact) {
+      const marks = node.outcomes.map(o => t < o.start ? "" : t < o.end ? "m-run" : `m-${markState(o)}`);
+      const shown = marks.join("|");
+      if (shown !== node.marksShown) {
+        node.marksShown = shown;
+        node.markEls ??= [...node.el.querySelectorAll("[data-mark]")];
+        node.markEls.forEach((el, i) => el.setAttribute("class", `mark ${marks[i]}`));
+      }
+    }
   }
   const packetSpan = PACKET_SECONDS * speed;
   for (const edge of edges) {
@@ -841,6 +909,13 @@ function describe(step) {
       : (step.problems || []).join(" ") };
   if (step.event === "lemma_handback") return { t: step.elapsed_seconds, role: "captain",
     title: `Hand-back of ${step.lemma}: ${step.action}`, text: step.diagnosis || "" };
+  if (step.event === "conflict") return { t: step.elapsed_seconds, role: "captain",
+    title: `Conflict at ${step.lemma}: ${step.action}`, text: `${(step.stuck || []).length} stuck lemmas. ${step.diagnosis || ""}` };
+  if (step.event === "backjump") return { t: step.elapsed_seconds, role: "captain",
+    title: `Backjump to ${step.lemma}`,
+    text: `The captain restates ${step.lemma} and retracts ${(step.retracted || []).length} lemmas below it. ${step.diagnosis || ""}` };
+  if (step.event === "clause_learned") return { t: step.elapsed_seconds, role: "captain",
+    title: `Clause learned (${step.clause_kind})`, text: step.fact || "" };
   if (step.event === "replan") return { t: step.elapsed_seconds, role: "captain", title: "Captain revises the sketch",
     text: "Some lemmas were not proved within budget; the captain writes a new decomposition." };
   return null;
@@ -1013,7 +1088,18 @@ function openNode(node) {
         .map(([k, v]) => `<tr><td class="num">${k}</td><td>${v ? `<span class="pill ok">pass</span>` : `<span class="pill fail">fail</span>`}</td></tr>`).join("")}</table>
        ${leanHTML(node.step.solution || "", new Set(), "tall")}`);
   }
+  if (node.kind === "job" && (node.compact || expandedJobs.has(node.step.index))) toggleJob(node);
   if (node.step) showStep(node.step.index, node.sample ?? null);
+}
+
+// Shows or hides a job's sessions and lays the tree out again.
+function toggleJob(node) {
+  const id = node.step.index;
+  if (!expandedJobs.delete(id)) expandedJobs.add(id);
+  nodes.length = 0; edges.length = 0; byId.clear(); BANDS.length = 0;
+  buildLayout();
+  renderGraph();
+  updateGraph(time);
 }
 
 // Export ------------------------------------------------------------------------------

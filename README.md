@@ -4,8 +4,11 @@ Tools for mathematicians to direct AI agents at their problems in Lean 4. An
 orchestrator formalizes a problem, has the formalization audited blind,
 decomposes the proof into lemmas and proves them with Claude and the AIProver
 model; a theorem library records what is formalized and proved; a query
-server exposes both over HTTP. All verification is local (Lean v4.23.0,
-Mathlib v4.23.0, `autoImplicit false`).
+server exposes both over HTTP. Failures are learned from as a CDCL solver
+learns from conflicts: stuck lemmas trigger a conflict analysis whose learned
+clauses reach every later job, and a backjump restates the decision that
+caused them. All verification is local and sandboxed (Lean v4.23.0, Mathlib
+v4.23.0, `autoImplicit false`).
 
 ```mermaid
 flowchart LR
@@ -14,6 +17,7 @@ flowchart LR
     S --> L[Theorem library<br/>library/]
     O -->|captain, auditor,<br/>reviewer, writer| C[Model APIs<br/>agents/]
     O -->|solvers| A[AIProver harness<br/>AIProver/]
+    O <-->|conflicts, learned clauses| K[CDCL learning<br/>orchestrator/cdcl.py]
     A --> V[AIProver model<br/>TACC Vista / DGX]
     O --> W[Lean workspace<br/>orchestration_workspace/]
     L --> W
@@ -120,6 +124,9 @@ aiprover/nix/tools/bin/python3 -m aiprover_orchestration.library verify NAME FIL
 
 # Trace pages of a run
 aiprover/nix/tools/bin/python3 -m aiprover_orchestration.orchestrator.trace_view results/<run_id>/trace.json
+
+# Tests (about 2 min; those that need Lean are skipped without it)
+aiprover/nix/tools/bin/python3 -m unittest discover -s tests -t .
 ```
 
 Each role of a run config names a backend: `claude`, `openai_compatible`

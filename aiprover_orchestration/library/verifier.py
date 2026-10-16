@@ -17,7 +17,12 @@ Gating rules for a submission:
 import re
 from pathlib import Path
 
-from ..lean.checker import build, forbidden_constructs, nonstandard_axioms
+from ..lean.checker import (
+    build,
+    forbidden_constructs,
+    nonstandard_axioms,
+    sorry_after,
+)
 from ..lean.layout import (
     NAME_RE,
     SOLUTION_NAME,
@@ -26,12 +31,12 @@ from ..lean.layout import (
     module_path,
     with_header,
 )
-from ..lean.text import imports, strip_comments
+from ..lean.text import declaration_names, imports, strip_comments
 from ..paths import WORKSPACE
 from .store import Store, implied_proofs
 
 # Imported Open theorems carry `sorry`; a sketch's proof depends on it only
-# through them.
+# through them, since the submission's own module may not use `sorry`.
 SKETCH_AXIOM = "sorryAx"
 SORRY_STATEMENT_RE = re.compile(r":=\s*by\s+sorry\s*$")
 
@@ -109,7 +114,7 @@ class Library:
         code = strip_comments(text)
         constructs = [c for c in constructs if c != "sorry"]
         problems = [f"forbidden: {', '.join(constructs)}"] if constructs else []
-        if not re.search(rf"^theorem\s+{re.escape(name)}\b", code, re.M):
+        if name not in declaration_names(text, ("theorem",)):
             problems.append(f"no top-level `theorem {name}`")
         if not SORRY_STATEMENT_RE.search(code):
             problems.append("statement must end in `:= by sorry`")
@@ -166,9 +171,7 @@ class Library:
         problems, children = self._import_problems(
             text, theorems_allowed=not disproof, target=target
         )
-        if not re.search(
-            rf"^theorem\s+{SOLUTION_NAME}\b", strip_comments(text), re.M
-        ):
+        if SOLUTION_NAME not in declaration_names(text, ("theorem",)):
             problems.append(f"no top-level `theorem {SOLUTION_NAME}`")
         constructs = forbidden_constructs(text)
         if constructs:
@@ -193,10 +196,12 @@ class Library:
             return self._finish(submission_id, "ERROR", str(error))
         finally:
             check_path.unlink(missing_ok=True)
-        if not result.ok:
+        if not result.ok or sorry_after(result, 1, solution_path):
             solution_path.unlink(missing_ok=True)
             return self._finish(
-                submission_id, "REJECTED", result.error_report()
+                submission_id,
+                "REJECTED",
+                result.error_report() if not result.ok else "uses sorry",
             )
 
         axioms = result.axioms.get(SOLUTION_NAME, [])

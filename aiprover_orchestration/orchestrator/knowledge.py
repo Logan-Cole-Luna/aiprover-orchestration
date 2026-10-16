@@ -16,6 +16,13 @@ wrong way.
 the sessions found and used and the searches that found nothing. Every job
 receives it, so that sessions on other lemmas neither repeat failed searches
 nor rediscover the same declarations; it is rebuilt from the trace on resume.
+The run's own declarations (definitions, setting facts, lemmas) are kept out
+of it: a search of Mathlib for them fails because they are not Mathlib's.
+
+`setting_index` lists those declarations with their line in the session's
+`Context.lean`, and `SEARCH_GUIDANCE` directs sessions to semantic search;
+both lead the guidance of every job, with the run's learned clauses
+(cdcl.py).
 
 Related published work (tags defined in docs/lit_review/lit_review.md §6):
 - [Similar] Verbal memory of failed trials carried into the next attempt:
@@ -29,6 +36,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 
 from ..agents.aiprover import AIProverSample
+from ..lean.text import declaration_names, declarations
 
 SEARCH_TOOLS = {
     "grep": "pattern",
@@ -65,12 +73,39 @@ TACTICS = {
     "simp_rw", "simp_all", "norm_num", "norm_cast", "push_cast", "push_neg",
     "field_simp", "exact_mod_cast", "rw_mod_cast", "split_ifs", "by_contra",
     "by_cases", "apply_fun", "interval_cases", "fin_cases", "set_option",
-    "simp_arith", "exact?", "apply?", "le_rfl",
+    "simp_arith", "exact?", "apply?", "le_rfl", "mod_cast",
 }
 # Hypotheses and bound variables (`h_geom.tsum_eq`, `I.IsMaximal`,
 # `mR.mapCotangent`): a first component that is one capital, or lowercase
 # and short, unlike Mathlib's namespaces (`Set`, `Nat`, `Ideal`).
-LOCAL = re.compile(r"^(?:h\w*|[A-Z]|[a-z][A-Za-z0-9']{0,2})(?:\.|$)|^h_")
+LOCAL = re.compile(
+    r"^(?:h\w*|[A-Z]|[a-z][A-Za-z0-9']{0,2})(?:\.|$)|^h_|^[a-z]_\w{1,2}$"
+)
+# Run files that the identifier pattern also matches (`problem.txt`).
+FILE_NAME = re.compile(r"\.(?:txt|lean|json|md)$")
+# Kinds of the run's own declarations that sessions look up by name.
+RUN_KINDS = (
+    "theorem",
+    "lemma",
+    "def",
+    "abbrev",
+    "instance",
+    "structure",
+    "class",
+    "inductive",
+)
+MAX_SETTING_NAMES = 80
+SEARCH_GUIDANCE = (
+    "How to search. The declarations listed under 'Defined in the Setting' "
+    "are this run's own: read them in `Context.lean` in your working "
+    "directory (or in problem.txt); never search Mathlib for them. To find "
+    "a Mathlib fact, describe it in words to `m_lean_leanfinder` (semantic "
+    "search over this project's Mathlib) first, then use "
+    "`m_lean_local_search` or `m_lean_loogle` for a name or a type pattern; "
+    "`m_lean_local_search` also covers cslib, the Lean library for computer "
+    "science (computability, automata). Use `grep` only for an exact name "
+    "you already know, or within `Context.lean`."
+)
 HEADER = (
     "Notes from earlier attempts on this lemma, kept by the coordinator. "
     "Build on what they found; do not repeat searches that found nothing."
@@ -298,20 +333,33 @@ class MathlibMap:
         return mathlib
 
     def text(self, exclude: set[str] = frozenset()) -> str:
-        """The map as guidance, without the names in `exclude` (the run's
-        own lemmas). A failed search is listed only while no found name
-        contains its query's terms."""
+        """The map as guidance, without the run's own declarations
+        (`exclude`): neither as found names nor in failed searches. A failed
+        search is listed only while no found name contains its query's
+        terms."""
         lines = []
         names = [
             name
             for name, _ in self.found.most_common()
             if name not in exclude
+            and name.rsplit(".", 1)[-1] not in exclude
+            and not FILE_NAME.search(name)
         ][:MAX_FOUND]
         found_text = " ".join(names).lower()
+        own = (
+            re.compile(
+                r"(?<![\w.'])(?:"
+                + "|".join(map(re.escape, sorted(exclude, key=len)[::-1]))
+                + r")(?![\w'])"
+            )
+            if exclude
+            else None
+        )
         misses = [
             miss
             for miss, _ in self.absent.most_common()
-            if not any(
+            if not (own and own.search(miss))
+            and not any(
                 term.lower() in found_text
                 for term in IDENTIFIER.findall(miss)
             )
@@ -332,10 +380,44 @@ class MathlibMap:
         return "\n".join(lines)
 
 
-def hint(knowledge: str, mathlib: str = "") -> str:
-    """The guidance a job receives: the run's Mathlib map and the lemma's
+def declared_names(lean_text: str) -> set[str]:
+    """Names declared in the run's Lean text, qualified and unqualified."""
+    names = set()
+    for name in declaration_names(lean_text, RUN_KINDS):
+        names.add(name)
+        names.add(name.rsplit(".", 1)[-1])
+    return names
+
+
+def setting_index(context: str) -> str:
+    """The declarations of a job's context with their line in
+    `Context.lean`, the copy of the context in the session's project."""
+    entries = [
+        f"`{name}` ({kind}, line {line})"
+        for kind, name, line in declarations(context)
+        if name and kind in RUN_KINDS
+    ]
+    if not entries:
+        return ""
+    shown = entries[:MAX_SETTING_NAMES]
+    more = len(entries) - len(shown)
+    return (
+        "Defined in the Setting (this run's declarations, in `Context.lean` "
+        "and problem.txt, not in Mathlib): "
+        + ", ".join(shown)
+        + (f", and {more} more in `Context.lean`" if more else "")
+    )
+
+
+def hint(
+    knowledge: str, mathlib: str = "", setting: str = "", clauses: str = ""
+) -> str:
+    """The guidance a job receives: the run's declarations and how to
+    search, the run's learned clauses, its Mathlib map, and the lemma's
     carried notes."""
-    parts = [mathlib] if mathlib else []
+    parts = [
+        part for part in (setting, SEARCH_GUIDANCE, clauses, mathlib) if part
+    ]
     if knowledge:
         parts.append(f"{HEADER}\n\n{knowledge}")
     return "\n\n".join(parts)

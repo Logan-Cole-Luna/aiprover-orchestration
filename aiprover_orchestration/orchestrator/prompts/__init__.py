@@ -58,6 +58,8 @@ REFUTATION_REPAIR_TEMPLATE = template("refutation_repair")
 REPLAN_FEEDBACK_TEMPLATE = template("replan_feedback")
 HANDBACK_TEMPLATE = template("handback")
 HANDBACK_REPAIR_TEMPLATE = template("handback_repair")
+# Conflict analysis over the lemma tree (cdcl.py).
+CONFLICT_TEMPLATE = template("conflict")
 
 # Solvers.
 SOLVER_TEMPLATE = template("solver")
