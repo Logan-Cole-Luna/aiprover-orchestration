@@ -2,7 +2,9 @@
 
 Each pending lemma is attacked by `workers` independent chains. A chain
 proposes a proof, receives Lean errors and repairs; the first proof that
-compiles is kept and the other chains of that lemma stop. With an AIProver
+compiles is kept and the other chains of that lemma stop. A phase in which
+every chain fails counts as one attempt on the lemma's statement
+(`aiprover_attempts_per_lemma` per statement over the run). With an AIProver
 solver the lemmas go to AIProver jobs instead (`stages/aiprover.py`).
 
 Related published work (tags defined in docs/lit_review/lit_review.md §6):
@@ -15,7 +17,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 
 from ...agents.aiprover import AIProverAgent
-from ...lean.checker import forbidden_constructs
+from ...lean.checker import forbidden_problems
 from ...lean.text import (
     declaration_names,
     drop_imports,
@@ -28,6 +30,7 @@ from ..structures import (
     Sketch,
     extract_tactics,
     extract_tag,
+    stub_listing,
 )
 
 logger = logging.getLogger(__name__)
@@ -46,17 +49,18 @@ class ProveStage:
         if isinstance(self.agents.agents["solver"], AIProverAgent):
             self._prove_with_aiprover(form, sketch, pending)
             return
+        # A lemma whose statement has spent the run's attempt budget is left
+        # to the replan.
+        pending = [
+            (k, lemma) for k, lemma in pending if not self._exhausted(lemma)
+        ]
+        if not pending:
+            return
         solved = {lemma.name: threading.Event() for _, lemma in pending}
         result_lock = threading.Lock()
 
         def chain(k: int, lemma: Lemma, worker: int) -> None:
-            available = (
-                "\n\n".join(
-                    f"{earlier.statement} := by sorry"
-                    for earlier in sketch.lemmas[:k]
-                )
-                or "(none)"
-            )
+            available = stub_listing(sketch.lemmas[:k]) or "(none)"
             feedback = ""
             for repair in range(self.config.max_repairs + 1):
                 if solved[lemma.name].is_set():
@@ -80,10 +84,7 @@ class ProveStage:
                 helpers = drop_imports(extract_tag(reply, "helpers"))
                 proof = extract_tactics(reply, "proof")
                 attempt = f"{lemma.statement} := by\n{indent(proof)}"
-                problems = [
-                    f"forbidden construct: {name}"
-                    for name in forbidden_constructs(helpers + "\n" + proof)
-                ]
+                problems = forbidden_problems(helpers + "\n" + proof)
                 problems += [
                     f"helper `{name}` must be named " f"`{lemma.name}_...`"
                     for name in declaration_names(helpers)
@@ -92,17 +93,17 @@ class ProveStage:
                 if not proof:
                     problems.append("empty proof")
                 if not problems:
-                    body = "\n\n".join(
-                        filter(None, [available if k else "", helpers, attempt])
-                    )
-                    result = self._check(
+                    _, problem = self._check_proof(
+                        form,
+                        stub_listing(sketch.lemmas[:k]),
+                        lemma,
+                        helpers,
+                        proof,
                         f"{lemma.name}_w{worker}_r{repair}",
-                        self._standalone(form, body),
-                        lemma=lemma.name,
                         worker=worker,
                         round=repair,
                     )
-                    if result.ok:
+                    if not problem:
                         with result_lock:
                             if not solved[lemma.name].is_set():
                                 lemma.helpers, lemma.proof = helpers, proof
@@ -112,16 +113,9 @@ class ProveStage:
                                     f"lemma {lemma.name} proved by worker "
                                     f"{worker} at repair {repair}"
                                 )
-                                self._decision(
-                                    "lemma_proved",
-                                    lemma=lemma.name,
-                                    worker=worker,
-                                    round=repair,
-                                    helpers=helpers,
-                                    proof=proof,
-                                )
+                                self._record_proof(lemma, worker, repair)
                         return
-                    problems.append(result.error_report())
+                    problems.append(problem)
                 else:
                     self._decision(
                         "solver_attempt_rejected",
@@ -161,3 +155,9 @@ class ProveStage:
             ]
             for future in futures:
                 future.result()
+        for _, lemma in pending:
+            if not lemma.proved:
+                self.state.count_attempt(lemma)
+                self._decision(
+                    "lemma_failed", lemma=lemma.name, attempts=lemma.attempts
+                )

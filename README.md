@@ -124,6 +124,9 @@ aiprover/nix/tools/bin/python3 -m aiprover_orchestration.library verify NAME FIL
 
 # Trace pages of a run
 aiprover/nix/tools/bin/python3 -m aiprover_orchestration.orchestrator.trace_view results/<run_id>/trace.json
+
+# Tests (about 2 min; those that need Lean are skipped without it)
+aiprover/nix/tools/bin/python3 -m unittest discover -s tests -t .
 ```
 
 Each role of a run config names a backend: `claude`, `openai_compatible`

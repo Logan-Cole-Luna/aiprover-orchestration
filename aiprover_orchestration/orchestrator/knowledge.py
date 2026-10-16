@@ -36,6 +36,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 
 from ..agents.aiprover import AIProverSample
+from ..lean.text import declaration_names, declarations
 
 SEARCH_TOOLS = {
     "grep": "pattern",
@@ -82,12 +83,16 @@ LOCAL = re.compile(
 )
 # Run files that the identifier pattern also matches (`problem.txt`).
 FILE_NAME = re.compile(r"\.(?:txt|lean|json|md)$")
-# Declarations of the run's own Lean text, with their kind.
-RUN_DECLARATION = re.compile(
-    r"^\s*(?:@\[[^\]]*\]\s*)?(?:(?:private|protected|noncomputable)\s+)*"
-    r"(theorem|lemma|def|abbrev|instance|structure|class|inductive)\s+"
-    r"([^\s(:{\[]+)",
-    re.M,
+# Kinds of the run's own declarations that sessions look up by name.
+RUN_KINDS = (
+    "theorem",
+    "lemma",
+    "def",
+    "abbrev",
+    "instance",
+    "structure",
+    "class",
+    "inductive",
 )
 MAX_SETTING_NAMES = 80
 SEARCH_GUIDANCE = (
@@ -378,7 +383,7 @@ class MathlibMap:
 def declared_names(lean_text: str) -> set[str]:
     """Names declared in the run's Lean text, qualified and unqualified."""
     names = set()
-    for _, name in RUN_DECLARATION.findall(lean_text):
+    for name in declaration_names(lean_text, RUN_KINDS):
         names.add(name)
         names.add(name.rsplit(".", 1)[-1])
     return names
@@ -387,10 +392,11 @@ def declared_names(lean_text: str) -> set[str]:
 def setting_index(context: str) -> str:
     """The declarations of a job's context with their line in
     `Context.lean`, the copy of the context in the session's project."""
-    entries = []
-    for match in RUN_DECLARATION.finditer(context):
-        line = context.count("\n", 0, match.start(2)) + 1
-        entries.append(f"`{match.group(2)}` ({match.group(1)}, line {line})")
+    entries = [
+        f"`{name}` ({kind}, line {line})"
+        for kind, name, line in declarations(context)
+        if name and kind in RUN_KINDS
+    ]
     if not entries:
         return ""
     shown = entries[:MAX_SETTING_NAMES]

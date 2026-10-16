@@ -130,8 +130,10 @@ class Config:
     # AIProver lemma jobs in flight at once; 0 = all pending lemmas. Each job
     # runs `workers` sessions that share one model server.
     aiprover_lemma_concurrency: int = 0
-    # AIProver jobs per lemma statement that run to completion; jobs stopped
-    # by a lost model server or an interruption do not count.
+    # Failed attempts per lemma statement over the run (AIProver jobs that
+    # run to completion, or prove phases of chat solvers); jobs stopped by a
+    # lost model server or an interruption do not count. A replan may not
+    # state an unproved statement whose attempts are spent.
     aiprover_attempts_per_lemma: int = 1
     # Sessions per model server shared by the AIProver jobs in flight; 0 =
     # `workers` per job.
