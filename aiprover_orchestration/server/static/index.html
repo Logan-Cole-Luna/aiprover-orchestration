@@ -160,7 +160,7 @@ summary .note { color: var(--muted); font-weight: 400; font-size: 0.85rem; margi
         <textarea id="proof"></textarea>
       </div>
       <div id="form-uuid" class="hidden">
-        <label for="uuid">JiatuBook problem</label>
+        <label for="uuid">Problem</label>
         <select id="uuid"></select>
       </div>
       <details>
@@ -179,7 +179,7 @@ summary .note { color: var(--muted); font-weight: 400; font-size: 0.85rem; margi
         <small class="models-note" id="models-note">Roles that use AIProver must use the same version.</small>
         <label for="gpu-group">GPU group</label>
         <select id="gpu-group" style="max-width:240px"><option value="main">main</option></select>
-        <small class="models-note">Each group has its own model server on Vista; runs of a group share it. Group <code>cpu</code> has none: every role, including the subagent, must use Claude or a hosted model.</small>
+        <small class="models-note" id="gpu-note">Each group has its own model server on Vista; runs of a group share it. Group <code>cpu</code> has none: every role, including the subagent, must use Claude or a hosted model.</small>
       </details>
       <div class="row" style="margin-top:16px">
         <button id="submit">Submit</button>
@@ -215,6 +215,11 @@ summary .note { color: var(--muted); font-weight: 400; font-size: 0.85rem; margi
 </main>
 <script>
 const $ = id => document.getElementById(id);
+// The user page (/user) offers the DGX, the open and OpenAI math problems and
+// the runs submitted from it; the development page (/dev) offers everything.
+// Every API call names the page.
+const PAGE = location.pathname.replace(/\/+$/, "") === "/dev" ? "dev" : "user";
+const PAGE_QUERY = `?page=${PAGE}`;
 let selected = null, stream = null, me = null, timers = null, catalog = null;
 // Roles with a model choice, from GET /api/models.
 let ROLES = [];
@@ -234,6 +239,7 @@ async function api(path, options = {}) {
 function showLogin() { $("login").classList.remove("hidden"); $("app").classList.add("hidden"); }
 
 async function start() {
+  $("gpu-note").classList.toggle("hidden", PAGE !== "dev");
   me = await api("/api/me");
   $("user").textContent = me.approver ? `${me.user} (approver)`
     : me.auth_required ? me.user : "open access";
@@ -241,7 +247,7 @@ async function start() {
   $("approver-login").classList.toggle("hidden", me.approver || !me.auth_required);
   $("login").classList.add("hidden");
   $("app").classList.remove("hidden");
-  const problems = await api("/api/problems");
+  const problems = await api("/api/problems" + PAGE_QUERY);
   $("uuid").innerHTML = problems.map(p =>
     `<option value="${p.uuid}">${p.uuid}${p.label ? " — " + escapeHtml(p.label) : ""}</option>`).join("");
   const libraries = await api("/api/libraries").catch(() => []);
@@ -251,7 +257,7 @@ async function start() {
   // The run list does not depend on the model choices, so it loads either way.
   if (!catalog) {
     try {
-      catalog = await api("/api/models"); buildPickers();
+      catalog = await api("/api/models" + PAGE_QUERY); buildPickers();
       $("gpu-group").innerHTML = (catalog.gpu_groups || ["main"]).map(g =>
         `<option value="${escapeHtml(g)}">${escapeHtml(g)}</option>`).join("");
       $("gpu-group").value = catalog.default_gpu_group || "main";
@@ -283,15 +289,30 @@ function buildPickers() {
       <select aria-label="${role} Claude model" data-field="model">${catalog.claude.map(m =>
         `<option value="${m.model}">${escapeHtml(m.label)}</option>`).join("")}</select>
       <input aria-label="${role} model id" data-field="model-id" placeholder="model id">
-      <select aria-label="${role} reasoning level" data-field="effort"></select>`;
+      <select aria-label="${role} reasoning level" data-field="effort"></select>${toolPickers(role)}`;
     box.addEventListener("change", () => syncPicker(role));
     const wanted = catalog.default[role];
     box.querySelector('[data-field="provider"]').value =
       wanted.provider === "aiprover" ? `aiprover:${wanted.model}` : wanted.provider;
     if (wanted.provider === "claude") box.querySelector('[data-field="model"]').value = wanted.model;
     if (isHosted(wanted.provider)) box.querySelector('[data-field="model-id"]').value = wanted.model;
+    for (const field of ["tools", "judge_tools"]) {
+      const pick = box.querySelector(`[data-field="${field}"]`);
+      if (pick) pick.value = wanted[field] ? "on" : "off";
+    }
     syncPicker(role, wanted.effort);
   }
+}
+
+// Lean tools (compile, Mathlib search) of a Claude role; the orchestrator also
+// chooses them for its formalization and sketch judges. The subagent is
+// AIProver's harness or a single model call, with no such choice.
+function toolPickers(role) {
+  if (role === "subagent") return "";
+  const pick = (field, on, off) => `<select aria-label="${role} ${field}" data-field="${field}">
+    <option value="on">${on}</option><option value="off">${off}</option></select>`;
+  return pick("tools", "Lean tools", "no tools") +
+    (role === "orchestrator" ? pick("judge_tools", "judges: Lean tools", "judges: no tools") : "");
 }
 
 // Show the Claude model and reasoning level only for Claude, and the model id
@@ -311,6 +332,7 @@ function syncPicker(role, effort) {
   level.value = efforts.includes(keep) ? keep : "";
   model.classList.toggle("hidden", !claude);
   level.classList.toggle("hidden", !efforts.length);
+  for (const pick of box.querySelectorAll('[data-field$="tools"]')) pick.classList.toggle("hidden", !claude);
 }
 
 function selection(role) {
@@ -320,8 +342,12 @@ function selection(role) {
   if (isHosted(provider)) {
     return {provider, model: box.querySelector('[data-field="model-id"]').value.trim(), effort: ""};
   }
-  return {provider, model: box.querySelector('[data-field="model"]').value,
-          effort: box.querySelector('[data-field="effort"]').value};
+  const choice = {provider, model: box.querySelector('[data-field="model"]').value,
+                  effort: box.querySelector('[data-field="effort"]').value};
+  for (const pick of box.querySelectorAll('[data-field$="tools"]')) {
+    choice[pick.dataset.field] = pick.value === "on";
+  }
+  return choice;
 }
 
 function modelLabel(choice) {
@@ -332,7 +358,9 @@ function modelLabel(choice) {
   const hosted = catalog?.hosted.find(h => h.provider === choice.provider);
   if (hosted) return `${hosted.label} ${choice.model}`;
   const label = (catalog?.claude.find(m => m.model === choice.model) || {label: choice.model}).label;
-  return choice.effort ? `${label}, ${choice.effort}` : label;
+  const parts = [label, choice.effort, choice.tools && "Lean tools",
+                 choice.judge_tools && "judges with tools"];
+  return parts.filter(Boolean).join(", ");
 }
 
 // One line per role the run records, in the order of the form.
@@ -437,13 +465,16 @@ function serverRows(name, group) {
 
 async function refreshHealth() {
   try {
-    const h = await api("/api/health");
+    const h = await api("/api/health" + PAGE_QUERY);
     const groups = Object.entries(h.groups || {main: h});
-    $("health").innerHTML = indicator(h.control_master, "Vista connection")
+    // The user page shows its model server and the queue, not the runs of the other page.
+    const running = PAGE === "dev" ? (h.running ? escapeHtml(h.running) : "none")
+      : (h.running ? h.running.split(", ").length : 0);
+    $("health").innerHTML = (PAGE === "dev" ? indicator(h.control_master, "Vista connection") : "")
       + groups.map(([name, g]) => indicator(g.endpoint_up, `model endpoint (${name})`)).join("")
       + `<span>awaiting approval ${h.awaiting_approval}</span>`
       + `<span>queued ${h.queued}</span>`
-      + `<span>running ${h.running ? escapeHtml(h.running) : "none"}</span>`;
+      + `<span>running ${running}</span>`;
     $("vista").innerHTML = `<table class="servers"><thead><tr>
         <th>GPU group</th><th>Server</th><th>State</th><th>Start</th>
         <th>Elapsed / limit</th><th>Nodes</th><th>Note</th></tr></thead>
@@ -478,7 +509,7 @@ function actions(run) {
 }
 
 async function refreshRuns() {
-  const all = await api("/api/runs");
+  const all = await api("/api/runs" + PAGE_QUERY);
   const hiddenCount = all.filter(run => run.hidden).length;
   $("show-hidden-label").textContent = `Show hidden (${hiddenCount})`;
   const runs = $("show-hidden").checked ? all : all.filter(run => !run.hidden);
@@ -578,6 +609,7 @@ $("submit").onclick = async () => {
     : {uuid: $("uuid").value};
   for (const role of ROLES) body[role] = selection(role);
   body.gpu_group = $("gpu-group").value;
+  body.page = PAGE;
   $("submit-message").textContent = "";
   try {
     const upload = $("library-file").files[0];

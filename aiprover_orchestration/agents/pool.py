@@ -12,6 +12,7 @@ built from a specification in the run configuration:
     {"backend": "python", "class": "my_package.my_module:MyAgent", ...}
     {"backend": "claude", "model": "claude-opus-5-5",
      "phases": {"judge": {"model": "claude-sonnet-5-5"}}}
+    {"backend": "claude", "model": "claude-opus-5-5", "tools": true}
 
 `claude` calls Claude through the Anthropic API when `ANTHROPIC_API_KEY` is
 set, otherwise through the logged-in `claude` CLI (Claude subscription);
@@ -23,6 +24,10 @@ harness (a full agentic Lean session per call; solver role only) with the
 model named in its own configuration. `python` loads a user-defined
 subclass of `Agent`, so a custom agent can replace any role without changes
 to the pipeline.
+
+`tools` gives a Claude agent on the CLI Lean tools (agents/claude_cli.py);
+`role_spec` sets the defaults: on for the captain except its judge phases,
+off for the other roles.
 
 `AgentPool` routes each call to the agent of its role, retries transient
 failures, and records every call in `calls.jsonl` and in the run trace.
@@ -40,6 +45,7 @@ import time
 from pathlib import Path
 
 from ..orchestrator.trace import REFUSAL_MARKER, is_untraced
+from .aiprover import STOPPING
 from .base import Agent, AgentCallError, AgentRefusal, Completion
 from .claude import ClaudeAgent
 from .claude_cli import ClaudeCLIAgent
@@ -49,6 +55,12 @@ logger = logging.getLogger(__name__)
 
 
 CLAUDE_AGENTS = {"api": ClaudeAgent, "subscription": ClaudeCLIAgent}
+
+# Cache fields of a call's usage and the run totals they add to.
+CACHE_USAGE_KEYS = {
+    "cacheReadInputTokens": "cache_read_tokens",
+    "cacheCreationInputTokens": "cache_creation_tokens",
+}
 
 
 def claude_agent(**options) -> Agent:
@@ -68,6 +80,26 @@ BACKENDS = {
     "claude": claude_agent,
     "openai_compatible": OpenAICompatibleAgent,
 }
+
+
+# Roles whose Claude agent has Lean tools unless its specification says
+# otherwise, and the captain phases that have none by default: the judges
+# assess text, and tools would let them consult more than they are shown.
+TOOL_ROLES = ("captain",)
+TOOLLESS_PHASES = ("judge",)
+
+
+def role_spec(role: str, spec: dict) -> dict:
+    """`spec` with the default Lean tools of `role` for a Claude backend."""
+    if spec.get("backend") != "claude":
+        return spec
+    spec = {"tools": role in TOOL_ROLES, **spec}
+    if spec["tools"]:
+        phases = dict(spec.get("phases") or {})
+        for prefix in TOOLLESS_PHASES:
+            phases[prefix] = {"tools": False, **phases.get(prefix, {})}
+        spec["phases"] = phases
+    return spec
 
 
 def build_agent(spec: dict) -> Agent:
@@ -189,6 +221,11 @@ class AgentPool:
             )
             totals["input_tokens"] += int(usage.get("inputTokens") or 0)
             totals["output_tokens"] += int(usage.get("outputTokens") or 0)
+            for key, total_key in CACHE_USAGE_KEYS.items():
+                if usage.get(key):
+                    totals[total_key] = totals.get(total_key, 0) + int(
+                        usage[key]
+                    )
             totals["cost_usd"] += float(usage.get("costUSD") or 0.0)
 
     def complete(
@@ -234,7 +271,9 @@ class AgentPool:
                 f"[{role}/{phase}] transient failure, retrying in "
                 f"{wait:.0f}s: {completion.error[:200]}"
             )
-            time.sleep(max(wait, 1.0))
+            # A terminated run stops waiting, so the process can exit.
+            if STOPPING.wait(max(wait, 1.0)):
+                break
         error = AgentRefusal if completion.refused else AgentCallError
         raise error(
             f"{agent.backend} call failed ({role}/{phase}): "
@@ -379,4 +418,9 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Probe every role's agent.")
     parser.add_argument("--config", type=Path, required=True)
     config = json.loads(parser.parse_args().config.read_text())
-    probe({role: build_agent(spec) for role, spec in config["agents"].items()})
+    probe(
+        {
+            role: build_agent(role_spec(role, spec))
+            for role, spec in config["agents"].items()
+        }
+    )

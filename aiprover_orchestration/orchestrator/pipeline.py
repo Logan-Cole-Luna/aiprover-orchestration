@@ -19,7 +19,13 @@ from contextlib import contextmanager
 from dataclasses import asdict
 from pathlib import Path
 
-from ..agents import AgentCallError, AgentPool, AgentRefusal, build_agent
+from ..agents import (
+    AgentCallError,
+    AgentPool,
+    AgentRefusal,
+    build_agent,
+    role_spec,
+)
 from ..lean.checker import LeanChecker
 from ..paths import LOGS_DIR, RESULTS_DIR, TEMP_DIR, WORKSPACE
 from . import benchmark, libraries, prompts
@@ -90,13 +96,17 @@ class Orchestration(
         self.slug = slug_from_problem(row)
         self.auditor_system = prompts.auditor_system()
         # The reviewer and the report writer default to fresh agents of the
-        # captain's model.
-        specs = {
-            "reviewer": config.agents.get("captain", {}),
-            "writer": config.agents.get("captain", {}),
-            **config.agents,
+        # captain's model, without its tools.
+        captain = {
+            key: value
+            for key, value in config.agents.get("captain", {}).items()
+            if key != "tools"
         }
-        agents = {role: build_agent(spec) for role, spec in specs.items()}
+        specs = {"reviewer": captain, "writer": captain, **config.agents}
+        agents = {
+            role: build_agent(role_spec(role, spec))
+            for role, spec in specs.items()
+        }
         system_prompts = {
             "captain": prompts.CAPTAIN_SYSTEM,
             "auditor": self.auditor_system,

@@ -6,11 +6,19 @@ lock, so several checks can run concurrently. Library modules are built with
 `lake build <module>`; module files are written and built under one file
 lock, because concurrent writers share the workspace's sources and build
 directory.
+
+Elaboration runs code: `#eval` and its relatives execute with the rights of
+the process. Every check and build therefore passes two layers. Text with a
+construct that runs code (`EXECUTION_PATTERNS`) is rejected unelaborated, and
+Lean runs under the Landlock sandbox of `sandbox.py`: it may write only in
+the workspace, read only the toolchain, the packages and the checked file's
+directory, and open no TCP connection.
 """
 
 import fcntl
 import re
 import subprocess
+import sys
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass, field
@@ -20,9 +28,34 @@ from .text import strip_comments
 
 STANDARD_AXIOMS = {"propext", "Classical.choice", "Quot.sound"}
 
-# Constructs that could discharge or bypass a goal without a proof. They are
-# rejected in any submitted Lean text before it is elaborated.
+# Constructs that run code during elaboration (beyond tactics and the
+# kernel). No proof needs them; they are rejected before any elaboration.
+EXECUTION_PATTERNS = {
+    "#eval": r"#eval\b",
+    "#guard": r"#guard\b",
+    "unsafe": r"\bunsafe\w*",
+    "initialize": r"^\s*(builtin_)?initialize\b",
+    "simproc": r"\b(d?simproc|simproc_decl)\b",
+    "IO": r"\b(E|Base)?IO\b",
+    "System": r"\bSystem\.\w",
+    "Process": r"\bProcess\.\w",
+    "evalExpr/evalConst": r"\beval(Expr|Const|Decl)\b",
+    "elab": r"^\s*(local\s+|scoped\s+)?(elab|elab_rules)\b",
+    "run_cmd": r"\b(run_cmd|run_tac|run_elab|run_meta)\b",
+    "extension attribute": (
+        r"@\[[^\]]*\b(command_elab|term_elab|tactic|init|builtin_init|"
+        r"norm_num|positivity|simproc|env_linter|code_action)\b"
+    ),
+    "implemented_by": r"implemented_by",
+    "extern": r"@\[\s*extern",
+    "native_decide": r"\bnative_decide\b",
+}
+
+# Constructs that could discharge or bypass a goal without a proof, and those
+# that run code. They are rejected in any submitted Lean text before it is
+# elaborated.
 FORBIDDEN_PATTERNS = {
+    **EXECUTION_PATTERNS,
     "sorry": r"\bsorry\b",
     "admit": r"\badmit\b",
     "axiom": r"^\s*(private\s+|protected\s+)?axiom\b",
@@ -67,6 +100,16 @@ class CheckResult:
         return text[:max_chars]
 
 
+def executable_constructs(lean_text: str) -> list[str]:
+    """Names of constructs in `lean_text` that run code when elaborated."""
+    code = strip_comments(lean_text)
+    return [
+        name
+        for name, pattern in EXECUTION_PATTERNS.items()
+        if re.search(pattern, code, flags=re.M)
+    ]
+
+
 def forbidden_constructs(lean_text: str) -> list[str]:
     """Names of forbidden constructs present in `lean_text` outside comments."""
     code = strip_comments(lean_text)
@@ -104,11 +147,45 @@ def _split_messages(output: str) -> list[tuple[str, str]]:
     return messages
 
 
-def _run(command: list[str], workspace: Path, timeout: int) -> CheckResult:
-    """Run a Lean or Lake command and parse its messages."""
+SANDBOX = Path(__file__).with_name("sandbox.py")
+
+
+def sandboxed(
+    command: list[str],
+    writable: Path,
+    readable: list[Path] = (),
+    cpu_seconds: int = 0,
+) -> list[str]:
+    """`command` confined by `sandbox.py`: it writes only in `writable` and
+    reads the toolchain, `writable`'s packages and `readable`."""
+    packages = (Path(writable) / ".lake" / "packages").resolve()
+    arguments = [sys.executable, "-I", str(SANDBOX), "--write", str(writable)]
+    if cpu_seconds:
+        arguments += ["--cpu-seconds", str(cpu_seconds)]
+    for path in [packages, *readable]:
+        arguments += ["--read", str(path)]
+    return [*arguments, "--", *command]
+
+
+def rejected(constructs: list[str]) -> CheckResult:
+    """The result of text refused before elaboration."""
+    message = (
+        "rejected before elaboration: constructs that run code are not "
+        f"allowed ({', '.join(constructs)})"
+    )
+    return CheckResult(ok=False, output=message, errors=[message])
+
+
+def _run(
+    command: list[str],
+    workspace: Path,
+    timeout: int,
+    readable: list[Path] = (),
+) -> CheckResult:
+    """Run a Lean or Lake command in the sandbox and parse its messages."""
     try:
         proc = subprocess.run(
-            command,
+            sandboxed(command, workspace, readable),
             cwd=workspace,
             capture_output=True,
             text=True,
@@ -158,9 +235,13 @@ class LeanChecker:
         self._slots = threading.Semaphore(max_parallel)
 
     def check_file(self, path: Path) -> CheckResult:
-        command = ["lake", "env", "lean", str(Path(path).resolve())]
+        path = Path(path).resolve()
+        constructs = executable_constructs(path.read_text())
+        if constructs:
+            return rejected(constructs)
+        command = ["lake", "env", "lean", str(path)]
         with self._slots:
-            return _run(command, self.workspace, self.timeout)
+            return _run(command, self.workspace, self.timeout, [path.parent])
 
     def check_text(self, lean_text: str, path: Path) -> CheckResult:
         """Write `lean_text` to `path` and elaborate it."""
@@ -182,6 +263,15 @@ def build(
     workspace: Path, sources: dict[Path, str], target: str, timeout: int = 600
 ) -> CheckResult:
     """Write module `sources` (path → text) and build module `target`."""
+    constructs = sorted(
+        {
+            name
+            for text in sources.values()
+            for name in executable_constructs(text)
+        }
+    )
+    if constructs:
+        return rejected(constructs)
     with build_lock(workspace):
         for path, text in sources.items():
             path.parent.mkdir(parents=True, exist_ok=True)
