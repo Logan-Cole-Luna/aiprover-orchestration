@@ -7,6 +7,12 @@ Access is open by default: the server is run by its own users, no token
 is required, submissions are queued without approval, and every visitor
 sees and may cancel every run.
 
+Two pages share the API: the user page `/user` (where `/` leads) offers the
+DGX and the open and OpenAI math problems, and lists the runs submitted from
+it; the development page `/dev` offers every GPU group, model and dataset and
+lists every run (`PAGES`; API calls name the page with `?page=dev`, and a call
+that names none is the user page's).
+
 With `QUERY_SERVER_AUTH=on` in the environment, users authenticate with a
 bearer token from `configs/server/tokens.json` (`{"<token>": "<user
 name>"}`), sent as `Authorization: Bearer <token>` or as the `token` cookie
@@ -25,15 +31,17 @@ import time
 import urllib.request
 import zipfile
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from starlette.background import BackgroundTask
 from pydantic import BaseModel
 
 from ..library import api as library_api
 from ..orchestrator import libraries
+from ..orchestrator.reports.informal import RESULT_ROW_SUFFIX
 from ..paths import (
     CONFIG_DIR,
     LIBRARIES_DIR,
@@ -69,6 +77,11 @@ MAX_LIBRARY_CHARS = 2_000_000
 LIBRARY_DIR = LIBRARIES_DIR
 LIBRARY_NAME = re.compile(r"^[A-Za-z0-9_.-]+\.lean$")
 RESULT_PAGES = ("trace.html", "trace_replay.html", "summary.json")
+# Files at the root of a run, by the name the page links them under.
+ROOT_FILES = {
+    "standalone.lean": "*_standalone.lean",
+    "result.jsonl": f"*{RESULT_ROW_SUFFIX}",
+}
 TERMINAL_STATES = ("finished", "cancelled", "rejected")
 
 LOGS_DIR.mkdir(exist_ok=True)
@@ -199,10 +212,52 @@ def book_label(statement: str) -> str:
     return match.group(1) if match else ""
 
 
-def read_dataset() -> dict[str, dict]:
-    """Problems of every JSONL file in data/, by UUID, each with its file."""
+@dataclass(frozen=True)
+class Page:
+    """What a page offers: GPU groups (the first is the default), AIProver
+    versions and datasets of data/ (None: all), default model choices, and
+    whether its run list holds only the runs submitted from it."""
+
+    gpu_groups: tuple[str, ...]
+    versions: tuple[str, ...] | None = None
+    datasets: tuple[str, ...] | None = None
+    defaults: dict = field(default_factory=dict)
+    own_runs: bool = False
+
+
+PAGES = {
+    "dev": Page(
+        tuple(sorted(vista.GPU_GROUPS, key=lambda g: g != vista.DEFAULT_GROUP))
+    ),
+    "user": Page(
+        ("dgx",),
+        versions=("dgx",),
+        datasets=("open_problems.jsonl", "openai_math.jsonl"),
+        defaults={
+            "subagent": {"provider": "aiprover", "model": "dgx", "effort": ""}
+        },
+        own_runs=True,
+    ),
+}
+
+
+DEFAULT_PAGE = "user"
+
+
+def page_of(page: str = DEFAULT_PAGE) -> Page:
+    """The page named by the `page` query parameter."""
+    if page not in PAGES:
+        raise HTTPException(400, f"unknown page {page!r}")
+    return PAGES[page]
+
+
+def read_dataset(page: Page = PAGES["dev"]) -> dict[str, dict]:
+    """Problems of the page's JSONL files in data/, by UUID, each with its
+    file."""
     problems = {}
     for path in sorted(DATA_DIR.glob("*.jsonl")):
+        if page.datasets is not None and path.name not in page.datasets:
+            continue
         with open(path) as f:
             for line in f:
                 row = json.loads(line)
@@ -211,7 +266,14 @@ def read_dataset() -> dict[str, dict]:
 
 
 @app.get("/")
-def index() -> FileResponse:
+def index() -> RedirectResponse:
+    return RedirectResponse(f"/{DEFAULT_PAGE}")
+
+
+@app.get("/user")
+@app.get("/dev")
+def serve_page() -> FileResponse:
+    """Both pages; the page reads which one it is from its path."""
     return FileResponse(INDEX_PAGE)
 
 
@@ -236,7 +298,9 @@ def proxy_pool(group: vista.GpuGroup) -> list[dict]:
 
 
 @app.get("/api/health")
-def health(user: str = Depends(current_user)) -> dict:
+def health(
+    user: str = Depends(current_user), page: Page = Depends(page_of)
+) -> dict:
     running = store.in_states("running", "cancelling")
     groups = {}
     for name, group in vista.GPU_GROUPS.items():
@@ -287,7 +351,11 @@ def health(user: str = Depends(current_user)) -> dict:
             for job_id, state in (group["vista_jobs"] or {}).items()
         },
         "vista": worker.vista_message,
-        "groups": groups,
+        "groups": {
+            name: group
+            for name, group in groups.items()
+            if name in page.gpu_groups
+        },
         "awaiting_approval": len(store.in_states("awaiting_approval")),
         "queued": len(store.in_states("queued")),
         "running": ", ".join(job["run_id"] for job in running) or None,
@@ -295,7 +363,9 @@ def health(user: str = Depends(current_user)) -> dict:
 
 
 @app.get("/api/problems")
-def problems(user: str = Depends(current_user)) -> list[dict]:
+def problems(
+    user: str = Depends(current_user), page: Page = Depends(page_of)
+) -> list[dict]:
     return [
         {
             "uuid": uuid,
@@ -303,7 +373,7 @@ def problems(user: str = Depends(current_user)) -> list[dict]:
             "source": row.get("source_name"),
             "label": book_label(row.get("informal_statement", "")),
         }
-        for uuid, row in read_dataset().items()
+        for uuid, row in read_dataset(page).items()
     ]
 
 
@@ -327,13 +397,23 @@ class Submission(BaseModel):
     library_text: str = ""  # or an uploaded library
     extend_library: bool = False
     after: str = ""  # a run that must end first
+    page: str = DEFAULT_PAGE  # the page submitting (PAGES)
 
 
 @app.get("/api/models")
-def model_catalog(user: str = Depends(current_user)) -> dict:
-    return models.catalog() | {
-        "gpu_groups": list(vista.GPU_GROUPS),
-        "default_gpu_group": vista.DEFAULT_GROUP,
+def model_catalog(
+    user: str = Depends(current_user), page: Page = Depends(page_of)
+) -> dict:
+    catalog = models.catalog()
+    return catalog | {
+        "aiprover": [
+            version
+            for version in catalog["aiprover"]
+            if page.versions is None or version["model"] in page.versions
+        ],
+        "default": catalog["default"] | page.defaults,
+        "gpu_groups": list(page.gpu_groups),
+        "default_gpu_group": page.gpu_groups[0],
     }
 
 
@@ -356,11 +436,13 @@ def submit(body: Submission, user: str = Depends(current_user)) -> dict:
     if len(store.in_states("awaiting_approval", "queued")) >= MAX_QUEUED_JOBS:
         raise HTTPException(503, "queue is full")
 
-    if body.gpu_group not in vista.GPU_GROUPS:
+    page = page_of(body.page)
+    if body.gpu_group not in page.gpu_groups:
         raise HTTPException(400, f"unknown GPU group {body.gpu_group!r}")
     try:
         selection = models.validate(
-            {
+            page.defaults
+            | {
                 role: getattr(body, role).model_dump()
                 for role in models.ROLES
                 if getattr(body, role)
@@ -368,6 +450,12 @@ def submit(body: Submission, user: str = Depends(current_user)) -> dict:
         )
     except ValueError as error:
         raise HTTPException(400, str(error))
+    if page.versions is not None and not (
+        models.checkpoint_names(selection) <= set(page.versions)
+    ):
+        raise HTTPException(
+            400, f"this page offers AIProver {', '.join(page.versions)} only"
+        )
     if vista.GPU_GROUPS[body.gpu_group].serverless and (
         models.checkpoint_names(selection)
     ):
@@ -378,7 +466,7 @@ def submit(body: Submission, user: str = Depends(current_user)) -> dict:
         )
 
     if body.uuid:
-        row = read_dataset().get(body.uuid)
+        row = read_dataset(page).get(body.uuid)
         if row is None:
             raise HTTPException(400, f"unknown problem {body.uuid}")
         # JiatuBook ids end in a problem number; other datasets use the whole
@@ -426,6 +514,7 @@ def submit(body: Submission, user: str = Depends(current_user)) -> dict:
             "agents": json.dumps(selection),
             "options": json.dumps(options) if options else None,
             "gpu_group": body.gpu_group,
+            "page": body.page,
         }
     )
     return {"run_id": run_id, "state": store.get(run_id)["state"]}
@@ -479,8 +568,10 @@ def list_libraries(user: str = Depends(current_user)) -> list[dict]:
 def describe(job: dict) -> dict:
     result_dir = RESULTS_DIR / job["run_id"]
     files = [name for name in RESULT_PAGES if (result_dir / name).exists()]
-    if any(result_dir.glob("*_standalone.lean")):
-        files.append("standalone.lean")
+    files += [
+        name for name, pattern in ROOT_FILES.items()
+        if any(result_dir.glob(pattern))
+    ]
     files += [
         f"report{suffix}"
         for suffix in (".pdf", ".tex")
@@ -516,8 +607,17 @@ def describe(job: dict) -> dict:
 
 
 @app.get("/api/runs")
-def list_runs(user: str = Depends(current_user)) -> list[dict]:
-    return [describe(job) for job in store.jobs(visible_owner(user))]
+def list_runs(
+    user: str = Depends(current_user), page: str = DEFAULT_PAGE
+) -> list[dict]:
+    """Every visible run on the development page; on a page with its own run
+    list, the runs submitted from it."""
+    own_runs = page_of(page).own_runs
+    return [
+        describe(job)
+        for job in store.jobs(visible_owner(user))
+        if not own_runs or job.get("page") == page
+    ]
 
 
 @app.get("/api/runs/{run_id}")
@@ -570,8 +670,8 @@ def reject_run(run_id: str, user: str = Depends(approver)) -> dict:
 @app.get("/api/runs/{run_id}/files/{name}")
 def get_file(name: str, job: dict = Depends(owned_job)) -> FileResponse:
     result_dir = RESULTS_DIR / job["run_id"]
-    if name == "standalone.lean":
-        matches = sorted(result_dir.glob("*_standalone.lean"))
+    if name in ROOT_FILES:
+        matches = sorted(result_dir.glob(ROOT_FILES[name]))
         path = matches[0] if matches else None
     elif name in ("report.pdf", "report.tex"):
         matches = sorted((result_dir / "report").glob(f"*{Path(name).suffix}"))
@@ -587,7 +687,7 @@ def get_file(name: str, job: dict = Depends(owned_job)) -> FileResponse:
         raise HTTPException(404, "no such file")
     media_type = (
         "text/plain; charset=utf-8"
-        if path.suffix in (".lean", ".tex")
+        if path.suffix in (".lean", ".tex", ".jsonl")
         else None
     )
     return FileResponse(path, media_type=media_type)
@@ -631,7 +731,10 @@ def export_path(relative: Path) -> str | None:
     name, suffix = relative.name, relative.suffix
     if relative.parts[0] in ("report", "informal"):
         return name if suffix in (".tex", ".pdf") else f"report_build/{name}"
-    if name.endswith("_standalone.lean") or suffix == ".html":
+    if (
+        name.endswith(("_standalone.lean", RESULT_ROW_SUFFIX))
+        or suffix == ".html"
+    ):
         return name
     if suffix == ".lean" or name == "module_build.log":
         return f"lean_modules/{name}"
@@ -649,6 +752,8 @@ def export_readme(record: dict, trace_agents: dict, files: list[str]) -> str:
     ]
     guide = {
         "_standalone.lean": "complete Lean 4 formalization and proof in one file (Mathlib)",
+        RESULT_ROW_SUFFIX: "result as a row of the problem datasets (data/*.jsonl): "
+        "the informalization's statement and proof, and the Lean source",
         "_informal.pdf": "informalization: the theorem and every lemma with its proof, "
         "in natural language without Lean",
         "_informal.tex": "LaTeX source of the informalization",
