@@ -1,0 +1,400 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage[varqu,scaled=0.95]{zi4}
+\usepackage{amsmath,amssymb,amsthm,mathtools}
+\usepackage[dvipsnames]{xcolor}
+\usepackage{fvextra}
+\usepackage{booktabs,enumitem,microtype,needspace}
+\usepackage[colorlinks,linkcolor=MidnightBlue,citecolor=MidnightBlue,urlcolor=MidnightBlue]{hyperref}
+\usepackage[capitalise,nameinlink]{cleveref}
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}[theorem]{Lemma}
+\theoremstyle{definition}
+\newtheorem{definition}[theorem]{Definition}
+\theoremstyle{remark}
+\newtheorem{remark}[theorem]{Remark}
+\newcommand{\leanname}[1]{\texttt{\detokenize{#1}}}
+\newenvironment{leanblock}[1]
+  {\par\smallskip\Needspace{4\baselineskip}\noindent{\footnotesize\textsf{#1}}\par\nopagebreak\vspace{2pt}}
+  {\par\medskip}
+\fvset{breaklines=true,breakanywhere=true,fontsize=\footnotesize,frame=leftline,
+  framerule=0.8pt,rulecolor=\color{gray!60},xleftmargin=4pt,framesep=6pt}
+\usepackage{longtable}
+\newcommand{\unverified}{\quad\textup{\small[not machine-verified]}}
+
+\newcommand{\FS}{\mathrm{FS}}
+\newcommand{\FP}{\mathrm{FP}}
+\newcommand{\Nz}{\mathbb{N}_0}
+
+\title{Distinct finite sums and products from Hindman's FS+FP theorem}
+\date{}
+\begin{document}
+\maketitle
+\begin{abstract}
+We derive a corollary of Hindman's finite sums and products theorem, in the quantitative form with growth conditions proved by Bowen and Sabok (here "Theorem 1.1"). The corollary states that for every finite coloring of the natural numbers and every $m\ge 1$ there is an $m$-element set $A$ such that $\mathrm{FS}(A)\cup\mathrm{FP}(A)$ is monochromatic, all $2^m-1$ subset sums are distinct, all $2^m-1$ subset products are distinct, and the only numbers that are both a subset sum and a subset product are the elements of $A$. Theorem 1.1 is not proved; it enters only as an explicit hypothesis. The proof applies it with $R=2$ and $D=1$, which yields the growth condition $2(\sum_{k<d}a_k+\prod_{k<d}a_k)<a_d$. This condition is transferred to the set of values, and a sequence of elementary lemmas then shows injectivity of subset sums and subset products and identifies the intersection $\mathrm{FS}(A)\cap\mathrm{FP}(A)$. All lemmas and the final deduction are machine-verified.
+\end{abstract}
+
+\begin{center}\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+Source & openai/math@fd4aeeb, family 164, OpenAIMath\_164\_HindmanDistinctExpressions \\
+Status & proof machine-verified (Lean 4, Mathlib) \\
+Lemmas & 15 \\
+Text & written by claude-opus-5-5, checked against the Lean source \\
+Run & \texttt{srv\_20261008\_212508\_OpenAIMath\_164\_HindmanDistinctExpressions} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\tableofcontents
+
+\section{Setting}
+
+Throughout, $\Nz=\{0,1,2,\ldots\}$; this is the set of natural numbers used in the formalization. For an integer $r\ge1$, $[r]$ denotes a fixed set of $r$ colors; formally it is $\{0,\ldots,r-1\}$. For $m\ge1$ we index sequences of length $m$ by $[m]=\{1,\ldots,m\}$; formally the index set is $\{0,\ldots,m-1\}$, and its first element plays the role of the index $1$. For a finite set $B\subseteq\Nz$ write
+\[
+\sigma(B)=\sum_{y\in B}y,\qquad \pi(B)=\prod_{y\in B}y,
+\]
+with the conventions $\sigma(\varnothing)=0$ and $\pi(\varnothing)=1$.
+
+\begin{definition}[Finite sums and products]
+For a finite set $A\subseteq\Nz$ put
+\[
+\FS(A)=\{\sigma(B):\varnothing\neq B\subseteq A\},\qquad
+\FP(A)=\{\pi(B):\varnothing\neq B\subseteq A\}.
+\]
+Equivalently, $x\in\FS(A)$ if and only if $x=\sigma(B)$ for some nonempty $B\subseteq A$, and likewise $x\in\FP(A)$ if and only if $x=\pi(B)$ for some nonempty $B\subseteq A$.
+\end{definition}
+
+\begin{definition}[Hypothesis (H): Theorem 1.1]
+Statement (H) is the following assertion. For all integers $r,m\ge1$, all real numbers $R\ge2$ and $D\ge1$, and every map $\chi:\Nz\to[r]$, there exist $a:[m]\to\Nz$, written $j\mapsto a_j$, and a color $c\in[r]$ with the following properties.
+\begin{enumerate}
+\item $a_1<a_2<\cdots<a_m$.
+\item $a_j>0$ for all $j$.
+\item $\chi\bigl(\sum_{j\in J}a_j\bigr)=c$ and $\chi\bigl(\prod_{j\in J}a_j\bigr)=c$ for every nonempty $J\subseteq[m]$.
+\item $R<a_1$.
+\item For every $d$ with $2\le d\le m$,
+\[
+R\Bigl(\sum_{k<d}a_k+\prod_{k<d}a_k\Bigr)^{D}<a_d,
+\]
+where the inequality is between real numbers and the power is the real power.
+\end{enumerate}
+\end{definition}
+
+Statement (H) is Theorem 1.1 of the source. The only difference is that the coloring is defined on $\Nz$ rather than on $\{1,2,\ldots\}$; any coloring of the positive integers extends to $\Nz$. The main result is proved under hypothesis (H).
+
+\begin{theorem}\label{thm:main}
+Assume (H). Let $r,m\ge1$ be integers and let $\chi:\Nz\to[r]$. Then there is a finite set $A\subseteq\Nz$ with the following properties.
+\begin{enumerate}
+\item $|A|=m$, and every element of $A$ is positive.
+\item There is $c\in[r]$ with $\chi(x)=c$ for every $x\in\FS(A)\cup\FP(A)$.
+\item $|\FS(A)|=2^m-1$ and $|\FP(A)|=2^m-1$.
+\item $\FS(A)\cap\FP(A)=A$.
+\end{enumerate}
+\end{theorem}
+
+This is Corollary 1.2 of the source. The colorings are taken on $\Nz$ instead of the positive integers, which is equivalent by extension. The set $A$ consists of positive integers.
+
+\section{Lemmas}
+
+The following condition on a finite set $A\subseteq\Nz$ is used throughout. For $x\in\Nz$ write $A_{<x}=\{y\in A:y<x\}$.
+
+\begin{definition}[Growth condition]\label{def:growth}
+A finite set $A\subseteq\Nz$ satisfies the \emph{growth condition} if
+\[
+2\bigl(\sigma(A_{<x})+\pi(A_{<x})\bigr)<x\qquad\text{for every }x\in A. \tag{$\ast$}
+\]
+\end{definition}
+
+If $0\in A$ then $A_{<0}=\varnothing$, so $(\ast)$ at $x=0$ would give $2(0+1)<0$, which is false. Hence a set satisfying $(\ast)$ consists of positive integers. More directly, $(\ast)$ gives $x>2(\cdots)\ge0$ for every $x\in A$.
+
+\subsection{Extracting the sequence from Theorem 1.1}
+
+\begin{lemma}[Specialization to $R=2$, $D=1$]\label{lem:hfs_extract}
+Assume (H). Let $r,m\ge1$ and $\chi:\Nz\to[r]$. Then there exist $a:[m]\to\Nz$ and $c\in[r]$ with the following properties.
+\begin{enumerate}
+\item $a$ is strictly increasing, and $a_j>0$ for all $j$.
+\item $\chi(\sum_{j\in J}a_j)=c$ and $\chi(\prod_{j\in J}a_j)=c$ for every nonempty $J\subseteq[m]$.
+\item For every $d\in[m]$,
+\[
+2\Bigl(\sum_{k<d}a_k+\prod_{k<d}a_k\Bigr)<a_d,
+\]
+as an inequality of integers.
+\end{enumerate}
+\end{lemma}
+
+\begin{proof}
+Apply (H) with $R=2$ and $D=1$. This gives $a$ and $c$ with the first two properties, and it remains to prove the inequality.
+
+For $d=1$ the index set $\{k:k<1\}$ is empty. The sum is therefore $0$ and the product is $1$, so the claim reads $2<a_1$. This is (H)(iv).
+
+For $d\ge2$, (H)(v) gives
+\[
+2\Bigl(\sum_{k<d}a_k+\prod_{k<d}a_k\Bigr)^{1}<a_d
+\]
+in $\mathbb R$. Since $t^1=t$, the left side equals the image in $\mathbb R$ of the integer $2(\sum_{k<d}a_k+\prod_{k<d}a_k)$. The embedding $\Nz\subset\mathbb R$ preserves and reflects strict inequality, so the claimed inequality holds in $\Nz$.
+\end{proof}
+
+\begin{lemma}[Transfer of the growth condition to the set of values]\label{lem:hfs_growth_image}
+Let $m\in\Nz$ and let $a:[m]\to\Nz$ be strictly increasing. Suppose that $2(\sum_{k<d}a_k+\prod_{k<d}a_k)<a_d$ for every $d\in[m]$. Then the set $A=\{a_j:j\in[m]\}$ satisfies the growth condition $(\ast)$.
+\end{lemma}
+
+\begin{proof}
+Let $x\in A$, say $x=a_d$. We claim that $A_{<a_d}=\{a_k:k<d\}$.
+
+If $k<d$, then $a_k<a_d$ by strict monotonicity. Conversely, let $y=a_i\in A$ with $a_i<a_d$. If $i\ge d$, monotonicity would give $a_i\ge a_d$. Hence $i<d$.
+
+Since $a$ is injective, summing or multiplying over $\{a_k:k<d\}$ is the same as summing or multiplying $a_k$ over $k<d$. Thus $\sigma(A_{<x})=\sum_{k<d}a_k$ and $\pi(A_{<x})=\prod_{k<d}a_k$, and $(\ast)$ at $x$ is exactly the hypothesis at $d$.
+\end{proof}
+
+\begin{lemma}[Monochromatic sums and products over subsets of the values]\label{lem:hfs_mono_image}
+Let $m,r\in\Nz$, let $a:[m]\to\Nz$ be injective, let $\chi:\Nz\to[r]$ and let $c\in[r]$. Suppose that $\chi(\sum_{j\in J}a_j)=c$ and $\chi(\prod_{j\in J}a_j)=c$ for every nonempty $J\subseteq[m]$. Then $\chi(\sigma(B))=c$ and $\chi(\pi(B))=c$ for every nonempty $B\subseteq\{a_j:j\in[m]\}$.
+\end{lemma}
+
+\begin{proof}
+Put $J=\{j\in[m]:a_j\in B\}$. Any $x\in B$ has the form $a_j$, and then $j\in J$; so $J$ is nonempty. By construction $a(J)\subseteq B$. Every element of $B$ is some $a_j$ with $j\in J$, so $a(J)=B$.
+
+Since $a$ is injective, reindexing gives $\sigma(B)=\sum_{j\in J}a_j$ and $\pi(B)=\prod_{j\in J}a_j$. The hypothesis applied to $J$ gives the claim.
+\end{proof}
+
+\subsection{Elementary consequences of the growth condition}
+
+\begin{lemma}[Elements exceed $2$]\label{lem:hfs_gt_two}
+If a finite $A\subseteq\Nz$ satisfies $(\ast)$, then $x>2$ for every $x\in A$.
+\end{lemma}
+
+\begin{proof}
+Let $x\in A$; then $A$ is nonempty, and we let $\mu=\min A$. No element of $A$ is below $\mu$, so $A_{<\mu}=\varnothing$. Hence $\sigma(A_{<\mu})=0$ and $\pi(A_{<\mu})=1$, and $(\ast)$ at $\mu$ gives $2=2(0+1)<\mu$. Therefore $2<\mu\le x$.
+\end{proof}
+
+\begin{lemma}[Subsets lying below an element]\label{lem:hfs_below}
+Let $A\subseteq\Nz$ be finite and satisfy $(\ast)$. Let $B\subseteq A$ and $x\in A$ be such that $y<x$ for every $y\in B$. Then
+\[
+2\bigl(\sigma(B)+\pi(B)\bigr)<x.
+\]
+\end{lemma}
+
+\begin{proof}
+By hypothesis $B\subseteq A_{<x}$. Since all terms are nonnegative, $\sigma(B)\le\sigma(A_{<x})$.
+
+Every $y\in A$ satisfies $y\ge1$, because $(\ast)$ gives $y>2(\cdots)\ge0$. A product of factors that are all $\ge1$ can only increase when factors are added. Hence $\pi(B)\le\pi(A_{<x})$.
+
+Combining these with $(\ast)$ at $x$,
+\[
+2(\sigma(B)+\pi(B))\le2(\sigma(A_{<x})+\pi(A_{<x}))<x. \qedhere
+\]
+\end{proof}
+
+\begin{lemma}[An element is at most the sum and the product]\label{lem:hfs_le_mem}
+Let $A\subseteq\Nz$ be finite and satisfy $(\ast)$. Let $B\subseteq A$ and $x\in B$. Then $x\le\sigma(B)$ and $x\le\pi(B)$.
+\end{lemma}
+
+\begin{proof}
+No element of $A$ is $0$. Indeed, if $0\in A$ then $A_{<0}=\varnothing$, and $(\ast)$ at $0$ would read $2<0$. Thus every element of $B$ is at least $1$.
+
+The sum $\sigma(B)$ contains the term $x$ together with further nonnegative terms, so $x\le\sigma(B)$. The product $\pi(B)$ contains the factor $x$ together with further factors that are all $\ge1$, so $x\le\pi(B)$.
+\end{proof}
+
+\subsection{Injectivity of subset sums and products}
+
+\begin{lemma}[Disjoint sets with equal sums]\label{lem:hfs_disj_sum}
+Let $A\subseteq\Nz$ be finite and satisfy $(\ast)$. Let $B,C\subseteq A$ be disjoint with $\sigma(B)=\sigma(C)$. Then $B=C=\varnothing$.
+\end{lemma}
+
+\begin{proof}
+Suppose not. Then $B\cup C\ne\varnothing$; let $j=\max(B\cup C)\in A$. The two cases $j\in B$ and $j\in C$ are symmetric, so assume $j\in B$.
+
+Every $y\in C$ satisfies $y\le j$. Moreover $y\neq j$, since $B$ and $C$ are disjoint. Hence $C\subseteq A_{<j}$.
+
+Put $T=\sigma(A_{<j})$. By $(\ast)$ at $j$ and $\pi(A_{<j})\ge0$, we have $2T<j$. On the other hand, writing $\sigma(B)=\sigma(B\setminus\{j\})+j$ gives
+\[
+j\le\sigma(B)=\sigma(C)\le T.
+\]
+So $j\le T$ and $2T<j$, which give $2T<T$. This is impossible since $T\ge0$.
+\end{proof}
+
+\begin{lemma}[Disjoint sets with equal products]\label{lem:hfs_disj_prod}
+Let $A\subseteq\Nz$ be finite and satisfy $(\ast)$. Let $B,C\subseteq A$ be disjoint with $\pi(B)=\pi(C)$. Then $B=C=\varnothing$.
+\end{lemma}
+
+\begin{proof}
+First, every $x\in A$ satisfies $x>2$. By $(\ast)$ all elements of $A$ are positive, so $\pi(A_{<x})\ge1$. Then $2\le2(\sigma(A_{<x})+\pi(A_{<x}))<x$.
+
+If $B\cup C=\varnothing$ there is nothing to prove. Otherwise let $\mu=\max(B\cup C)\in A$. By symmetry assume $\mu\in B$. As in \cref{lem:hfs_disj_sum}, maximality and disjointness give $y<\mu$ for all $y\in C$, so $C\subseteq A_{<\mu}$.
+
+All factors are $\ge1$, so $\pi(C)\le\pi(A_{<\mu})$. Since $\sigma(A_{<\mu})\ge0$, $(\ast)$ at $\mu$ gives $2\pi(A_{<\mu})<\mu$. Hence $2\pi(C)<\mu$.
+
+Next, $\pi(B)=\mu\cdot\pi(B\setminus\{\mu\})$ with $\pi(B\setminus\{\mu\})\ge1$, so $\mu\le\pi(B)$. Also $\pi(C)\ge1$. Therefore
+\[
+\pi(C)<2\pi(C)<\mu\le\pi(B),
+\]
+which contradicts $\pi(B)=\pi(C)$.
+\end{proof}
+
+\begin{lemma}[Subset sums are injective]\label{lem:hfs_sum_inj}
+Let $A\subseteq\Nz$ be finite and satisfy $(\ast)$. If $B,C\subseteq A$ and $\sigma(B)=\sigma(C)$, then $B=C$.
+\end{lemma}
+
+\begin{proof}
+Suppose $B\ne C$. Then at least one of $B\setminus C$ and $C\setminus B$ is nonempty. Let $\mu$ be the largest element of $S=(B\setminus C)\cup(C\setminus B)$; then $\mu\in A$.
+
+Since $\sigma(B)=\sigma(B\setminus C)+\sigma(B\cap C)$ and $\sigma(C)=\sigma(C\setminus B)+\sigma(B\cap C)$, cancelling gives $\sigma(B\setminus C)=\sigma(C\setminus B)$.
+
+By symmetry assume $\mu\in B\setminus C$. Every $y\in C\setminus B$ satisfies $y\le\mu$, and $y\ne\mu$ because $\mu\in B$. Hence $C\setminus B\subseteq A_{<\mu}$.
+
+With $T=\sigma(A_{<\mu})$, $(\ast)$ gives $2T<\mu$. On the other hand,
+\[
+\mu\le\sigma(B\setminus C)=\sigma(C\setminus B)\le T.
+\]
+As before, $\mu\le T$ and $2T<\mu$ are incompatible with $T\ge0$.
+\end{proof}
+
+\begin{lemma}[Subset products are injective]\label{lem:hfs_prod_inj}
+Let $A\subseteq\Nz$ be finite and satisfy $(\ast)$. If $B,C\subseteq A$ and $\pi(B)=\pi(C)$, then $B=C$.
+\end{lemma}
+
+\begin{proof}
+Let $I=B\cap C$. Then
+\[
+\pi(B)=\pi(B\setminus I)\,\pi(I),\qquad \pi(C)=\pi(C\setminus I)\,\pi(I).
+\]
+By \cref{lem:hfs_gt_two} every element of $I\subseteq A$ exceeds $2$, so $\pi(I)>0$. Cancelling $\pi(I)$ from $\pi(B)=\pi(C)$ gives $\pi(B\setminus I)=\pi(C\setminus I)$.
+
+The sets $B\setminus I$ and $C\setminus I$ are disjoint subsets of $A$. By \cref{lem:hfs_disj_prod} both are empty. Thus $B\subseteq C$ and $C\subseteq B$, so $B=C$.
+\end{proof}
+
+\subsection{Sums versus products}
+
+\begin{lemma}[A sum equal to a product is an element]\label{lem:hfs_sum_eq_prod}
+Let $A\subseteq\Nz$ be finite and satisfy $(\ast)$. Let $B,C\subseteq A$ be nonempty with $\sigma(B)=\pi(C)$. Then $\sigma(B)\in A$.
+\end{lemma}
+
+\begin{proof}
+Let $b=\max B$ and $c=\max C$; both lie in $A$. By \cref{lem:hfs_le_mem}, $b\le\sigma(B)$ and $c\le\pi(C)$. We distinguish three cases.
+
+\emph{Case $b<c$.} Every element of $B$ is below $c$. By \cref{lem:hfs_below},
+\[
+2(\sigma(B)+\pi(B))<c\le\pi(C)=\sigma(B).
+\]
+This contradicts $2(\sigma(B)+\pi(B))\ge\sigma(B)$.
+
+\emph{Case $b>c$.} Every element of $C$ is below $b$. By \cref{lem:hfs_below},
+\[
+2(\sigma(C)+\pi(C))<b\le\sigma(B)=\pi(C).
+\]
+This contradicts $2(\sigma(C)+\pi(C))\ge\pi(C)$.
+
+\emph{Case $b=c$.} Then $b\in C$, and every element of $B\setminus\{b\}$ is below $b$. By \cref{lem:hfs_below} applied to $B\setminus\{b\}$,
+\[
+2\bigl(\sigma(B\setminus\{b\})+\pi(B\setminus\{b\})\bigr)<b .
+\]
+We also have
+\[
+\sigma(B)=\sigma(B\setminus\{b\})+b,\qquad \pi(C)=P\,b,\quad\text{where }P=\pi(C\setminus\{b\}).
+\]
+By \cref{lem:hfs_gt_two}, $P>0$.
+
+If $P=1$, then $\sigma(B)=\pi(C)=b\in A$, as required.
+
+Otherwise $P\ge2$, so $\pi(C)\ge2b$. But the displayed inequality gives $2\sigma(B\setminus\{b\})<b$. Hence
+\[
+\sigma(B)=\sigma(B\setminus\{b\})+b<2b\le\pi(C),
+\]
+which is a contradiction.
+\end{proof}
+
+\subsection{Counting}
+
+\begin{lemma}[Number of nonempty subsets]\label{lem:hfs_card_nonempty}
+For every finite $A\subseteq\Nz$, the number of nonempty subsets of $A$ is $2^{|A|}-1$.
+\end{lemma}
+
+\begin{proof}
+The nonempty subsets of $A$ are exactly the subsets other than $\varnothing$. There are $2^{|A|}$ subsets in total, and $\varnothing$ is one of them, so $2^{|A|}-1$ remain.
+\end{proof}
+
+\begin{lemma}[Cardinality of $\FS(A)$]\label{lem:hfs_FS_card}
+If a finite $A\subseteq\Nz$ satisfies $(\ast)$, then $|\FS(A)|=2^{|A|}-1$.
+\end{lemma}
+
+\begin{proof}
+$\FS(A)$ is the image of the family of nonempty subsets of $A$ under $B\mapsto\sigma(B)$. This map is injective on that family by \cref{lem:hfs_sum_inj}. Hence $|\FS(A)|$ equals the number of nonempty subsets of $A$, which is $2^{|A|}-1$ by \cref{lem:hfs_card_nonempty}.
+\end{proof}
+
+\begin{lemma}[Cardinality of $\FP(A)$]\label{lem:hfs_FP_card}
+If a finite $A\subseteq\Nz$ satisfies $(\ast)$, then $|\FP(A)|=2^{|A|}-1$.
+\end{lemma}
+
+\begin{proof}
+$\FP(A)$ is the image of the family of nonempty subsets of $A$ under $B\mapsto\pi(B)$. This map is injective on that family by \cref{lem:hfs_prod_inj}. The family consists of all subsets of $A$ except $\varnothing$, so it has $2^{|A|}-1$ members.
+\end{proof}
+
+\begin{lemma}[Intersection of $\FS(A)$ and $\FP(A)$]\label{lem:hfs_inter}
+If a finite $A\subseteq\Nz$ satisfies $(\ast)$, then $\FS(A)\cap\FP(A)=A$.
+\end{lemma}
+
+\begin{proof}
+($\subseteq$) Let $x\in\FS(A)\cap\FP(A)$. Then $x=\sigma(B)=\pi(C)$ for some nonempty $B,C\subseteq A$. By \cref{lem:hfs_sum_eq_prod}, $x=\sigma(B)\in A$.
+
+($\supseteq$) Let $x\in A$. Then $\{x\}$ is a nonempty subset of $A$ with $\sigma(\{x\})=\pi(\{x\})=x$, so $x\in\FS(A)\cap\FP(A)$.
+\end{proof}
+
+\section{Proof of the theorem}
+
+\begin{proof}[Proof of \cref{thm:main}]
+By \cref{lem:hfs_extract} there are $a:[m]\to\Nz$ and $c\in[r]$ such that the following hold:
+\begin{itemize}
+\item $a$ is strictly increasing and positive;
+\item $\chi(\sum_{j\in J}a_j)=\chi(\prod_{j\in J}a_j)=c$ for every nonempty $J\subseteq[m]$;
+\item $2(\sum_{k<d}a_k+\prod_{k<d}a_k)<a_d$ for every $d\in[m]$.
+\end{itemize}
+Strict monotonicity makes $a$ injective. Put $A=\{a_j:j\in[m]\}$. By \cref{lem:hfs_growth_image}, $A$ satisfies the growth condition $(\ast)$. We verify the four properties in turn.
+
+\begin{enumerate}
+\item By injectivity $|A|=m$. Every element of $A$ is some $a_j>0$.
+\item Let $x\in\FS(A)\cup\FP(A)$. Then $x=\sigma(B)$ or $x=\pi(B)$ for some nonempty $B\subseteq A$. In either case $\chi(x)=c$ by \cref{lem:hfs_mono_image}.
+\item By \cref{lem:hfs_FS_card} and \cref{lem:hfs_FP_card} together with $|A|=m$, we get $|\FS(A)|=|\FP(A)|=2^m-1$.
+\item $\FS(A)\cap\FP(A)=A$ by \cref{lem:hfs_inter}. \qedhere
+\end{enumerate}
+\end{proof}
+
+\paragraph{Relation to the source proof.}
+The argument follows the source proof: it applies Theorem 1.1 with $R=2$ and $D=1$, cancels common terms to prove injectivity, and compares greatest elements to analyse sums against products.
+
+The formal proof deviates from the source in three respects.
+\begin{itemize}
+\item It retains the factor $R=2$ and uses the stronger inequality $2(\sum_{k<d}a_k+\prod_{k<d}a_k)<a_d$, not merely ``$a_d$ exceeds the sum and the product of its predecessors''. This gives elements larger than $2$ and the bound $\sigma(B\setminus\{b\})<b/2$ needed in the equal-maximum case (\cref{lem:hfs_sum_eq_prod}).
+\item It transfers the growth condition from the indexed sequence to the set of values (\cref{lem:hfs_growth_image}), so that all subsequent lemmas are statements about subsets of a finite set $A$ satisfying $(\ast)$.
+\item The colorings are defined on $\Nz$ rather than on the positive integers, both in the hypothesis (H) and in the conclusion. This is equivalent, since a coloring of the positive integers can be extended arbitrarily to $0$, and the set $A$ produced consists of positive integers.
+\end{itemize}
+Theorem 1.1 itself is not proved here; it is an explicit hypothesis of \cref{thm:main}.
+
+\appendix
+\section{Correspondence with the formal proof}
+Each lemma of the text and the Lean declaration that states it; \cref{thm:main} is \texttt{openaimath\_164\_hindmandistinctexpressions}.
+
+\begin{longtable}{@{}lll@{}}
+\toprule
+Lemma & Lean declaration & Status \\
+\midrule
+\endhead
+\cref{lem:hfs_extract} & \texttt{hfs\_extract} & verified \\
+\cref{lem:hfs_growth_image} & \texttt{hfs\_growth\_image} & verified \\
+\cref{lem:hfs_mono_image} & \texttt{hfs\_mono\_image} & verified \\
+\cref{lem:hfs_gt_two} & \texttt{hfs\_gt\_two} & verified \\
+\cref{lem:hfs_below} & \texttt{hfs\_below} & verified \\
+\cref{lem:hfs_le_mem} & \texttt{hfs\_le\_mem} & verified \\
+\cref{lem:hfs_disj_sum} & \texttt{hfs\_disj\_sum} & verified \\
+\cref{lem:hfs_disj_prod} & \texttt{hfs\_disj\_prod} & verified \\
+\cref{lem:hfs_sum_inj} & \texttt{hfs\_sum\_inj} & verified \\
+\cref{lem:hfs_prod_inj} & \texttt{hfs\_prod\_inj} & verified \\
+\cref{lem:hfs_sum_eq_prod} & \texttt{hfs\_sum\_eq\_prod} & verified \\
+\cref{lem:hfs_card_nonempty} & \texttt{hfs\_card\_nonempty} & verified \\
+\cref{lem:hfs_FS_card} & \texttt{hfs\_FS\_card} & verified \\
+\cref{lem:hfs_FP_card} & \texttt{hfs\_FP\_card} & verified \\
+\cref{lem:hfs_inter} & \texttt{hfs\_inter} & verified \\
+\bottomrule
+\end{longtable}
+\end{document}
