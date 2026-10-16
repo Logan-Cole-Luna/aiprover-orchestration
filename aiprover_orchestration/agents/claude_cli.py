@@ -6,9 +6,14 @@ MixtureOfMathExperts/scripts/utils/generators.py (`_invoke_claude_cli_once`,
 `_run_claude_cli`), with the system prompt passed per call so that each
 orchestration role carries its own instructions.
 
-Every call runs with tools disabled and with setting sources and MCP servers
-cleared, in a working directory outside the workspace, so that no CLAUDE.md or
-project configuration leaks into the model context.
+Every call runs with setting sources and MCP servers cleared, so that no
+CLAUDE.md or project configuration leaks into the model context. Without
+tools, a call runs in a working directory outside the workspace. With Lean
+tools (`tools=True`), it runs in a scratch Lake project of its own, where the
+model may read and write files, search the Mathlib sources and check files
+with `lean-check` (lean/tool_check.py: code-running constructs rejected,
+elaboration under the Landlock sandbox); other commands and files outside the
+project are denied.
 """
 
 import argparse
@@ -16,6 +21,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import time
@@ -24,6 +30,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..orchestrator.trace import REFUSAL_MARKER
+from ..paths import ROOT, TEMP_DIR, WORKSPACE
 from .base import Agent, Completion
 
 logger = logging.getLogger(__name__)
@@ -57,6 +64,43 @@ RETRYABLE_MARKERS = (
 
 # Neutral working directory for CLI subprocesses (no CLAUDE.md above it).
 CLI_WORKDIR = Path(tempfile.gettempdir()) / "aiprover_orchestration_cli_cwd"
+
+# Lean tools: the built-in tools offered, the permissions granted (all
+# others are denied without a prompt), and the scratch projects, one per call.
+LEAN_TOOLS = "Bash,Read,Write,Edit,Glob,Grep"
+# Unscoped Glob and Grep rules reach any path, so every read rule names its
+# tree. The packages are a symlink out of the project, matched by their real
+# path ("//" marks an absolute rule); they are readable, not writable.
+LEAN_PACKAGES = f"/{(WORKSPACE / '.lake' / 'packages').resolve()}/**"
+LEAN_TOOL_PERMISSIONS = (
+    "Read(./**)",
+    "Glob(./**)",
+    "Grep(./**)",
+    f"Read({LEAN_PACKAGES})",
+    f"Glob({LEAN_PACKAGES})",
+    f"Grep({LEAN_PACKAGES})",
+    "Write(./**)",
+    "Edit(./**)",
+    "Bash(lean-check:*)",
+)
+# Directory of `lean-check`, put first on the command search path.
+LEAN_CHECK_BIN = ROOT / "aiprover_orchestration" / "lean" / "bin"
+LEAN_TOOLS_DIR = TEMP_DIR / "lean_tools"
+LEAN_PROJECT_FILES = ("lakefile.lean", "lean-toolchain", "lake-manifest.json")
+LEAN_TOOLS_NOTE = """
+
+Tools. The working directory is a Lean 4 project with Mathlib (the versions of
+the run). Create and change files in it with the Write and Edit tools, and
+check a file with the shell command `lean-check <file>`, run on its own with
+a relative path; it is the only shell command permitted. Files may not use
+constructs that run code (`#eval`, `IO`, `unsafe`, `elab`, `run_cmd` and
+similar); `lean-check` rejects them. Mathlib's
+sources are under `.lake/packages/mathlib/Mathlib`, for Grep and Read. Files
+outside the working directory are unavailable. Check the Lean you return
+before replying. Your final message is the reply, in the format the task
+requires."""
+# Spend limit of one call with tools, in USD.
+LEAN_TOOLS_BUDGET_USD = 10.0
 
 
 def get_account_status(timeout: int = 30) -> dict | None:
@@ -132,12 +176,16 @@ def invoke_once(
     timeout: int = REQUEST_TIMEOUT_S,
     effort: str = "",
     max_output_tokens: int = 0,
+    tools: bool = False,
+    max_budget_usd: float = LEAN_TOOLS_BUDGET_USD,
 ) -> tuple[str, dict, str | None]:
     """One `claude -p` call. Returns (text, payload, error); error is None on success.
 
     The CLI reports errors as JSON on stdout while exiting non-zero, so stdout
     is parsed regardless of the return code.
     """
+    if tools:
+        system_prompt += LEAN_TOOLS_NOTE
     cmd = [
         "claude",
         "-p",
@@ -146,7 +194,7 @@ def invoke_once(
         "--output-format",
         "json",
         "--tools",
-        "",
+        LEAN_TOOLS if tools else "",
         "--no-session-persistence",
         "--setting-sources",
         "",
@@ -156,13 +204,23 @@ def invoke_once(
     ]
     if effort and effort != "default":
         cmd += ["--effort", effort]
+    if tools:
+        cmd += ["--permission-mode", "dontAsk", "--max-budget-usd"]
+        cmd += [str(max_budget_usd), "--allowedTools", *LEAN_TOOL_PERMISSIONS]
+    env = dict(os.environ)
+    if tools:
+        env["PATH"] = f"{LEAN_CHECK_BIN}:{env.get('PATH', '')}"
+    # The CLI writes every prompt to the one-hour cache at twice the input
+    # price. A single-turn call reads it back only when the whole prompt
+    # repeats, which orchestration prompts do not, so caching is disabled;
+    # the turns of a call with tools share their prefix, so it is kept.
+    if not tools:
+        env["DISABLE_PROMPT_CACHING"] = "1"
     # The CLI's default reply limit is replaced when the agent sets one.
-    env = (
-        {**os.environ, "CLAUDE_CODE_MAX_OUTPUT_TOKENS": str(max_output_tokens)}
-        if max_output_tokens
-        else None
-    )
-    CLI_WORKDIR.mkdir(parents=True, exist_ok=True)
+    if max_output_tokens:
+        env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = str(max_output_tokens)
+    workdir = lean_scratch_project() if tools else CLI_WORKDIR
+    workdir.mkdir(parents=True, exist_ok=True)
     try:
         proc = subprocess.run(
             cmd,
@@ -170,13 +228,16 @@ def invoke_once(
             capture_output=True,
             text=True,
             timeout=timeout,
-            cwd=CLI_WORKDIR,
+            cwd=workdir,
             env=env,
         )
     except subprocess.TimeoutExpired:
         return "", {}, f"claude CLI timed out after {timeout}s"
     except FileNotFoundError:
         return "", {}, "__fatal__ `claude` CLI not found on PATH"
+    finally:
+        if tools:
+            shutil.rmtree(workdir, ignore_errors=True)
 
     try:
         payload = json.loads(proc.stdout) if proc.stdout.strip() else None
@@ -203,6 +264,19 @@ def invoke_once(
     return (payload.get("result") or "").strip(), payload, None
 
 
+def lean_scratch_project() -> Path:
+    """A new Lake project with the workspace's toolchain and packages."""
+    LEAN_TOOLS_DIR.mkdir(parents=True, exist_ok=True)
+    project = Path(tempfile.mkdtemp(dir=LEAN_TOOLS_DIR))
+    for name in LEAN_PROJECT_FILES:
+        shutil.copy(WORKSPACE / name, project / name)
+    (project / ".lake").mkdir()
+    (project / ".lake" / "packages").symlink_to(
+        (WORKSPACE / ".lake" / "packages").resolve()
+    )
+    return project
+
+
 class ClaudeCLIAgent(Agent):
     """Claude model through the local `claude` CLI (subscription auth)."""
 
@@ -215,6 +289,8 @@ class ClaudeCLIAgent(Agent):
         effort: str = "",
         timeout: int = REQUEST_TIMEOUT_S,
         max_output_tokens: int = 0,
+        tools: bool = False,
+        max_budget_usd: float = LEAN_TOOLS_BUDGET_USD,
         **options,
     ):
         if get_account_status() is None:
@@ -225,11 +301,14 @@ class ClaudeCLIAgent(Agent):
             effort=effort,
             timeout=timeout,
             max_output_tokens=max_output_tokens,
+            tools=tools,
             **options,
         )
         self.effort = effort
         self.timeout = timeout
         self.max_output_tokens = max_output_tokens
+        self.tools = tools
+        self.max_budget_usd = max_budget_usd
 
     def complete_once(self, prompt: str, system_prompt: str) -> Completion:
         text, payload, error = invoke_once(
@@ -239,11 +318,19 @@ class ClaudeCLIAgent(Agent):
             self.timeout,
             self.effort,
             self.max_output_tokens,
+            self.tools,
+            self.max_budget_usd,
         )
         usage = {
             model_id: {
                 "inputTokens": int(u.get("inputTokens") or 0),
                 "outputTokens": int(u.get("outputTokens") or 0),
+                "cacheReadInputTokens": int(
+                    u.get("cacheReadInputTokens") or 0
+                ),
+                "cacheCreationInputTokens": int(
+                    u.get("cacheCreationInputTokens") or 0
+                ),
                 "costUSD": float(u.get("costUSD") or 0.0),
             }
             for model_id, u in (payload.get("modelUsage") or {}).items()

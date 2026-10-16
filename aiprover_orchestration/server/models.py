@@ -2,8 +2,10 @@
 
 A selection is `{"provider": ..., "model": ..., "effort": ...}` with provider
 "claude", "aiprover", or a hosted provider (`HOSTED_PROVIDERS`).
-For Claude, `model` is a model id and `effort` a reasoning level the model
-accepts (empty = the model default). For a hosted provider, `model` is any
+For Claude, `model` is a model id, `effort` a reasoning level the model
+accepts (empty = the model default) and `tools` whether the role has Lean
+tools (agents/claude_cli.py); the orchestrator's `judge_tools` covers its
+formalization and sketch judges. For a hosted provider, `model` is any
 model id the provider serves and `effort` is empty. For AIProver, `model` is a version, whose
 checkpoint the Vista model server must serve, and `effort` is empty: the
 reasoning of the model is not configurable.
@@ -19,7 +21,7 @@ import json
 import re
 from pathlib import Path
 
-from .vista import CHECKPOINTS
+from .vista import CHECKPOINTS, GPU_GROUPS
 
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 CLAUDE_MODELS = {
@@ -44,6 +46,8 @@ DEFAULT_SELECTION = {
         "provider": "claude",
         "model": "claude-opus-5-5",
         "effort": "high",
+        "tools": True,
+        "judge_tools": False,
     },
     "auditor": {
         "provider": "claude",
@@ -151,6 +155,8 @@ def validate(selection: dict) -> dict:
             "model": model,
             "effort": effort,
         }
+        if provider == "claude" and role != "subagent":
+            normalized[role] |= tool_choice(role, choice)
     versions = checkpoint_names(normalized)
     if len(versions) > 1:
         raise ValueError(
@@ -158,6 +164,18 @@ def validate(selection: dict) -> dict:
             "the model server serves one checkpoint"
         )
     return normalized
+
+
+def tool_choice(role: str, choice: dict) -> dict:
+    """The Lean tools of a Claude role; an absent choice takes the role's
+    default (on for the orchestrator except its judges, off otherwise)."""
+    default = DEFAULT_SELECTION[role]
+    tools = {"tools": bool(choice.get("tools", default.get("tools", False)))}
+    if role == "orchestrator":
+        tools["judge_tools"] = bool(
+            choice.get("judge_tools", default["judge_tools"])
+        )
+    return tools
 
 
 def checkpoint_names(selection: dict) -> set[str]:
@@ -173,8 +191,8 @@ def checkpoint_names(selection: dict) -> set[str]:
 # reasoning proxy and harness configuration; runs that use only these need no
 # Vista server job.
 PERSISTENT_VERSIONS = {"dgx"}
-VERSION_ENDPOINTS = {"dgx": "http://127.0.0.1:18566/v1"}
-HARNESS_CONFIGS = {"dgx": "configs/aiprover/dgx.toml"}
+VERSION_ENDPOINTS = {"dgx": GPU_GROUPS["dgx"].endpoint}
+HARNESS_CONFIGS = {"dgx": GPU_GROUPS["dgx"].solver_config}
 # Session time limits (seconds) of versions slower than the Vista servers; the
 # DGX completes a median 11 turns per hour against 76 on Vista.
 SOLVER_TIMEOUTS = {"dgx": 10800}
@@ -206,6 +224,13 @@ def build_config(base_config: Path, selection: dict) -> dict:
             spec |= {"backend": "claude", "model": choice["model"]}
             if choice["effort"]:
                 spec["effort"] = choice["effort"]
+            if role != "subagent":
+                tools = tool_choice(role, choice)
+                spec["tools"] = tools["tools"]
+                if "judge_tools" in tools:
+                    spec["phases"] = {
+                        "judge": {"tools": tools["judge_tools"]}
+                    }
             if role == "subagent":
                 spec["timeout"] = SUBAGENT_TIMEOUT
         elif choice["provider"] in HOSTED_PROVIDERS:

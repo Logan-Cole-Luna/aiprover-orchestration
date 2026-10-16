@@ -17,7 +17,11 @@ Reuse the writer's draft recorded in the trace (`--reuse-draft`); the check
 and the revision are new calls:
     python3 -m aiprover_orchestration.orchestrator.reports.informal \\
         results/<run_id> --reuse-draft
-Recompile a saved informalization without model calls:
+Each informalization also writes results/<run_id>/<slug>_result.jsonl: the run
+as a row of the problem datasets (data/*.jsonl), with the informalization's
+statement and proof and the Lean source.
+
+Recompile a saved informalization and rewrite the row without model calls:
     python3 -m aiprover_orchestration.orchestrator.reports.informal \\
         results/<run_id> --rebuild
 """
@@ -29,7 +33,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Callable
 
-from ...agents import AgentPool, build_agent
+from ...agents import AgentPool, build_agent, role_spec
 from ...paths import LOGS_DIR
 from .. import prompts
 from ..resume import restore_state
@@ -47,6 +51,8 @@ from ..structures import extract_tag
 INFORMAL_PREAMBLE = r"""\usepackage{longtable}
 \newcommand{\unverified}{\quad\textup{\small[not machine-verified]}}
 """
+# The run's result in the format of the problem datasets, at the run's root.
+RESULT_ROW_SUFFIX = "_result.jsonl"
 
 
 class InformalBuilder:
@@ -170,6 +176,34 @@ class InformalBuilder:
         }
         (self.out_dir / "informal_parts.json").write_text(
             json.dumps(parts, indent=1, ensure_ascii=False)
+        )
+        self.save_result_row(text)
+
+    def result_row(self, text: ReportText) -> dict:
+        """The run as a row of the problem datasets (data/*.jsonl): the
+        problem's fields, with the statement and proof of the informalization
+        in place of the source's, and the Lean source it was checked against."""
+        body = text.body.strip()
+        label = body.find("\\label{thm:main}")
+        end = body.find("\\end{theorem}", label) if label >= 0 else -1
+        split = end + len("\\end{theorem}") if end >= 0 else 0
+        row = {
+            key: value
+            for key, value in self.row.items()
+            if not key.startswith("_")
+        }
+        return row | {
+            "informal_statement": body[:split].strip(),
+            "informal_proof": body[split:].strip(),
+            "latex_macros": text.macros.strip(),
+            "formal_proof": self.lean_source,
+            "machine_verified": all(verified for _, verified in self.lemmas),
+        }
+
+    def save_result_row(self, text: ReportText) -> None:
+        """Write the result row to <run>/<slug>_result.jsonl."""
+        (self.out_dir.parent / f"{self.slug}{RESULT_ROW_SUFFIX}").write_text(
+            json.dumps(self.result_row(text), ensure_ascii=False) + "\n"
         )
 
     # Writer loop -------------------------------------------------------------
@@ -343,8 +377,11 @@ def informalize_run(result_dir: Path, reuse_draft: bool = False) -> dict:
     )
     lemmas = [(lemma.name, lemma.proved) for lemma in sketch.lemmas]
     specs = trace["agents"]
+    captain = {
+        key: value for key, value in specs["captain"].items() if key != "tools"
+    }
     roles = {
-        role: build_agent(specs.get(role) or specs["captain"])
+        role: build_agent(role_spec(role, specs.get(role) or captain))
         for role in ("writer", "reviewer")
     }
     pool = AgentPool(roles, LOGS_DIR / run_id / "calls.jsonl")
@@ -387,10 +424,12 @@ def informalize_run(result_dir: Path, reuse_draft: bool = False) -> dict:
 
 
 def rebuild(out_dir: Path) -> None:
-    """Recompile a saved informalization without model calls."""
+    """Recompile a saved informalization and rewrite its result row, without
+    model calls."""
     parts = json.loads((out_dir / "informal_parts.json").read_text())
     builder = InformalBuilder(out_dir, **parts["builder"])
     text = ReportText(**parts["text"])
+    builder.save_result_row(text)
     print("\n".join(builder.problems(text)) or "contract: ok")
     ok, errors = builder.compile(builder.document(text))
     print("compiled" if ok else errors)

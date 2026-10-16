@@ -283,15 +283,30 @@ function buildPickers() {
       <select aria-label="${role} Claude model" data-field="model">${catalog.claude.map(m =>
         `<option value="${m.model}">${escapeHtml(m.label)}</option>`).join("")}</select>
       <input aria-label="${role} model id" data-field="model-id" placeholder="model id">
-      <select aria-label="${role} reasoning level" data-field="effort"></select>`;
+      <select aria-label="${role} reasoning level" data-field="effort"></select>${toolPickers(role)}`;
     box.addEventListener("change", () => syncPicker(role));
     const wanted = catalog.default[role];
     box.querySelector('[data-field="provider"]').value =
       wanted.provider === "aiprover" ? `aiprover:${wanted.model}` : wanted.provider;
     if (wanted.provider === "claude") box.querySelector('[data-field="model"]').value = wanted.model;
     if (isHosted(wanted.provider)) box.querySelector('[data-field="model-id"]').value = wanted.model;
+    for (const field of ["tools", "judge_tools"]) {
+      const pick = box.querySelector(`[data-field="${field}"]`);
+      if (pick) pick.value = wanted[field] ? "on" : "off";
+    }
     syncPicker(role, wanted.effort);
   }
+}
+
+// Lean tools (compile, Mathlib search) of a Claude role; the orchestrator also
+// chooses them for its formalization and sketch judges. The subagent is
+// AIProver's harness or a single model call, with no such choice.
+function toolPickers(role) {
+  if (role === "subagent") return "";
+  const pick = (field, on, off) => `<select aria-label="${role} ${field}" data-field="${field}">
+    <option value="on">${on}</option><option value="off">${off}</option></select>`;
+  return pick("tools", "Lean tools", "no tools") +
+    (role === "orchestrator" ? pick("judge_tools", "judges: Lean tools", "judges: no tools") : "");
 }
 
 // Show the Claude model and reasoning level only for Claude, and the model id
@@ -311,6 +326,7 @@ function syncPicker(role, effort) {
   level.value = efforts.includes(keep) ? keep : "";
   model.classList.toggle("hidden", !claude);
   level.classList.toggle("hidden", !efforts.length);
+  for (const pick of box.querySelectorAll('[data-field$="tools"]')) pick.classList.toggle("hidden", !claude);
 }
 
 function selection(role) {
@@ -320,8 +336,12 @@ function selection(role) {
   if (isHosted(provider)) {
     return {provider, model: box.querySelector('[data-field="model-id"]').value.trim(), effort: ""};
   }
-  return {provider, model: box.querySelector('[data-field="model"]').value,
-          effort: box.querySelector('[data-field="effort"]').value};
+  const choice = {provider, model: box.querySelector('[data-field="model"]').value,
+                  effort: box.querySelector('[data-field="effort"]').value};
+  for (const pick of box.querySelectorAll('[data-field$="tools"]')) {
+    choice[pick.dataset.field] = pick.value === "on";
+  }
+  return choice;
 }
 
 function modelLabel(choice) {
@@ -332,7 +352,9 @@ function modelLabel(choice) {
   const hosted = catalog?.hosted.find(h => h.provider === choice.provider);
   if (hosted) return `${hosted.label} ${choice.model}`;
   const label = (catalog?.claude.find(m => m.model === choice.model) || {label: choice.model}).label;
-  return choice.effort ? `${label}, ${choice.effort}` : label;
+  const parts = [label, choice.effort, choice.tools && "Lean tools",
+                 choice.judge_tools && "judges with tools"];
+  return parts.filter(Boolean).join(", ");
 }
 
 // One line per role the run records, in the order of the form.
