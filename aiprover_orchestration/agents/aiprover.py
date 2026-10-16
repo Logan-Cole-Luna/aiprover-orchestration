@@ -17,17 +17,16 @@ import logging
 import os
 import subprocess
 import tempfile
-import threading
 import time
 import tomllib
 import urllib.request
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from functools import cached_property
 from pathlib import Path
 from typing import Callable
 
 from ..paths import ROOT
-from .base import Agent
+from .base import STOPPING, Agent, Terminated, raise_if_stopping
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +50,14 @@ class AIProverSample:
     reasoning: list = field(
         default_factory=list
     )  # model reasoning per turn; see read_reasoning()
+
+
+def sample_record(sample: AIProverSample) -> dict:
+    """A sample as the trace records it (`samples` of a model call)."""
+    record = asdict(sample)
+    record["sample"] = record.pop("index")
+    record["problems"] = record["problems"][:5]
+    return record
 
 
 def session_ending(sample: dict) -> str:
@@ -166,20 +173,6 @@ def lean_check_summary(check: dict | None) -> dict:
         "axioms_used": check.get("axioms_used"),
         "diagnostics": (check.get("diagnostics") or "")[:MAX_DIAGNOSTICS],
     }
-
-
-class Terminated(BaseException):
-    """The run was terminated while an AIProver job was pending."""
-
-
-# Set when the run is terminated (`stop_jobs`): pending jobs are cancelled
-# within one poll interval and no new job starts. Solver threads would
-# otherwise keep waiting on their jobs and hold the process open.
-STOPPING = threading.Event()
-
-
-def stop_jobs() -> None:
-    STOPPING.set()
 
 
 @dataclass
@@ -394,8 +387,7 @@ class AIProverAgent(Agent):
         problem (the harness's `--hint-file`). `accept` is offered each
         session's answer once as the session finishes; when it returns True
         the job's remaining sessions are cancelled."""
-        if STOPPING.is_set():
-            raise Terminated
+        raise_if_stopping()
         work_dir.mkdir(parents=True, exist_ok=True)
         start = time.time()
         if resume_job and not self.supports_resume:

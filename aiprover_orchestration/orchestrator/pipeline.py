@@ -20,15 +20,25 @@ from dataclasses import asdict
 from pathlib import Path
 
 from ..agents import (
+    STOPPING,
     AgentCallError,
     AgentPool,
     AgentRefusal,
+    BudgetExhausted,
+    Terminated,
     build_agent,
+    raise_if_stopping,
     role_spec,
 )
-from ..lean.checker import LeanChecker
+from ..lean.checker import (
+    SORRY_PROBLEM,
+    CheckResult,
+    LeanChecker,
+    sorry_after,
+)
+from ..lean.text import indent
 from ..paths import LOGS_DIR, RESULTS_DIR, TEMP_DIR, WORKSPACE
-from . import benchmark, cdcl, libraries, prompts
+from . import benchmark, cdcl, knowledge, libraries, prompts
 from .config import (
     ALGORITHM,
     FILE_HEADER,
@@ -41,10 +51,11 @@ from .resume import ResumeState, restore_state
 from .stages.aiprover import AIProverStage
 from .stages.assemble import AssembleStage
 from .stages.formalize import FormalizeStage
+from .stages.handback import HandbackStage
 from .stages.prove import ProveStage
 from .stages.review import ReviewStage
 from .stages.sketch import SketchStage
-from .structures import Formalization
+from .structures import Formalization, Lemma
 from .trace import Trace
 
 logger = logging.getLogger(__name__)
@@ -72,6 +83,7 @@ class Orchestration(
     SketchStage,
     ProveStage,
     AIProverStage,
+    HandbackStage,
     AssembleStage,
     ReviewStage,
 ):
@@ -91,7 +103,10 @@ class Orchestration(
         for directory in (self.temp_dir, self.log_dir, self.result_dir):
             directory.mkdir(parents=True, exist_ok=True)
         self.lean = LeanChecker(
-            self.workspace, config.lean_parallel, config.lean_timeout
+            self.workspace,
+            config.lean_parallel,
+            config.lean_timeout,
+            stop=STOPPING,
         )
         self.slug = slug_from_problem(row)
         self.auditor_system = prompts.auditor_system()
@@ -184,10 +199,14 @@ class Orchestration(
         return self.temp_dir / f"{index:04d}_{label}.lean"
 
     def _check(self, label: str, lean_text: str, **trace_fields):
-        """Elaborate a standalone file and record the check in the trace."""
+        """Elaborate a standalone file and record the check in the trace. A
+        check ended by the run's termination raises Terminated, so that it
+        is never read as a failed proof."""
+        raise_if_stopping()
         path = self._attempt_path(label)
         start = time.time()
         result = self.lean.check_text(lean_text, path)
+        raise_if_stopping()
         self.trace.add(
             "lean_check",
             label=label,
@@ -201,6 +220,64 @@ class Orchestration(
             **trace_fields,
         )
         return result
+
+    def _check_proof(
+        self,
+        form: Formalization,
+        context: str,
+        lemma: Lemma,
+        helpers: str,
+        proof: str,
+        label: str,
+        **trace_fields,
+    ) -> tuple[CheckResult, str]:
+        """Check `helpers` and `proof` of `lemma` after `context` (earlier
+        lemmas as `sorry` stubs). Returns the check and its problem, empty
+        if the proof holds. The proof must not use `sorry` after the stubs:
+        Lean accepts `stop` and similar tactics with a warning only."""
+        statement = f"{lemma.statement} := by\n{indent(proof)}"
+        own = "\n\n".join(filter(None, [helpers, statement]))
+        text = self._standalone(
+            form, "\n\n".join(filter(None, [context, own]))
+        )
+        result = self._check(label, text, lemma=lemma.name, **trace_fields)
+        if not result.ok:
+            return result, result.error_report()
+        first_line = text.count("\n", 0, text.rindex(own)) + 1
+        if sorry_after(result, first_line):
+            return result, SORRY_PROBLEM
+        return result, ""
+
+    def _record_proof(self, lemma: Lemma, worker, round: int = 0) -> None:
+        self._decision(
+            "lemma_proved",
+            lemma=lemma.name,
+            worker=worker,
+            round=round,
+            helpers=lemma.helpers,
+            proof=lemma.proof,
+        )
+
+    def _for_captain(self, notes: str) -> str:
+        """Session notes as the captain receives them: without another
+        model's reasoning for a hosted captain (agents/base.py)."""
+        if self.agents.agents["captain"].hosted:
+            return knowledge.without_reasoning(notes)
+        return notes
+
+    def _attempts_allowed(self, reviewed_at: int) -> int:
+        """Completed attempts a statement may have over the run:
+        `aiprover_attempts_per_lemma`, or, after a captain's retry at
+        `reviewed_at` attempts, `aiprover_handback_after` more."""
+        allowed = max(1, self.config.aiprover_attempts_per_lemma)
+        handback_after = self.config.aiprover_handback_after
+        if handback_after and reviewed_at:
+            allowed = max(allowed, reviewed_at + handback_after)
+        return allowed
+
+    def _exhausted(self, lemma) -> bool:
+        """No attempts left on `lemma`'s statement in this run."""
+        return lemma.attempts >= self._attempts_allowed(lemma.reviewed_at)
 
     def _decision(self, event: str, **fields) -> None:
         self.trace.add("decision", event=event, **fields)
@@ -301,7 +378,13 @@ class Orchestration(
                 }
             if self.library and state.formalization is None:
                 self._check_library()
-            if state.faithful:
+            audits_spent = (
+                state.audited
+                and state.audit_rounds_done > self.config.max_audit_rounds
+            )
+            if state.faithful or audits_spent:
+                # A resumed run whose last verdict ended the audit budget
+                # ends as it would have: with its unfaithful formalization.
                 form = state.formalization
             else:
                 with self._timed("formalize"):
@@ -405,11 +488,18 @@ class Orchestration(
             summary.update(error=str(error), error_kind="infrastructure")
             logger.error(str(error))
             return summary
-        except RuntimeError as error:
+        except BudgetExhausted as error:
             summary.update(error=str(error), error_kind="budget")
             logger.error(str(error))
             return summary
-        except (KeyboardInterrupt, SystemExit):
+        except RuntimeError as error:
+            # A stage that ended without a result (no compiled
+            # formalization or sketch within its repairs, a library that
+            # does not compile).
+            summary.update(error=str(error), error_kind="stage_failed")
+            logger.error(str(error))
+            return summary
+        except (KeyboardInterrupt, SystemExit, Terminated):
             summary.update(error="interrupted", error_kind="interrupted")
             logger.error("run interrupted; resume with --resume")
             raise

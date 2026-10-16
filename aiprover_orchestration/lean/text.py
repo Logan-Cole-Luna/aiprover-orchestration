@@ -3,33 +3,70 @@
 import re
 import textwrap
 
-# A top-level declaration header, optionally preceded by attributes and
-# modifiers.
+# The grammar of a top-level declaration header, shared by every reader of
+# declarations: attributes, modifiers, the kind and the name.
+ATTRIBUTES = r"(?:@\[[^\]]*\]\s*)?"
+MODIFIERS = r"(?:(?:private|protected|noncomputable|nonrec|partial)\s+)*"
+DECLARATION_KINDS = (
+    "theorem",
+    "lemma",
+    "def",
+    "abbrev",
+    "instance",
+    "example",
+    "inductive",
+    "structure",
+    "class",
+    "opaque",
+    "axiom",
+)
+KIND = "(?:" + "|".join(DECLARATION_KINDS) + r")\b"
 DECL_START = re.compile(
-    r"^(?:@\[[^\]]*\]\s*)?"
-    r"(?:(?:private|protected|noncomputable|nonrec)\s+)*"
-    r"(theorem|lemma|def|abbrev|instance|example|inductive|structure)\b"
-    r"\s*([^\s:({\[]*)",
-    re.M,
+    rf"^{ATTRIBUTES}{MODIFIERS}({KIND})\s*([^\s:({{\[]*)", re.M
 )
 # Lines that end a top-level declaration without starting a new one.
 BLOCK_END = re.compile(
     r"^(?:namespace|section|end|open|set_option|#|import|variable)\b", re.M
 )
 _IMPORT_RE = re.compile(r"^import\s+(\S+)\s*$", re.M)
-_DEFINITION_NAME_RE = re.compile(
-    r"^\s*(?:@\[[^\]]*\]\s*)?(?:private\s+)?"
-    r"(?:theorem|lemma|def|abbrev)\s+([^\s:({\[]+)",
-    re.M,
+
+
+# String and character literals, which are kept verbatim: comment markers
+# inside them (`"/-"`) do not open a comment. A raw string `r#"..."#` ends
+# at a quote followed by as many `#` as opened it.
+_STRING_RE = re.compile(r'"(?:[^"\\]|\\.)*"', re.S)
+_RAW_STRING_RE = re.compile(r'r(#*)".*?"\1', re.S)
+_CHAR_RE = re.compile(
+    r"'(?:\\(?:x[0-9a-fA-F]{2}|u\{?[0-9a-fA-F]+\}?|.)|[^\\'\n])'"
 )
+# Characters of an identifier: a `'` or `r` after one is part of the name,
+# not the start of a literal (`h'`, `succ_r`).
+_IDENTIFIER_CHAR = re.compile(r"[\w'!?.]")
 
 
 def strip_comments(lean_text: str) -> str:
-    """Remove Lean line and (nested) block comments, keeping line structure."""
+    """Remove Lean line and (nested) block comments, keeping line structure
+    and the text of string and character literals."""
     out, depth, i = [], 0, 0
     while i < len(lean_text):
         two = lean_text[i : i + 2]
-        if two == "/-":
+        literal = None
+        if not depth:
+            after_name = i > 0 and _IDENTIFIER_CHAR.match(lean_text[i - 1])
+            if lean_text[i] == '"':
+                literal = _STRING_RE.match(lean_text, i)
+            elif lean_text[i] == "r" and not after_name:
+                literal = _RAW_STRING_RE.match(lean_text, i)
+            elif lean_text[i] == "'" and not after_name:
+                literal = _CHAR_RE.match(lean_text, i)
+        if literal:
+            out.append(literal.group(0))
+            i = literal.end()
+        elif lean_text[i] == '"' and not depth:
+            # An unterminated string runs to the end of the text.
+            out.append(lean_text[i:])
+            i = len(lean_text)
+        elif two == "/-":
             depth += 1
             i += 2
         elif two == "-/" and depth:
@@ -76,9 +113,24 @@ def split_declarations(lean_text: str) -> list[tuple[str, str, str]]:
     return blocks
 
 
-def declaration_names(lean_text: str) -> list[str]:
-    """Names of the theorems, lemmas and definitions declared at line start."""
-    return _DEFINITION_NAME_RE.findall(lean_text)
+def declarations(lean_text: str) -> list[tuple[str, str, int]]:
+    """Top-level declarations as (kind, name, line); `name` is empty for an
+    anonymous instance or an example."""
+    code = strip_comments(lean_text)
+    return [
+        (kind, name, code.count("\n", 0, match.start()) + 1)
+        for match in DECL_START.finditer(code)
+        for kind, name in [match.groups()]
+    ]
+
+
+def declaration_names(lean_text: str, kinds=DECLARATION_KINDS) -> list[str]:
+    """Names declared at top level by declarations of the given kinds."""
+    return [
+        name
+        for kind, name, _ in declarations(lean_text)
+        if name and kind in kinds
+    ]
 
 
 def opened_namespaces(lean_text: str) -> list[str]:

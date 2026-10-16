@@ -3,7 +3,14 @@
 import re
 from dataclasses import dataclass
 
-from ..lean.text import file_scoped, strip_leading_by
+from ..lean.text import (
+    ATTRIBUTES,
+    KIND,
+    MODIFIERS,
+    file_scoped,
+    normalize,
+    strip_leading_by,
+)
 
 
 @dataclass
@@ -81,8 +88,12 @@ def extract_tactics(text: str, tag: str) -> str:
     return strip_leading_by(extract_block(text, tag))
 
 
+# A `theorem` or `lemma` ending in `:= sorry`; its signature does not run
+# into a later declaration (a line that starts one).
 _DECL_RE = re.compile(
-    r"^(?:@\[[^\]]*\]\s*)?(?:theorem|lemma)\s+([^\s:({\[]+)(.*?):=\s*(?:by\s+)?sorry\b",
+    rf"^{ATTRIBUTES}(?:theorem|lemma)\s+([^\s:({{\[]+)"
+    rf"((?:(?!^{ATTRIBUTES}{MODIFIERS}{KIND}).)*?)"
+    r":=\s*(?:by\s+)?sorry\b",
     flags=re.S | re.M,
 )
 
@@ -98,6 +109,23 @@ def parse_statement(block: str) -> tuple[str, str, str]:
     match = matches[0]
     preamble = file_scoped(block[: match.start()].strip())
     return preamble, match.group(1), match.group(2)
+
+
+_RECORDED_NAME = re.compile(
+    rf"\s*{ATTRIBUTES}(?:theorem|lemma)\s+([^\s:({{\[]+)"
+)
+
+
+def recorded_lemmas(statements: list[str]) -> list[Lemma]:
+    """Lemmas from statements a trace records (`theorem name ...`, without a
+    proof), each kept exactly as recorded: a resumed run continues with the
+    statements its trace holds."""
+    lemmas = []
+    for statement in statements:
+        match = _RECORDED_NAME.match(statement)
+        if match:
+            lemmas.append(Lemma(match.group(1), statement.rstrip()))
+    return lemmas
 
 
 def parse_lemmas(block: str) -> list[Lemma]:
@@ -134,6 +162,25 @@ def missing_lemmas(
     )
 
 
+def statement_key(statement: str) -> str:
+    """The proposition a lemma states, without its name: the key under which
+    attempts and refutations are counted, so that a renamed lemma is the
+    same lemma."""
+    match = _RECORDED_NAME.match(statement)
+    return normalize(statement[match.end() :] if match else statement)
+
+
+def statements(lemmas: list[Lemma]) -> dict[str, str]:
+    """Lemma name to normalized statement."""
+    return {lemma.name: normalize(lemma.statement) for lemma in lemmas}
+
+
+def unchanged_names(before: dict[str, str], after: dict[str, str]) -> set[str]:
+    """Lemmas of `after` stated as in `before` (`statements`): those a proof
+    found under `before` may still use."""
+    return {name for name, text in after.items() if before.get(name) == text}
+
+
 def dependency_order(lemmas: list[Lemma]) -> list[Lemma]:
     """Lemmas in sketch order, except that each proved lemma follows the
     lemmas its proof uses. A proof kept across a replan may use a lemma the
@@ -160,6 +207,15 @@ def dependency_order(lemmas: list[Lemma]) -> list[Lemma]:
         remaining.remove(ready)
         ordered.append(ready)
     return ordered
+
+
+def stub_listing(lemmas: list[Lemma], note=None) -> str:
+    """The lemmas as statements left unproved (`:= by sorry`), a block each;
+    `note(lemma)` is appended to a lemma's statement (a comment)."""
+    return "\n\n".join(
+        f"{lemma.statement} := by sorry" + (note(lemma) if note else "")
+        for lemma in lemmas
+    )
 
 
 def failed_lemma_text(lemma: Lemma) -> str:

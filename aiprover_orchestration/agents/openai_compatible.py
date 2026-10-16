@@ -5,7 +5,12 @@ import os
 import urllib.error
 import urllib.request
 
-from .base import Agent, Completion
+from .base import (
+    RETRYABLE_STATUS,
+    Agent,
+    Completion,
+    retry_after_seconds,
+)
 
 # Hosted providers: base URL and the environment variable holding the key.
 PROVIDERS = {
@@ -29,7 +34,6 @@ class OpenAICompatibleAgent(Agent):
     """
 
     backend = "openai_compatible"
-    RETRYABLE_STATUS = {408, 409, 429, 500, 502, 503, 504, 529}
 
     def __init__(
         self,
@@ -106,7 +110,10 @@ class OpenAICompatibleAgent(Agent):
             detail = e.read().decode(errors="replace")[:500]
             return Completion(
                 error=f"HTTP {e.code}: {detail}",
-                retryable=e.code in self.RETRYABLE_STATUS,
+                retryable=e.code in RETRYABLE_STATUS,
+                retry_after_s=retry_after_seconds(
+                    e.headers.get("retry-after")
+                ),
             )
         except (urllib.error.URLError, TimeoutError, ConnectionError) as e:
             return Completion(error=f"connection error: {e}", retryable=True)

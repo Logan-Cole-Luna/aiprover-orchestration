@@ -45,8 +45,17 @@ import time
 from pathlib import Path
 
 from ..orchestrator.trace import REFUSAL_MARKER, is_untraced
-from .aiprover import STOPPING
-from .base import Agent, AgentCallError, AgentRefusal, Completion
+from .base import (
+    STOPPING,
+    Agent,
+    AgentCallError,
+    AgentRefusal,
+    BudgetExhausted,
+    Completion,
+    Terminated,
+    add_usage,
+    raise_if_stopping,
+)
 from .claude import ClaudeAgent
 from .claude_cli import ClaudeCLIAgent
 from .openai_compatible import OpenAICompatibleAgent
@@ -55,13 +64,6 @@ logger = logging.getLogger(__name__)
 
 
 CLAUDE_AGENTS = {"api": ClaudeAgent, "subscription": ClaudeCLIAgent}
-
-# Cache fields of a call's usage and the run totals they add to.
-CACHE_USAGE_KEYS = {
-    "cacheReadInputTokens": "cache_read_tokens",
-    "cacheCreationInputTokens": "cache_creation_tokens",
-}
-
 
 def claude_agent(**options) -> Agent:
     """A Claude agent on the API (a key is set) or on the subscription of
@@ -176,7 +178,12 @@ class AgentPool:
     def _load_history(self) -> None:
         """Seed the call and usage totals from an existing calls file (resume)."""
         for line in self.calls_path.read_text().splitlines():
-            record = json.loads(line)
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                # The last line of a process killed while writing it.
+                logger.warning(f"{self.calls_path}: unreadable line skipped")
+                continue
             self._accumulate(
                 record["role"],
                 _hosted(record),
@@ -214,19 +221,7 @@ class AgentPool:
         if is_untraced(error, refused):
             return
         self.num_calls[role] = self.num_calls.get(role, 0) + 1
-        for model_id, usage in model_usage.items():
-            totals = self.usage_by_model.setdefault(
-                model_id,
-                {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0},
-            )
-            totals["input_tokens"] += int(usage.get("inputTokens") or 0)
-            totals["output_tokens"] += int(usage.get("outputTokens") or 0)
-            for key, total_key in CACHE_USAGE_KEYS.items():
-                if usage.get(key):
-                    totals[total_key] = totals.get(total_key, 0) + int(
-                        usage[key]
-                    )
-            totals["cost_usd"] += float(usage.get("costUSD") or 0.0)
+        add_usage(self.usage_by_model, model_usage)
 
     def complete(
         self,
@@ -241,13 +236,15 @@ class AgentPool:
 
         Raises RuntimeError when the call fails permanently, so that the
         pipeline never proceeds on an empty reply, and AgentRefusal when the
-        provider's safety classifier declines the prompt.
+        provider's safety classifier declines the prompt. Raises Terminated
+        once the run is terminating: no call starts and no retry waits.
         """
         agent = self.agents[role].for_phase(phase)
         if agent.hosted and self.max_claude_calls:
             self._check_claude_budget()
         completion = Completion()
         for attempt in range(agent.max_retries + 1):
+            raise_if_stopping()
             start = time.time()
             completion = agent.complete_once(prompt, system_prompt)
             self._record(
@@ -273,7 +270,7 @@ class AgentPool:
             )
             # A terminated run stops waiting, so the process can exit.
             if STOPPING.wait(max(wait, 1.0)):
-                break
+                raise Terminated
         error = AgentRefusal if completion.refused else AgentCallError
         raise error(
             f"{agent.backend} call failed ({role}/{phase}): "
@@ -290,10 +287,10 @@ class AgentPool:
         )
 
     def _check_claude_budget(self) -> None:
-        # A plain RuntimeError, not AgentCallError: the pipeline reports it as
-        # a budget stop, which is not restarted automatically.
+        # Not an AgentCallError: the pipeline reports it as a budget stop,
+        # which is not restarted automatically.
         if self.claude_calls >= self.max_claude_calls:
-            raise RuntimeError(
+            raise BudgetExhausted(
                 f"hosted model call budget of {self.max_claude_calls} "
                 f"exhausted"
             )

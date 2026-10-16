@@ -10,7 +10,12 @@ import os
 
 import anthropic
 
-from .base import Agent, Completion
+from .base import (
+    RETRYABLE_STATUS,
+    Agent,
+    Completion,
+    retry_after_seconds,
+)
 
 # USD per million input / output tokens.
 PRICES = {
@@ -103,16 +108,18 @@ class ClaudeAgent(Agent):
                 with self.client.messages.stream(**request) as stream:
                     message = stream.get_final_message()
         except anthropic.RateLimitError as e:
-            retry_after = e.response.headers.get("retry-after")
             return Completion(
                 error=f"rate limited: {e.message}"[:500],
                 retryable=True,
-                retry_after_s=float(retry_after) if retry_after else None,
+                retry_after_s=retry_after_seconds(
+                    e.response.headers.get("retry-after")
+                ),
             )
         except anthropic.APIStatusError as e:
             return Completion(
                 error=f"HTTP {e.status_code}: {e.message}"[:500],
-                retryable=e.status_code in (408, 409) or e.status_code >= 500,
+                retryable=e.status_code in RETRYABLE_STATUS
+                or e.status_code >= 500,
             )
         except anthropic.APIConnectionError as e:
             return Completion(error=f"connection error: {e}", retryable=True)

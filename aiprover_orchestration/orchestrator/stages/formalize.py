@@ -15,7 +15,7 @@ Related published work (tags defined in docs/lit_review/lit_review.md §6):
 
 import logging
 
-from ...lean.checker import forbidden_constructs
+from ...lean.checker import forbidden_problems
 from ...lean.text import drop_imports
 from .. import prompts
 from ..structures import Formalization, extract_tag, parse_statement
@@ -36,6 +36,11 @@ class FormalizeStage:
         A resumed run passes a compiled but unaudited `form`, or the feedback
         of its last REVISE verdict, together with the next audit round.
         """
+        if first_round > self.config.max_audit_rounds:
+            raise ValueError(
+                f"audit round {first_round} exceeds max_audit_rounds="
+                f"{self.config.max_audit_rounds}"
+            )
         for audit_round in range(first_round, self.config.max_audit_rounds + 1):
             if form is None:
                 form = self._formalize_until_compiles(feedback)
@@ -102,10 +107,10 @@ class FormalizeStage:
             )
             definitions = drop_imports(extract_tag(reply, "definitions"))
             statement_block = drop_imports(extract_tag(reply, "statement"))
-            problems = [
-                f"forbidden construct in definitions: {name}"
-                for name in forbidden_constructs(definitions)
-            ]
+            problems = forbidden_problems(definitions, "definitions")
+            problems += forbidden_problems(
+                statement_block, "statement", statements=True
+            )
             try:
                 preamble, name, signature = parse_statement(statement_block)
                 if name != self.slug:

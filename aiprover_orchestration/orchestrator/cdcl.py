@@ -33,12 +33,11 @@ Related published work:
   plan-level failure causes and branch retraction for proof agents.
 """
 
-import re
 import threading
 from dataclasses import asdict, dataclass
 
 from ..lean.text import normalize
-from .structures import Lemma
+from .structures import Lemma, recorded_lemmas, refers_to
 
 # Kinds of learned clause:
 #   refuted        a statement whose negation compiled; never state it again
@@ -124,11 +123,12 @@ class ClauseStore:
             if step.get("kind") != "decision":
                 continue
             event = step.get("event")
-            if event == "sketch_accepted":
-                for statement in step.get("lemmas") or []:
-                    match = re.match(r"\s*theorem\s+([^\s(:{\[]+)", statement)
-                    if match:
-                        statement_of[match.group(1)] = statement
+            if event == "sketch_accepted" or (
+                event == "lemma_handback" and step.get("action") == "split"
+            ):
+                key = "lemmas" if event == "sketch_accepted" else "new_lemmas"
+                for lemma in recorded_lemmas(step.get(key) or []):
+                    statement_of[lemma.name] = lemma.statement
             elif event == "lemma_handback":
                 if step.get("action") == "restate":
                     statement_of[step["lemma"]] = step["statement"]
@@ -204,9 +204,8 @@ def referenced_outside(
     """True if a proved lemma outside the retracted subtree uses `ancestor`:
     a backjump would invalidate that proof, so the conflict is analysed at a
     higher decision instead."""
-    pattern = rf"(?<![\w.']){re.escape(ancestor.name)}(?![\w'])"
     return any(
-        re.search(pattern, other.helpers + "\n" + other.proof)
+        refers_to(other.helpers + "\n" + other.proof, ancestor.name)
         for other in lemmas
         if other.proved
         and other is not ancestor
@@ -250,6 +249,17 @@ def conflict_key(ancestor: Lemma, stuck_leaves: list[Lemma]) -> tuple:
         normalize(ancestor.statement),
         frozenset(other.name for other in stuck_leaves),
     )
+
+
+def insert_split(
+    lemmas: list[Lemma], parent: Lemma, children: list[Lemma]
+) -> None:
+    """Place the lemmas a split of `parent` introduced, in order, before it
+    (in place), as its children."""
+    position = lemmas.index(parent)
+    for offset, child in enumerate(children):
+        child.parent = parent.name
+        lemmas.insert(position + offset, child)
 
 
 def retract(ancestor: Lemma, lemmas: list[Lemma]) -> list[Lemma]:

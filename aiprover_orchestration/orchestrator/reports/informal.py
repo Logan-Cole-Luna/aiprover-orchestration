@@ -31,22 +31,20 @@ import json
 import re
 from dataclasses import asdict
 from pathlib import Path
-from typing import Callable
 
 from ...agents import AgentPool, build_agent, role_spec
+from ...lean.text import indent
 from ...paths import LOGS_DIR
 from .. import prompts
 from ..resume import restore_state
 from .report import (
-    FORBIDDEN_LATEX,
     PREAMBLE,
-    MAX_COMPILE_REPAIRS,
+    LatexBuilder,
     ReportText,
-    compile_latex,
     escape,
+    forbidden_latex,
     unicode_declarations,
 )
-from ..structures import extract_tag
 
 INFORMAL_PREAMBLE = r"""\usepackage{longtable}
 \newcommand{\unverified}{\quad\textup{\small[not machine-verified]}}
@@ -55,11 +53,13 @@ INFORMAL_PREAMBLE = r"""\usepackage{longtable}
 RESULT_ROW_SUFFIX = "_result.jsonl"
 
 
-class InformalBuilder:
+class InformalBuilder(LatexBuilder):
     """Writes, checks and compiles the informalization of one run.
 
     `lemmas` lists the lemmas of the formal proof in order, as (Lean name,
     machine-verified)."""
+
+    phase = "informal"
 
     def __init__(
         self,
@@ -88,12 +88,7 @@ class InformalBuilder:
 
     def problems(self, text: ReportText) -> list[str]:
         """Contract violations of the writer's text, before compiling."""
-        problems = []
-        for part in (text.macros, text.body, text.title, text.abstract):
-            problems += [
-                f"forbidden construct `{m.group(0)}`"
-                for m in FORBIDDEN_LATEX.finditer(part)
-            ]
+        problems = forbidden_latex(text)
         labels = re.findall(r"\\label\{lem:([^}]*)\}", text.body)
         names = [name for name, _ in self.lemmas]
         missing = [name for name in names if name not in labels]
@@ -155,8 +150,22 @@ class InformalBuilder:
             f"{self.correspondence()}\n\\end{{document}}\n"
         )
 
-    def compile(self, document: str) -> tuple[bool, str]:
-        return compile_latex(self.out_dir, self.name, document)
+    def documents(self, text: ReportText) -> list[str]:
+        return [self.document(text)]
+
+    def write_prompt(self) -> str:
+        return prompts.INFORMAL_TEMPLATE.format(
+            informal_statement=self.row["informal_statement"],
+            informal_proof=self.row["informal_proof"],
+            lean_source=self.lean_source,
+            lemmas=self.lemma_list(),
+            theorem_name=self.theorem_name,
+        )
+
+    def check_prompt(self, text: ReportText) -> str:
+        return prompts.INFORMAL_CHECK_TEMPLATE.format(
+            lean_source=self.lean_source, body=text.body
+        )
 
     def save(self, text: ReportText) -> None:
         self.out_dir.mkdir(parents=True, exist_ok=True)
@@ -206,97 +215,6 @@ class InformalBuilder:
             json.dumps(self.result_row(text), ensure_ascii=False) + "\n"
         )
 
-    # Writer loop -------------------------------------------------------------
-
-    def build(self, complete: Callable[[str, str, str], str]) -> dict:
-        """Write, check and compile; `complete(prompt, role, phase)` calls a
-        model. Returns a record of the result."""
-        record = {
-            "pdf": None,
-            "compiled": False,
-            "discrepancies": "",
-            "problems": [],
-        }
-        text = ReportText.parse(
-            complete(
-                prompts.INFORMAL_TEMPLATE.format(
-                    informal_statement=self.row["informal_statement"],
-                    informal_proof=self.row["informal_proof"],
-                    lean_source=self.lean_source,
-                    lemmas=self.lemma_list(),
-                    theorem_name=self.theorem_name,
-                ),
-                "writer",
-                "informal_write",
-            )
-        )
-        text, ok, errors = self._compile_with_repairs(
-            text, complete, "informal_repair"
-        )
-        record["compiled"] = ok
-        if ok:
-            check = complete(
-                prompts.INFORMAL_CHECK_TEMPLATE.format(
-                    lean_source=self.lean_source, body=text.body
-                ),
-                "reviewer",
-                "informal_check",
-            )
-            discrepancies = extract_tag(check, "discrepancies").strip()
-            record["discrepancies"] = discrepancies
-            if discrepancies and discrepancies.lower().rstrip(".") != "none":
-                revised = ReportText.parse(
-                    complete(
-                        prompts.REPORT_REVISE_TEMPLATE.format(
-                            discrepancies=discrepancies, **asdict(text)
-                        ),
-                        "writer",
-                        "informal_revise",
-                    )
-                )
-                revised, revised_ok, _ = self._compile_with_repairs(
-                    revised, complete, "informal_revise_repair"
-                )
-                if revised_ok:
-                    text = revised
-                else:
-                    record["problems"].append(
-                        "revision did not compile; the checked "
-                        "version before revision was kept"
-                    )
-                    ok, errors = self.compile(self.document(text))
-        self.save(text)
-        record["problems"] += self.problems(text)
-        if not ok:
-            record["problems"].append(errors[:2000])
-        pdf = self.out_dir / f"{self.name}.pdf"
-        if ok and pdf.exists():
-            record["pdf"] = str(pdf)
-        return record
-
-    def _compile_with_repairs(self, text: ReportText, complete, phase: str):
-        errors = ""
-        for repair in range(MAX_COMPILE_REPAIRS + 1):
-            problems = self.problems(text)
-            if not problems:
-                ok, errors = self.compile(self.document(text))
-                if ok:
-                    return text, True, ""
-                problems = [errors]
-            if repair == MAX_COMPILE_REPAIRS:
-                return text, False, "\n".join(problems)
-            text = ReportText.parse(
-                complete(
-                    prompts.REPORT_REPAIR_TEMPLATE.format(
-                        errors="\n".join(problems)[:6000], **asdict(text)
-                    ),
-                    "writer",
-                    f"{phase}{repair}",
-                )
-            )
-        return text, False, errors
-
-
 def sketch_source(
     definitions: str, statement: str, lemmas, main_proof: str
 ) -> str:
@@ -304,16 +222,14 @@ def sketch_source(
     the target, each lemma with its proof (or `sorry`) and the main proof."""
     parts = [definitions.strip(), statement.strip()]
     for lemma in lemmas:
-        proof = (
-            lemma.proof.strip() if lemma.proved else "sorry  -- not verified"
-        )
+        proof = lemma.proof if lemma.proved else "sorry  -- not verified"
         parts.append(
             (
                 lemma.helpers.strip() + "\n\n"
                 if lemma.proved and lemma.helpers.strip()
                 else ""
             )
-            + f"{lemma.statement} := by\n  {proof}"
+            + f"{lemma.statement} := by\n{indent(proof)}"
         )
     parts.append(f"-- main proof\n{main_proof.strip()}")
     return "\n\n".join(parts)

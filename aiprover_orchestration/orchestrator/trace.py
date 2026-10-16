@@ -3,8 +3,9 @@
 The trace is one JSON document: a header (problem, models, configuration,
 algorithm description, system prompts) followed by an ordered list of steps.
 Each step is a model call, a Lean check, or an orchestration decision. The
-file is rewritten atomically after every step so it can be inspected while
-the run is in progress.
+file is rewritten atomically, in batches of steps at most WRITE_SECONDS
+apart and at once when the run finishes, so it can be inspected while the
+run is in progress.
 
 A model call that failed on the account's usage limit, or that the
 provider's safety classifier refused, records the account or the provider,
@@ -19,13 +20,21 @@ the hand-backs the captain's model refused.
 """
 
 import argparse
+import atexit
 import gzip
 import json
-import os
 import re
 import threading
 import time
 from pathlib import Path
+
+from ..utils.files import write_atomic
+
+# Interval between writes of a running trace. A write serializes the whole
+# document, hundreds of MB for a long run, so it happens in the background
+# for the steps added meanwhile; a killed process loses at most one
+# interval of steps.
+WRITE_SECONDS = 15.0
 
 # Error text of a call refused by the account's session or usage limit.
 USAGE_LIMIT = re.compile(r"(?:session|usage|weekly) limit", re.IGNORECASE)
@@ -167,7 +176,10 @@ class Trace:
         """
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.Lock()
+        self._lock = threading.Lock()  # guards the document
+        self._write_lock = threading.Lock()  # one write at a time
+        self._pending = threading.Event()  # steps not yet written
+        self._closed = False
         self.stage = "setup"  # coarse pipeline phase, set by the pipeline
         if previous is None:
             self._start = time.time()
@@ -198,7 +210,11 @@ class Trace:
                 "outcome": None,
                 "resumptions": resumptions,
             }
-        self._write()
+        self.flush()
+        threading.Thread(
+            target=self._write_batches, name="trace-writer", daemon=True
+        ).start()
+        atexit.register(self.flush)
 
     @staticmethod
     def load(path: Path) -> dict | None:
@@ -257,21 +273,39 @@ class Trace:
                     **data,
                 }
             )
-            self._write()
-            return index
+        self._pending.set()
+        return index
 
     def finish(self, outcome: dict) -> None:
+        """Record the outcome and write the trace; later steps are kept in
+        memory only, so that a finished trace is not overwritten (by a
+        resumed run's trace of the same path)."""
         with self._lock:
             self.document["outcome"] = outcome
             self.document["finished"] = time.strftime("%Y-%m-%dT%H:%M:%S")
-            self._write()
+        self.flush()
+        self._closed = True
 
-    def _write(self) -> None:
-        temporary = self.path.with_suffix(".json.tmp")
-        temporary.write_text(
-            json.dumps(self.document, indent=1, ensure_ascii=False)
-        )
-        os.replace(temporary, self.path)
+    def flush(self) -> None:
+        """Write the document now."""
+        with self._write_lock:
+            if self._closed:
+                return
+            self._pending.clear()
+            with self._lock:
+                document = {
+                    **self.document,
+                    "steps": list(self.document["steps"]),
+                }
+            write_atomic(
+                self.path, json.dumps(document, indent=1, ensure_ascii=False)
+            )
+
+    def _write_batches(self) -> None:
+        while not self._closed:
+            self._pending.wait()
+            time.sleep(WRITE_SECONDS)
+            self.flush()
 
 
 def main() -> None:
@@ -309,11 +343,7 @@ def main() -> None:
         if args.drop_jobs:
             repaired = without_jobs(repaired, set(args.drop_jobs))
         removed = len(document["steps"]) - len(repaired["steps"])
-        temporary = path.with_suffix(".json.tmp")
-        temporary.write_text(
-            json.dumps(repaired, indent=1, ensure_ascii=False)
-        )
-        os.replace(temporary, path)
+        write_atomic(path, json.dumps(repaired, indent=1, ensure_ascii=False))
         print(f"{directory}: {removed} steps removed")
 
 

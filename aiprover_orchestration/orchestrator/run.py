@@ -21,8 +21,9 @@ import time
 from dataclasses import fields
 from pathlib import Path
 
-from ..agents.aiprover import stop_jobs
+from ..agents import stop_run
 from ..paths import CONFIG_DIR, DATA_DIR, LOGS_DIR, RESULTS_DIR, TEMP_DIR
+from ..utils.files import write_atomic
 from .config import Config
 from .pipeline import Orchestration
 from .trace import Trace
@@ -71,7 +72,7 @@ def fork_run(source_id: str, run_id: str, stage: str) -> None:
         "resumptions": [],
         "forked_from": {"run_id": source_id, "stage": stage, "at_step": cut},
     }
-    target.write_text(json.dumps(forked, indent=1, ensure_ascii=False))
+    write_atomic(target, json.dumps(forked, indent=1, ensure_ascii=False))
     num_calls = sum(step["kind"] == "model_call" for step in steps[:cut])
     source_calls = LOGS_DIR / source_id / "calls.jsonl"
     calls = (
@@ -101,8 +102,13 @@ def configure_logging(run_id: str) -> None:
     logging.basicConfig(level=logging.INFO, handlers=handlers)
 
 
-def terminate(*_) -> None:
-    stop_jobs()
+def terminate(signum: int, _frame) -> None:
+    """Unwind the run on SIGTERM or SIGINT: the main thread raises, and the
+    worker threads end their model calls, Lean checks and AIProver jobs
+    (`agents.base.STOPPING`)."""
+    stop_run()
+    if signum == signal.SIGINT:
+        raise KeyboardInterrupt
     sys.exit(143)
 
 
@@ -201,9 +207,9 @@ def main() -> None:
         or f"{time.strftime('%Y%m%d_%H%M%S')}_{row['uuid'].rsplit('_', 1)[-1]}"
     )
     configure_logging(run_id)
-    # A terminated process unwinds normally, so the trace records the outcome;
-    # the solver threads cancel their AIProver jobs and end.
-    signal.signal(signal.SIGTERM, terminate)
+    # A terminated process unwinds normally, so the trace records the outcome.
+    for signum in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(signum, terminate)
 
     roles = " | ".join(
         f"{role} {spec['backend']}/{spec.get('model')}"
