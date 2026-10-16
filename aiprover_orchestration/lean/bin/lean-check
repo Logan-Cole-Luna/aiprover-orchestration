@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# The Lean check of a Claude agent with tools; see ../tool_check.py.
+exec python3 -I "$(dirname "$(readlink -f "$0")")/../tool_check.py" "$@"

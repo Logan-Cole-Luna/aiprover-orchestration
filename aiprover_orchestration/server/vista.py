@@ -14,14 +14,19 @@ import os
 import re
 import shlex
 import subprocess
+import tomllib
 import traceback
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
-from ..paths import CONFIG_DIR
+from ..paths import CONFIG_DIR, ROOT
 
 AIPROVER_CONFIGS = CONFIG_DIR / "aiprover"
+# The configuration ./setup writes for this device: the harness, which talks
+# to the local reasoning proxy, and the connection naming that proxy's port.
+DEVICE_CONFIG = ROOT / "orchestration_plugin" / "aiprover.toml"
+DEVICE_ENDPOINT = ROOT / "orchestration_plugin" / "endpoint.toml"
 AIPROVER_CONFIG = AIPROVER_CONFIGS / "vista.toml"
 CONTROL_SOCKET = Path.home() / ".ssh" / "vista.sock"
 VISTA_HOST = "vista.tacc.utexas.edu"
@@ -78,6 +83,24 @@ class GpuGroup:
         return f"http://127.0.0.1:{self.proxy_port}/v1"
 
 
+def dgx_configs() -> tuple[Path, str, int]:
+    """Harness configuration (path, repository-relative name) and reasoning
+    proxy port of the persistent DGX server. configs/aiprover/dgx.toml serves
+    the deployment whose work_root it names; another checkout set up by
+    ./setup uses its own device configuration and proxy."""
+    deployed = AIPROVER_CONFIGS / "dgx.toml"
+    with open(deployed, "rb") as config_file:
+        work_root = tomllib.load(config_file)["runtime"]["work_root"]
+    deployment = Path(work_root).expanduser().resolve().is_relative_to(ROOT)
+    if deployment or not DEVICE_ENDPOINT.exists():
+        return deployed, "configs/aiprover/dgx.toml", 18566
+    with open(DEVICE_ENDPOINT, "rb") as config_file:
+        proxy_port = tomllib.load(config_file)["proxy"]["listen"]
+    return DEVICE_CONFIG, "orchestration_plugin/aiprover.toml", proxy_port
+
+
+DGX_CONFIG, DGX_SOLVER_CONFIG, DGX_PROXY_PORT = dgx_configs()
+
 DEFAULT_GROUP = "main"
 # One GPU per node of the gh partitions; a server spans `NODES` nodes.
 VISTA_GPU = "NVIDIA GH200 (H100, 96 GB)"
@@ -118,12 +141,7 @@ GPU_GROUPS = {
     ),
     # The persistent server cic-dgx-01 through its reasoning proxy.
     "dgx": GpuGroup(
-        "dgx",
-        "",
-        "",
-        AIPROVER_CONFIGS / "dgx.toml",
-        "configs/aiprover/dgx.toml",
-        18566,
+        "dgx", "", "", DGX_CONFIG, DGX_SOLVER_CONFIG, DGX_PROXY_PORT
     ),
     # Runs whose roles all use Claude or hosted models: no model server.
     "cpu": GpuGroup("cpu"),

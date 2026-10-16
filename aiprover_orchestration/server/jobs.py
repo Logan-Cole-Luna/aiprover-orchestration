@@ -116,7 +116,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     options     TEXT,                        -- JSON {config field: value} for this run
     agents      TEXT,                        -- JSON models of the run, see models.py
     gpu_group   TEXT,                        -- GPU group (vista.GPU_GROUPS); NULL = main
-    hidden      INTEGER NOT NULL DEFAULT 0   -- 1: left out of the page's run list
+    hidden      INTEGER NOT NULL DEFAULT 0,  -- 1: left out of the page's run list
+    page        TEXT                         -- page submitting (app.PAGES); NULL = dev
 );
 -- Vista server jobs submitted by the worker (only these are cancelled when idle).
 CREATE TABLE IF NOT EXISTS vista_jobs (
@@ -138,6 +139,7 @@ MIGRATIONS = [
     "ALTER TABLE jobs ADD COLUMN gpu_group TEXT",
     "ALTER TABLE jobs ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE vista_jobs ADD COLUMN gpu_group TEXT",
+    "ALTER TABLE jobs ADD COLUMN page TEXT",
 ]
 
 
@@ -794,8 +796,23 @@ class Worker(threading.Thread):
                 if spec.get("backend") == "aiprover":
                     spec["timeout"] = timeout
         captain = config["agents"]["captain"]
-        if options.get("captain_phases") and captain["backend"] == "claude":
-            captain["phases"] = json.loads(CAPTAIN_PHASES.read_text())
+        phases = options.get("captain_phases")
+        if phases and captain["backend"] == "claude":
+            # `true` selects the default phases, a name the file
+            # captain_phases_<name>.json.
+            path = (
+                CAPTAIN_PHASES
+                if phases is True
+                else CAPTAIN_PHASES.with_name(f"captain_phases_{phases}.json")
+            )
+            # The selection's choices (the judges' tools) are kept.
+            selected = captain.get("phases") or {}
+            captain["phases"] = json.loads(path.read_text())
+            for prefix, overrides in selected.items():
+                captain["phases"][prefix] = {
+                    **captain["phases"].get(prefix, {}),
+                    **overrides,
+                }
         config_path.write_text(json.dumps(config, indent=1))
         arguments = [
             sys.executable,

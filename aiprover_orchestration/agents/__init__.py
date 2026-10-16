@@ -1,7 +1,7 @@
 """Model backends and the pool that routes role calls to them."""
 
 from .base import Agent, AgentCallError, AgentRefusal, Completion
-from .pool import AgentPool, build_agent
+from .pool import AgentPool, build_agent, role_spec
 
 __all__ = [
     "Agent",
@@ -10,4 +10,5 @@ __all__ = [
     "AgentRefusal",
     "Completion",
     "build_agent",
+    "role_spec",
 ]

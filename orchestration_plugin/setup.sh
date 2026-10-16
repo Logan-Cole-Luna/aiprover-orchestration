@@ -236,7 +236,7 @@ step_endpoint() {
   fi
   step_connect
   say "Tunnel and reasoning proxy"
-  local mode listen upstream max_reply_tokens tunnel_port socket dest
+  local mode listen upstream model max_reply_tokens tunnel_port socket dest
   eval "$(python3 - "$ENDPOINT_CONFIG" <<'PYEOF'
 import os, shlex, sys, tomllib
 config = tomllib.load(open(sys.argv[1], "rb"))
@@ -244,6 +244,7 @@ endpoint, proxy = config["endpoint"], config["proxy"]
 user, host = endpoint.get("ssh_user", ""), endpoint.get("ssh_host", "")
 for name, value in (("mode", endpoint.get("mode", "ssh")),
                     ("listen", proxy["listen"]), ("upstream", proxy["upstream"]),
+                    ("model", endpoint.get("model", "")),
                     ("max_reply_tokens", proxy.get("max_reply_tokens", 16384)),
                     ("tunnel_port", endpoint.get("local_port", 18555)),
                     ("socket", os.path.expanduser(endpoint.get("control_socket", ""))),
@@ -258,10 +259,14 @@ PYEOF
       || die "tunnel failed (see above); after setup.sh connect, run setup.sh endpoint again"
     ok "tunnel $upstream"
   fi
+  # The orchestrator's model roles request the model by the name `aiprover`; the proxy names
+  # the served model in every request (empty [endpoint].model: the first id /v1/models reports).
+  [ -n "$model" ] || model=$(curl -s -m 30 "$upstream/v1/models" | jq -r '.data[0].id // empty' || true)
+  [ -n "$model" ] || die "no model listed at $upstream/v1/models"
   local state="$ROOT/aiprover/work/proxy.json" running
   running=$(curl -s -m 5 "http://127.0.0.1:$listen/upstreams" | jq -r '.upstreams[0].url // empty' 2>/dev/null || true)
-  if [ "$running" = "$upstream" ]; then
-    ok "reasoning proxy :$listen -> $upstream"
+  if [ "$running" = "$upstream" ] && [ "$(jq -r '.model // empty' "$state" 2>/dev/null)" = "$model" ]; then
+    ok "reasoning proxy :$listen -> $upstream ($model)"
     check_path "$listen" "$upstream"
     return 0
   fi
@@ -275,20 +280,21 @@ PYEOF
   fi
   [ -z "$running" ] || die "port $listen is held by another proxy ($running): free it or change [proxy].listen"
   mkdir -p "$ROOT/logs" "$ROOT/aiprover/work"
-  (cd "$ROOT" && python3 - "$listen" "$upstream" "$max_reply_tokens" "$state" <<'PYEOF'
+  (cd "$ROOT" && python3 - "$listen" "$upstream" "$model" "$max_reply_tokens" "$state" <<'PYEOF'
 import json, subprocess, sys
-listen, upstream, max_reply_tokens, state = sys.argv[1:]
+listen, upstream, model, max_reply_tokens, state = sys.argv[1:]
 log = open("logs/reasoning_proxy_skill.log", "a")
 process = subprocess.Popen(
     [sys.executable, "-m", "aiprover_orchestration.server.reasoning_proxy",
-     "--listen", listen, "--upstream", upstream, "--max-reply-tokens", max_reply_tokens],
+     "--listen", listen, "--upstream", upstream, "--model", model,
+     "--max-reply-tokens", max_reply_tokens],
     stdout=log, stderr=log, stdin=subprocess.DEVNULL, start_new_session=True)
 # On macOS, idle sleep would cut the SSH connection under a run: caffeinate keeps the Mac
 # awake while the proxy lives (it exits with it).
 if sys.platform == "darwin":
     subprocess.Popen(["caffeinate", "-ims", "-w", str(process.pid)],
                      stdin=subprocess.DEVNULL, stdout=log, stderr=log, start_new_session=True)
-json.dump({"pid": process.pid, "listen": int(listen), "upstream": upstream}, open(state, "w"))
+json.dump({"pid": process.pid, "listen": int(listen), "upstream": upstream, "model": model}, open(state, "w"))
 PYEOF
   )
   for _ in 1 2 3 4 5 6 7 8 9 10; do
@@ -297,7 +303,7 @@ PYEOF
   done
   curl -s -m 5 -o /dev/null "http://127.0.0.1:$listen/upstreams" \
     || die "the reasoning proxy did not start: see logs/reasoning_proxy_skill.log"
-  ok "reasoning proxy :$listen -> $upstream (log logs/reasoning_proxy_skill.log)"
+  ok "reasoning proxy :$listen -> $upstream ($model; log logs/reasoning_proxy_skill.log)"
   check_path "$listen" "$upstream"
 }
 
