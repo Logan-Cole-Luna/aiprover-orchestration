@@ -8,6 +8,13 @@ failures a lemma is handed back to the captain, who proves, splits, restates
 or refutes it, or asks for a retry. A refuted lemma ends the phase once the
 running jobs return, and the sketch is revised.
 
+Conflict-driven learning (cdcl.py): when several leaves under one decision
+are stuck, the captain analyses the conflict (`_conflict`). What it learns is
+recorded as clauses that every later job receives, and when the cause lies in
+the decision it backjumps: the subtree is retracted, its running jobs are
+cancelled, and the decision is restated. A later lemma whose statement equals
+a retracted proved one reuses its proof.
+
 Related published work (tags defined in docs/lit_review/lit_review.md §6):
 - [Similar] Splitting a lemma the prover fails on into subgoals: Hilbert
   (Varambally et al., ICLR 2026), https://github.com/Rose-STL-Lab/ml-hilbert
@@ -34,7 +41,7 @@ from ...lean.text import (
     split_declarations,
     strip_leading_by,
 )
-from .. import knowledge, prompts
+from .. import cdcl, knowledge, prompts
 from ..extraction import (
     extract_lemma_proof,
     failed_attempt,
@@ -47,6 +54,7 @@ from ..structures import (
     extract_tag,
     extract_tactics,
     failed_lemma_text,
+    missing_lemmas,
     parse_lemmas,
 )
 
@@ -102,13 +110,37 @@ class AIProverStage:
         mathlib = knowledge.MathlibMap.from_steps(
             self.trace.document["steps"]
         )
-        # Hand-backs so far in the run, including earlier sketches and runs
-        # before a resume.
+        # Hand-backs and conflict analyses so far in the run, including
+        # earlier sketches and runs before a resume.
         handbacks = sum(
             step["kind"] == "decision"
-            and step.get("event") == "lemma_handback"
+            and step.get("event") in ("lemma_handback", "conflict")
             for step in self.trace.document["steps"]
         )
+        # The run's own declarations, which sessions must not look for in
+        # Mathlib (knowledge.py).
+        run_names = knowledge.declared_names(
+            form.definitions + "\n" + form.preamble
+        )
+        # CDCL state: conflicts already analysed (decision, statement, stuck
+        # leaves), decisions under analysis, and proved lemmas retracted by a
+        # backjump, by normalized statement, for reuse.
+        analysed = {
+            (
+                step["lemma"],
+                normalize(step["statement"]),
+                frozenset(step.get("stuck") or []),
+            )
+            for step in self.trace.document["steps"]
+            if step["kind"] == "decision" and step.get("event") == "conflict"
+        }
+        in_analysis: set[str] = set()
+        retracted: dict[str, Lemma] = {}
+        retracted_names: set[str] = set()
+
+        def present(lemma: Lemma) -> bool:
+            """False once a backjump has retracted `lemma`."""
+            return any(other is lemma for other in sketch.lemmas)
 
         def exhausted(lemma: Lemma) -> bool:
             """No attempts left: `max_attempts`, or, after a captain's retry,
@@ -153,8 +185,100 @@ class AIProverStage:
             )
             return max(1, min(free, share, job_sessions))
 
+        def analyse_conflict(lemma: Lemma) -> None:
+            """Conflict analysis at the nearest decision above `lemma` with
+            enough stuck leaves (cdcl.conflict), once per conflict."""
+            nonlocal handbacks
+            if not self.config.cdcl or stopped.is_set() or refuted.is_set():
+                return
+            with sketch_lock:
+                if not present(lemma):
+                    return
+                found = cdcl.conflict(
+                    lemma,
+                    sketch.lemmas,
+                    self.config.cdcl_conflict_leaves,
+                    handback_after,
+                    analysed,
+                )
+                if found is None:
+                    return
+                decision, stuck_leaves = found
+                below = cdcl.subtree(decision.name, sketch.lemmas)
+                limit = self.config.max_handbacks
+                if (
+                    decision.name in in_analysis
+                    or any(other.name in in_handback for other in below)
+                    or (limit and handbacks >= limit)
+                    or self.agents.claude_budget_left() < 2
+                ):
+                    return
+                analysed.add(cdcl.conflict_key(decision, stuck_leaves))
+                in_analysis.add(decision.name)
+                handbacks += 1
+            try:
+                self._conflict(
+                    form,
+                    sketch,
+                    decision,
+                    stuck_leaves,
+                    sketch_lock,
+                    submit,
+                    retract,
+                )
+            except AgentRefusal as error:
+                logger.warning(
+                    f"{decision.name}: conflict analysis refused by the "
+                    f"model; continuing without it ({str(error)[:200]})"
+                )
+            finally:
+                with sketch_lock:
+                    in_analysis.discard(decision.name)
+
+        def retract(decision: Lemma) -> list[Lemma]:
+            """Backjump to `decision` (call with `sketch_lock` held): remove
+            its subtree, keep the proved lemmas for reuse, and cancel the
+            removed lemmas' running jobs."""
+            removed = cdcl.retract(decision, sketch.lemmas)
+            for other in removed:
+                retracted_names.add(other.name)
+                if other.proved:
+                    retracted[normalize(other.statement)] = other
+                job = running_jobs.get(other.name)
+                if job:
+                    threading.Thread(
+                        target=solver.cancel, args=(job,), daemon=True
+                    ).start()
+            return removed
+
+        def reuse(lemma: Lemma) -> bool:
+            """Prove `lemma` with the proof of a retracted lemma of the same
+            statement, if the lemmas that proof uses are present."""
+            with sketch_lock:
+                previous = retracted.get(normalize(lemma.statement))
+                names = {other.name for other in sketch.lemmas}
+                if previous is None or missing_lemmas(
+                    previous, names | retracted_names, names
+                ):
+                    return False
+                lemma.helpers, lemma.proof = previous.helpers, previous.proof
+                lemma.proved = True
+            logger.info(f"{lemma.name}: proof reused from {previous.name}")
+            self._decision("lemma_reused", lemma=lemma.name)
+            return True
+
         def maybe_handback(lemma: Lemma) -> None:
             nonlocal handbacks
+            analyse_conflict(lemma)
+            with sketch_lock:
+                # A leaf under a decision being analysed waits for the
+                # analysis, which may retract it.
+                waiting = not present(lemma) or any(
+                    other.name in in_analysis
+                    for other in cdcl.ancestors(lemma, sketch.lemmas)
+                )
+            if waiting:
+                return
             if (
                 not handback_after
                 or lemma.proved
@@ -223,7 +347,12 @@ class AIProverStage:
             # with enough failures (after a resume) goes to the captain first.
             while not lemma.proved and not stopped.is_set():
                 maybe_handback(lemma)
-                if lemma.proved or exhausted(lemma) or refuted.is_set():
+                if (
+                    lemma.proved
+                    or exhausted(lemma)
+                    or refuted.is_set()
+                    or not present(lemma)
+                ):
                     break
                 servers = solver.servers()
                 with sketch_lock:
@@ -312,9 +441,37 @@ class AIProverStage:
                     if left < 1:
                         break
 
+        def watch_conflicts() -> None:
+            """Look for conflicts over the whole tree every interval. Lemma
+            threads check before each job, but with a concurrency limit a
+            stuck leaf may wait hours for a thread; analysis must not."""
+            while self.config.cdcl and not finished.wait(REBALANCE_SECONDS):
+                if stopped.is_set() or refuted.is_set():
+                    return
+                with sketch_lock:
+                    open_leaves = [
+                        other
+                        for other in sketch.lemmas
+                        if cdcl.stuck(other, handback_after)
+                    ]
+                for leaf in open_leaves:
+                    if finished.is_set() or stopped.is_set():
+                        return
+                    try:
+                        analyse_conflict(leaf)
+                    except Exception as error:  # noqa: BLE001
+                        # A failed captain call loses this analysis, not the
+                        # run; the leaves' own threads still report failures.
+                        logger.warning(
+                            f"conflict analysis near {leaf.name} failed: "
+                            f"{str(error)[:300]}"
+                        )
+
         def mathlib_text() -> str:
             with sketch_lock:
-                return mathlib.text({other.name for other in sketch.lemmas})
+                return mathlib.text(
+                    {other.name for other in sketch.lemmas} | run_names
+                )
 
         def context_for(lemma: Lemma) -> tuple[str, set[str]]:
             with sketch_lock:
@@ -379,7 +536,12 @@ class AIProverStage:
                 samples=samples,
                 work_dir=self.temp_dir / "aiprover",
                 resume_job=resume_job,
-                hint=knowledge.hint(lemma.knowledge, mathlib_text()),
+                hint=knowledge.hint(
+                    lemma.knowledge,
+                    mathlib_text(),
+                    setting=knowledge.setting_index(context),
+                    clauses=self.clauses.text() if self.config.cdcl else "",
+                ),
                 on_start=lambda job_id: started(lemma, key, job_id),
                 # A session's answer is gated when the session ends; the
                 # first accepted one ends the job's other sessions.
@@ -425,6 +587,11 @@ class AIProverStage:
                 gate(sample) for sample in ranked if sample.index not in gated
             ):
                 return
+            with sketch_lock:
+                if not present(lemma):
+                    # Retracted by a backjump while the job ran, and its job
+                    # cancelled: not a failed attempt.
+                    return
             # A lost model server is an infrastructure failure, not a failed
             # lemma: the run stops and resumes this lemma instead of
             # replanning.
@@ -583,11 +750,14 @@ class AIProverStage:
         futures_lock = threading.Lock()
 
         def submit(lemma: Lemma) -> None:
+            if reuse(lemma):
+                return
             with futures_lock:
                 futures.append(pool.submit(guarded, lemma))
 
         rebalancer = threading.Thread(target=rebalance, daemon=True)
         rebalancer.start()
+        threading.Thread(target=watch_conflicts, daemon=True).start()
         with ThreadPoolExecutor(max_workers=concurrency) as pool:
             for _, lemma in pending:
                 submit(lemma)
@@ -621,8 +791,10 @@ class AIProverStage:
         Every proof, statement and refutation it proposes is checked by Lean
         before it is applied; one repair is allowed.
         """
-        lemma.handed_back = True
         with sketch_lock:
+            if not _present(lemma, sketch.lemmas):
+                return  # retracted by a backjump
+            lemma.handed_back = True
             position = sketch.lemmas.index(lemma)
             listing = "\n\n".join(
                 f"{other.statement} := by sorry"
@@ -656,6 +828,7 @@ class AIProverStage:
                 else lemma.knowledge
             )
             or "(none)",
+            clauses=self._clauses_text(),
         )
         feedback = ""
         for repair in range(2):
@@ -674,6 +847,10 @@ class AIProverStage:
                 # Applied with whichever action follows: the next sessions
                 # on this lemma, or its new statement, start from it.
                 lemma.knowledge = extract_tag(reply, "knowledge")
+            for fact in extract_clauses(reply):
+                self._learn(
+                    cdcl.LearnedClause("fact", "", fact, lemma.name)
+                )
             problems = []
             if restated:
                 new = parse_lemmas(
@@ -740,6 +917,14 @@ class AIProverStage:
                     with sketch_lock:
                         lemma.refutation = text
                     logger.info(f"{lemma.name} refuted by the captain")
+                    self._learn(
+                        cdcl.LearnedClause(
+                            "refuted",
+                            lemma.statement,
+                            "its negation compiled in Lean",
+                            lemma.name,
+                        )
+                    )
                     self._decision(
                         "lemma_handback",
                         lemma=lemma.name,
@@ -793,7 +978,11 @@ class AIProverStage:
                     )
                     if result.ok:
                         with sketch_lock:
+                            if not _present(lemma, sketch.lemmas):
+                                return  # retracted meanwhile
+                            position = sketch.lemmas.index(lemma)
                             for offset, other in enumerate(new_lemmas):
+                                other.parent = lemma.name
                                 sketch.lemmas.insert(position + offset, other)
                             lemma.helpers, lemma.proof = helpers, proof
                             lemma.proved = True
@@ -863,3 +1052,192 @@ class AIProverStage:
             diagnosis="",
             problems=problems[:5],
         )
+
+    def _conflict(
+        self,
+        form: Formalization,
+        sketch: Sketch,
+        decision: Lemma,
+        stuck_leaves: list[Lemma],
+        sketch_lock: threading.Lock,
+        submit,
+        retract,
+    ) -> None:
+        """Conflict analysis at `decision`, whose subtree has the stuck
+        leaves `stuck_leaves` (cdcl.py).
+
+        The captain names the cause and records learned clauses. If the
+        cause lies in the decision, it backjumps: `retract` removes the
+        subtree, the decision is restated (checked by Lean against the
+        sketch without the subtree) and handed to solvers through `submit`.
+        """
+        hosted = self.agents.agents["captain"].hosted
+        with sketch_lock:
+            listing = "\n\n".join(
+                f"{other.statement} := by sorry"
+                + ("  -- proved" if other.proved else "")
+                + ("  -- the decision" if other is decision else "")
+                for other in sketch.lemmas
+            )
+            names = [other.name for other in stuck_leaves]
+        stuck = "\n\n".join(
+            failed_lemma_text(other)
+            + "\n<notes>\n"
+            + (
+                knowledge.without_reasoning(other.knowledge)
+                if hosted
+                else other.knowledge
+            )[: knowledge.MAX_CHARS // 2]
+            + "\n</notes>"
+            for other in stuck_leaves
+        )
+        prompt = prompts.CONFLICT_TEMPLATE.format(
+            definitions=form.definitions,
+            preamble=form.preamble,
+            informal_proof=self.row["informal_proof"],
+            main_proof=sketch.main_proof,
+            lemmas=listing,
+            decision_name=decision.name,
+            decision_statement=decision.statement,
+            decision_proof=(
+                f"{decision.helpers}\n{decision.proof}".strip() or "(none)"
+            ),
+            stuck=stuck,
+            clauses=self._clauses_text(),
+        )
+        logger.info(
+            f"conflict at {decision.name}: {len(names)} stuck lemma(s) "
+            f"{names}; analysing"
+        )
+        conflict = {
+            "lemma": decision.name,
+            "statement": decision.statement,
+            "stuck": names,
+        }
+        feedback, problems, diagnosis = "", [], ""
+        for repair in range(2):
+            if repair and self.agents.claude_budget_left() < 1:
+                break
+            reply = self._captain(
+                prompt + feedback, phase=f"conflict/{decision.name}"
+            )
+            diagnosis = extract_tag(reply, "diagnosis")
+            facts = extract_clauses(reply)
+            restated = extract_tag(reply, "backjump")
+            problems = []
+            if not restated and "<local" in reply:
+                self._decision(
+                    "conflict", **conflict, action="local", diagnosis=diagnosis
+                )
+                # Without a shared cause the clauses are routes and pitfalls
+                # for the leaves, not failed decisions.
+                for fact in facts:
+                    self._learn(
+                        cdcl.LearnedClause("fact", "", fact, decision.name)
+                    )
+                logger.info(f"conflict at {decision.name}: local causes")
+                return
+            if not restated:
+                problems.append("the reply names no action")
+            else:
+                new = parse_lemmas(
+                    restated if ":=" in restated else restated + " := by sorry"
+                )
+                if len(new) != 1 or new[0].name != decision.name:
+                    problems.append(
+                        f"<backjump> must state exactly "
+                        f"`theorem {decision.name} ...`"
+                    )
+                else:
+                    with sketch_lock:
+                        below = {
+                            other.name
+                            for other in cdcl.subtree(
+                                decision.name, sketch.lemmas
+                            )
+                        }
+                        candidate = Sketch(
+                            [
+                                new[0] if other is decision else other
+                                for other in sketch.lemmas
+                                if other.name not in below
+                            ],
+                            sketch.main_proof,
+                        )
+                    result = self._check(
+                        f"{decision.name}_backjump",
+                        self._standalone(
+                            form, self._sketch_body(form, candidate)
+                        ),
+                        lemma=decision.name,
+                    )
+                    if result.ok:
+                        previous = decision.statement
+                        with sketch_lock:
+                            removed = retract(decision)
+                            decision.statement = new[0].statement
+                            decision.knowledge = ""
+                        retracted = [other.name for other in removed]
+                        self._decision(
+                            "conflict",
+                            **conflict,
+                            action="backjump",
+                            diagnosis=diagnosis,
+                        )
+                        self._decision(
+                            "backjump",
+                            lemma=decision.name,
+                            statement=decision.statement,
+                            previous_statement=previous,
+                            retracted=retracted,
+                            diagnosis=diagnosis,
+                        )
+                        self._learn(
+                            cdcl.LearnedClause(
+                                "conflict_cause", previous, diagnosis,
+                                decision.name,
+                            )
+                        )
+                        for fact in facts:
+                            self._learn(
+                                cdcl.LearnedClause(
+                                    "failed_route", previous, fact,
+                                    decision.name,
+                                )
+                            )
+                        logger.info(
+                            f"backjump to {decision.name}: restated, "
+                            f"{len(retracted)} lemma(s) retracted"
+                        )
+                        submit(decision)
+                        return
+                    problems.append(result.error_report())
+            logger.info(
+                f"conflict at {decision.name}: reply rejected: "
+                f"{problems[0][:200]}"
+            )
+            feedback = prompts.HANDBACK_REPAIR_TEMPLATE.format(
+                reply=reply, errors="\n".join(problems)[:6000]
+            )
+        self._decision(
+            "conflict",
+            **conflict,
+            action="rejected",
+            diagnosis=diagnosis,
+            problems=problems[:5],
+        )
+
+
+def _present(lemma: Lemma, lemmas: list[Lemma]) -> bool:
+    """False once a backjump has retracted `lemma` (identity, not equality:
+    lemmas are dataclasses)."""
+    return any(other is lemma for other in lemmas)
+
+
+def extract_clauses(reply: str) -> list[str]:
+    """The learned clauses of a captain's reply, one per <clause> tag."""
+    return [
+        " ".join(fact.split())
+        for fact in re.findall(r"<clause>(.*?)</clause>", reply, re.S)
+        if fact.strip()
+    ]

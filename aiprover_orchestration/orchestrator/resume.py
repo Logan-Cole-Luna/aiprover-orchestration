@@ -8,7 +8,7 @@ from its last completed step instead of from the beginning.
 
 from dataclasses import dataclass, field
 
-from . import prompts
+from . import cdcl, prompts
 from ..lean.text import file_scoped, normalize
 from .structures import (
     Formalization,
@@ -245,9 +245,38 @@ def restore_state(document: dict) -> ResumeState:
                     step.get("new_lemmas") or []
                 ):
                     for lemma in parse_lemmas(statement + " := by sorry"):
+                        lemma.parent = target.name
                         state.sketch.lemmas.insert(position + offset, lemma)
                         statement_of[lemma.name] = lemma.statement
                         names_seen.add(lemma.name)
+        elif (
+            event == "backjump"
+            and state.sketch is not None
+            and step["lemma"] in statement_of
+        ):
+            # Conflict-driven backjump (cdcl.py): retract the subtree and
+            # restate the decision. Proofs of retracted lemmas stay in
+            # `state.proofs`, keyed by statement, for reuse.
+            target = next(
+                lemma
+                for lemma in state.sketch.lemmas
+                if lemma.name == step["lemma"]
+            )
+            removed = {
+                lemma.name
+                for lemma in cdcl.subtree(target.name, state.sketch.lemmas)
+            }
+            state.sketch.lemmas = [
+                lemma
+                for lemma in state.sketch.lemmas
+                if lemma.name not in removed
+            ]
+            for name in removed:
+                statement_of.pop(name, None)
+            state.proofs.pop(normalize(target.statement), None)
+            state.knowledge.pop(target.name, None)
+            target.statement = step["statement"]
+            statement_of[target.name] = target.statement
         elif event == "replan":
             # A replan that follows a refutation is not counted.
             state.replans_started += not step.get("refuted")

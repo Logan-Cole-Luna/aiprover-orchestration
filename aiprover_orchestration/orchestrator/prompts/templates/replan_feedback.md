@@ -13,3 +13,7 @@ A previous sketch was attempted. Solvers proved some lemmas and failed on others
 <failed_lemmas>
 {failed}
 </failed_lemmas>
+<learned_clauses>
+{clauses}
+</learned_clauses>
+The learned clauses hold for the whole run: do not state a lemma they record as refuted, and do not choose a route or encoding they record as failed.
