@@ -547,6 +547,23 @@ Results
 - 004 resumed at 15:46 from `main`, which now holds the CDCL work and pins
   the AIProver fork with `Context.lean` (`cdcl_conflict_leaves` 2). At 15:47
   a conflict at `h10q_uniform_height` (2 stuck leaves) went to analysis.
+- 004 restarted at 16:24 (resume from step 1324) to load the updated
+  orchestrator code.
+- Decision: conflict-driven learning is disabled pending a controlled
+  evaluation. `cdcl.ENABLED = False` and `cdcl.CONFLICT_LEAVES` replace the
+  config fields `cdcl` and `cdcl_conflict_leaves`, which are commented out
+  with their ALGORITHM step; template loading strips HTML comments, which
+  hold the clause instructions of `handback.md` and `replan_feedback.md`.
+  The `cdcl_conflict_leaves` option was removed from 004's job. The running
+  004 process keeps the code it loaded until its next restart.
+- The query server's user page lists the latest proved OpenAI runs (011,
+  164, 332 of 2026-10-13); their job rows have `page = 'user'`.
+- README reorganized: an outline, then running locally (Nix setup, Claude
+  on a subscription, query server), the skill, the running server over
+  SSH, layout, pipeline, results and configuration. Slides moved to
+  `docs/slides/`; slides 3, 4 and 6 are embedded from `docs/figures/`
+  (rendered with LibreOffice). `.gitignore` keeps `docs/` local except
+  these two folders. The README's setup names no hosts or addresses.
 
 ## 2026-10-16: Problem 164 proved; slides
 
@@ -555,7 +572,7 @@ Results
   `HindmanFSFP.Thm11`; 15 lemmas, 839 lines of Lean, standard axioms only,
   final review faithful; 8.7 h on the DGX solver, 26 sessions, $1.07 of
   Claude usage without the LaTeX write-up.
-- `slides/aiprover_orchestration_openai_math.pptx`: seven slides (method,
+- `docs/slides/aiprover_orchestration_openai_math.pptx`: seven slides (method,
   formalization of 332, results for 332, 011 and 164, run trace, cost,
   conclusions and future work) taken unchanged from the AI4Math talk;
   comments and author records removed, an unused template photo
