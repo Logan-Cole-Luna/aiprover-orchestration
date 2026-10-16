@@ -172,8 +172,10 @@ class SketchStage:
     ) -> Sketch:
         """A compiled sketch, or a compiled refutation of the theorem.
         `refuted` maps the normalized statements of refuted lemmas to their
-        names: a sketch may not state them again."""
+        names: a sketch may not state them again. If the budget ends
+        without an accepted sketch, the last compiled one is accepted."""
         feedback = replan_feedback
+        compiled = None
         for repair in range(self.config.max_repairs + 1):
             reply = self._captain(
                 prompts.SKETCH_TEMPLATE.format(
@@ -257,6 +259,7 @@ class SketchStage:
                         f"sketch compiles with {len(lemmas)} "
                         f"lemma(s): {names}"
                     )
+                    compiled = candidate, repair
                     issues = self._judge_sketch(form, candidate, repair)
                     if issues and repair < self.config.max_repairs:
                         problems.append(
@@ -276,13 +279,7 @@ class SketchStage:
                             )
                         )
                         continue
-                    self._decision(
-                        "sketch_accepted",
-                        repair=repair,
-                        lemmas=[lemma.statement for lemma in lemmas],
-                        main_proof=main_proof,
-                    )
-                    return candidate
+                    return self._accept_sketch(candidate, repair)
                 problems.append(result.error_report())
             logger.info(f"sketch repair {repair}: {problems[0][:200]}")
             self._decision("sketch_rejected", repair=repair, problems=problems)
@@ -291,7 +288,22 @@ class SketchStage:
                 main_proof=main_proof,
                 errors="\n".join(problems),
             )
-        raise RuntimeError("sketch did not compile within the repair budget")
+        if compiled is None:
+            raise RuntimeError(
+                "sketch did not compile within the repair budget"
+            )
+        candidate, repair = compiled
+        logger.info(f"accepting the sketch compiled in repair {repair}")
+        return self._accept_sketch(candidate, repair)
+
+    def _accept_sketch(self, sketch: Sketch, repair: int) -> Sketch:
+        self._decision(
+            "sketch_accepted",
+            repair=repair,
+            lemmas=[lemma.statement for lemma in sketch.lemmas],
+            main_proof=sketch.main_proof,
+        )
+        return sketch
 
     def _judge_sketch(
         self, form: Formalization, sketch: Sketch, repair: int
@@ -355,6 +367,13 @@ class SketchStage:
             for lemma in failed
             if lemma.refutation
         }
+        # Statements refuted in earlier sketches stay excluded: learned
+        # clauses outlive the sketch that taught them (cdcl.py).
+        refuted_before = {
+            statement: name
+            for statement, name in self.clauses.refuted_statements().items()
+            if statement not in refuted
+        }
         feedback = prompts.REPLAN_FEEDBACK_TEMPLATE.format(
             lemmas="\n\n".join(
                 f"{lemma.statement} := by sorry" for lemma in sketch.lemmas
@@ -362,6 +381,7 @@ class SketchStage:
             main_proof=sketch.main_proof,
             proved="\n\n".join(lemma.statement for lemma in proved) or "(none)",
             failed="\n\n".join(failed_lemma_text(lemma) for lemma in failed),
+            clauses=self._clauses_text(),
         )
         self._decision(
             "replan_resumed" if resumed else "replan",
@@ -369,7 +389,7 @@ class SketchStage:
             failed=[lemma.name for lemma in failed],
             refuted=sorted(refuted.values()),
         )
-        new_sketch = self.sketch(form, feedback, refuted)
+        new_sketch = self.sketch(form, feedback, refuted | refuted_before)
         proofs = {normalize(lemma.statement): lemma for lemma in proved}
         kept = {
             lemma.name

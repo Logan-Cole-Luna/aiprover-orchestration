@@ -5,6 +5,7 @@ Reject the sketch (REVISE) if any of the following holds:
 - A lemma is a known open problem, or is false, while the theorem is not known to depend on it.
 - A lemma is not self-contained: it cannot be understood or proved from the definitions and the earlier lemmas alone.
 - A lemma bundles several independent nontrivial steps that should be separate lemmas.
+- A lemma is stated in an encoding that Mathlib barely supports (germs or ultrapowers, custom quotients, hand-rolled codings) where an equivalent statement in standard, well-supported vocabulary exists.
 
 When no proof of the theorem is known, the sketch must still commit to a concrete approach in which every lemma is strictly simpler than the theorem; conjectural lemmas are acceptable if each is weaker than the theorem.
 

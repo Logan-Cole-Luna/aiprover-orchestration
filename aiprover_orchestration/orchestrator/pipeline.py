@@ -28,7 +28,7 @@ from ..agents import (
 )
 from ..lean.checker import LeanChecker
 from ..paths import LOGS_DIR, RESULTS_DIR, TEMP_DIR, WORKSPACE
-from . import benchmark, libraries, prompts
+from . import benchmark, cdcl, libraries, prompts
 from .config import (
     ALGORITHM,
     FILE_HEADER,
@@ -123,6 +123,11 @@ class Orchestration(
                 f"run {run_id} exists; resume it or choose a new run id"
             )
         self.state = restore_state(previous) if previous else ResumeState()
+        # Clauses learned from conflicts, shared by every later job and
+        # prompt of the run (cdcl.py).
+        self.clauses = cdcl.ClauseStore.from_steps(
+            (previous or {}).get("steps", [])
+        )
         self.trace = Trace(
             trace_path,
             {
@@ -199,6 +204,14 @@ class Orchestration(
 
     def _decision(self, event: str, **fields) -> None:
         self.trace.add("decision", event=event, **fields)
+
+    def _learn(self, clause: cdcl.LearnedClause) -> None:
+        """Add a learned clause to the run's store and record it."""
+        if self.config.cdcl and self.clauses.add(clause):
+            self._decision("clause_learned", **cdcl.clause_fields(clause))
+
+    def _clauses_text(self) -> str:
+        return self.clauses.text() or "(none)"
 
     def _load_library(self) -> str:
         """The library text the run started with. It is kept as library.lean

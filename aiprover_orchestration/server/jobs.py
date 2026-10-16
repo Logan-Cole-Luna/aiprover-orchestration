@@ -82,6 +82,7 @@ PROGRESS_EVENTS = (
     "sketch_accepted",
     "lemma_proved",
     "replan",
+    "backjump",
 )
 OPEN_STATES = ("awaiting_approval", "queued", "running", "cancelling")
 # Per-run options the worker uses itself rather than passing to run.py:

@@ -54,6 +54,16 @@ ALGORITHM = [
         "the other chains stop.",
     },
     {
+        "stage": "prove",
+        "actor": "captain (orchestrator model)",
+        "description": "Conflict-driven learning, after CDCL SAT solvers: "
+        "when several leaves under one decision (a sketch lemma or "
+        "a split) are stuck, or one is refuted, the captain "
+        "analyses the conflict, records learned clauses that "
+        "every later job and prompt receives, and may backjump: "
+        "the subtree is retracted and the decision restated.",
+    },
+    {
         "stage": "sketch",
         "actor": "captain (orchestrator model)",
         "description": "If a lemma is not proved within budget or is refuted "
@@ -132,8 +142,14 @@ class Config:
     # Completed failed jobs after which a lemma is handed back to the captain
     # (prove it, split it, restate it, or retry); 0 = never.
     aiprover_handback_after: int = 0
-    # Hand-backs per run; 0 = unlimited.
+    # Hand-backs per run; 0 = unlimited. Conflict analyses count as well.
     max_handbacks: int = 0
+    # Conflict-driven learning (cdcl.py): learned clauses, conflict analysis
+    # and backjumping over the lemma tree.
+    cdcl: bool = True
+    # Stuck leaves under one decision that make a conflict; a refuted leaf
+    # makes one alone.
+    cdcl_conflict_leaves: int = 3
     # Claude calls added to `max_claude_calls` for the final review and the
     # report, so a run that spent its budget on proving is still reviewed.
     final_claude_calls: int = 8

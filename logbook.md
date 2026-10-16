@@ -402,6 +402,57 @@ Results
 - Per-run model choice for orchestrator and subagent (Claude model and
   reasoning level, or AIProver trained/base) on the query server page.
 
+## 2026-10-16: Conflict-driven learning (branch `cdcl-learning`)
+
+- Diagnosis on 004 (summary at 10:04): 118 lemmas, 76 proved (57 by the
+  captain, 19 by AIProver); 289 sessions, 10 verified (3.5%), 219 ended by
+  time or turn limit. Sessions searched Mathlib for the run's own
+  declarations, which existed only as text in `problem.txt`; the run-wide
+  Mathlib map then listed `ratHeight` and `RankOneHyp` as absent. The core
+  lemmas share one cause, the germ encoding (`Filter.Germ` over the
+  hyperfilter), and a split marked its parent proved, so no subtree could be
+  retracted.
+- `orchestrator/cdcl.py`: learned clauses (`ClauseStore`, rebuilt from the
+  trace), conflict detection at the nearest decision with
+  `cdcl_conflict_leaves` (3) stuck leaves or one refuted, conflict analysis
+  by the captain (`templates/conflict.md`), backjump with retraction, job
+  cancellation (`AIProverAgent.cancel`) and proof reuse. `Lemma.parent`
+  links splits; `resume.restore_state` replays backjumps. Refuted statements
+  stay excluded in every later sketch. Options `cdcl` (on) and
+  `cdcl_conflict_leaves`.
+- `knowledge.py`: the run's declarations are kept out of the Mathlib map;
+  every job's guidance opens with the declarations and their line in
+  `Context.lean`, search guidance (Lean Finder first, grep only for known
+  names, cslib covered by local search), and the learned clauses.
+- AIProver fork (branch `cdcl-learning`): `make_project` writes the job's
+  context to `proj/Context.lean` (`AGENT_CONTEXT`, set by `run_sample`); both
+  skill copies and their manifests updated; `aiprover doctor` 13/15 with the
+  DGX config (REPL and cslib builds missing, unrelated).
+- Prompts: the sketch asks for lemmas in vocabulary with Mathlib API, with
+  the expected declarations named and confirmed; the sketch judge revises
+  sparse-API encodings; hand-backs and replans list the learned clauses, and
+  a hand-back may add clauses.
+- Checks: on the 004 trace, conflict detection finds `h10q_integer_model`
+  (4 stuck leaves; `h10q_uniform_height` has 2); a synthetic backjump
+  replayed by `restore_state` retracts 6 lemmas and reopens the decision;
+  stubbed backjump, local and rejected paths of `_conflict` record the
+  expected decisions; all 25 templates format; the session project contains
+  `Context.lean`, where ripgrep finds `ratHeight`.
+- 004 resumed with CDCL (`cdcl_conflict_leaves` 2). Lemma threads check for
+  conflicts before each job, but with a lemma concurrency of 6 stuck leaves
+  waited behind jobs of up to 3 h; a watcher thread now checks the whole tree
+  every minute (`watch_conflicts`). 004 resumed again at 13:50; at 13:51 the
+  first conflict, at `h10q_integer_model` (4 stuck leaves), was judged local,
+  with 5 clauses giving routes for the leaves (e.g. `hensels_lemma` for
+  `integer_model_place`). Clauses of a local verdict are now of kind `fact`.
+  `h10q_uniform_height` and `h10q_index_standard` are not analysed: proved
+  lemmas outside their subtrees use them.
+- The overnight watcher (`temp/overnight/watch.py`) had logged no run event
+  since 10:11: `GET /api/runs` defaults to the `user` page, which lists only
+  runs submitted from it, so the watcher saw none (state changes and stall
+  warnings were missed). It now requests `?page=dev` and was restarted
+  (14:31).
+
 ## 2026-10-16: Problem 164 proved; slides
 
 - `srv_20261008_212508_OpenAIMath_164_HindmanDistinctExpressions` proved

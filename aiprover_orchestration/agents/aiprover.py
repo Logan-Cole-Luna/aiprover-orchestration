@@ -302,6 +302,13 @@ class AIProverAgent(Agent):
         except (subprocess.TimeoutExpired, ValueError):
             return 0
 
+    def cancel(self, job: str) -> None:
+        """Stop a running job (its lemma was retracted by a backjump)."""
+        try:
+            self._cli("cancel", job, timeout=60)
+        except subprocess.TimeoutExpired:
+            pass
+
     @cached_property
     def supports_resume(self) -> bool:
         """True if the installed AIProver CLI provides `aiprover resume`."""

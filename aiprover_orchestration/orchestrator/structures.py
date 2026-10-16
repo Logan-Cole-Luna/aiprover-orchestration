@@ -44,6 +44,7 @@ class Lemma:
     reviewed_at: int = 0  # attempts when the captain last asked for a retry
     knowledge: str = ""  # notes carried to the next jobs (knowledge.py)
     refutation: str = ""  # compiled Lean proof of the statement's negation
+    parent: str = ""  # the lemma this one was split from (cdcl.py)
 
 
 @dataclass
