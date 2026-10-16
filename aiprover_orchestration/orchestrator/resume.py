@@ -8,14 +8,18 @@ from its last completed step instead of from the beginning.
 
 from dataclasses import dataclass, field
 
-from . import prompts
+from . import cdcl, prompts
 from ..lean.text import file_scoped, normalize
 from .structures import (
     Formalization,
+    Lemma,
     Sketch,
     missing_lemmas,
-    parse_lemmas,
     parse_statement,
+    recorded_lemmas,
+    statement_key,
+    statements,
+    unchanged_names,
 )
 
 
@@ -37,21 +41,44 @@ class ResumeState:
     lean_checks_done: int = 0
     previous_status: str | None = None
     restored_steps: int = 0
-    proofs: dict[str, tuple[str, str]] = field(default_factory=dict)
+    # Proof per normalized statement: (helpers, proof, the normalized
+    # statement of each lemma of the sketch when it was proved).
+    proofs: dict[str, tuple[str, str, dict[str, str]]] = field(
+        default_factory=dict
+    )
     # Last failed attempts per lemma of the current sketch: (errors, attempts).
     failures: dict[str, tuple[str, str]] = field(default_factory=dict)
-    # Completed AIProver jobs without a proof, per (lemma name, statement).
-    attempts: dict[tuple[str, str], int] = field(default_factory=dict)
+    # Completed attempts without a proof (AIProver jobs, or prove phases of
+    # chat solvers) per statement (`statement_key`), over every sketch of the
+    # run: the attempt budget is the run's, not the sketch's.
+    attempts: dict[str, int] = field(default_factory=dict)
     # (lemma name, statement) pairs already handed back to the captain.
     handed_back: set[tuple[str, str]] = field(default_factory=set)
-    # Attempts per (lemma name, statement) at the captain's last retry.
-    reviewed_at: dict[tuple[str, str], int] = field(default_factory=dict)
+    # Attempts per statement at the captain's last retry.
+    reviewed_at: dict[str, int] = field(default_factory=dict)
     # Knowledge carried per lemma (knowledge.py).
     knowledge: dict[str, str] = field(default_factory=dict)
     # AIProver job per (lemma name, statement) that started but did not
     # complete (lost model server, interrupted run): its sessions are resumed
     # rather than restarted.
     resumable_jobs: dict[tuple[str, str], str] = field(default_factory=dict)
+
+    def count_attempt(self, lemma: Lemma) -> None:
+        """Count a failed attempt on `lemma`'s statement."""
+        key = statement_key(lemma.statement)
+        self.attempts[key] = self.attempts.get(key, 0) + 1
+        lemma.attempts = self.attempts[key]
+
+    def record_review(self, lemma: Lemma) -> None:
+        """The captain asked for a retry of `lemma` at its current attempts."""
+        lemma.reviewed_at = lemma.attempts
+        self.reviewed_at[statement_key(lemma.statement)] = lemma.attempts
+
+    def load_attempts(self, lemma: Lemma) -> None:
+        """Give `lemma` the attempts the run spent on its statement so far."""
+        key = statement_key(lemma.statement)
+        lemma.attempts = self.attempts.get(key, 0)
+        lemma.reviewed_at = self.reviewed_at.get(key, 0)
 
     @property
     def faithful(self) -> bool:
@@ -181,11 +208,7 @@ def restore_state(document: dict) -> ResumeState:
             statement_of = {}
             state.replan_pending = False
         elif event == "sketch_accepted":
-            lemmas = [
-                lemma
-                for statement in step["lemmas"]
-                for lemma in parse_lemmas(statement + " := by sorry")
-            ]
+            lemmas = recorded_lemmas(step["lemmas"])
             state.sketch = Sketch(lemmas, step["main_proof"])
             statement_of = {lemma.name: lemma.statement for lemma in lemmas}
             names_seen |= set(statement_of)
@@ -195,6 +218,7 @@ def restore_state(document: dict) -> ResumeState:
             state.proofs[normalize(statement_of[step["lemma"]])] = (
                 step["helpers"],
                 step["proof"],
+                {name: normalize(text) for name, text in statement_of.items()},
             )
         elif (
             event == "solver_budget_exhausted" and step["lemma"] in statement_of
@@ -205,7 +229,7 @@ def restore_state(document: dict) -> ResumeState:
                 for sample in samples
             )
             if "aiprover_job" in step and not stopped:
-                key = (step["lemma"], normalize(statement_of[step["lemma"]]))
+                key = statement_key(statement_of[step["lemma"]])
                 state.attempts[key] = state.attempts.get(key, 0) + 1
             if step.get("attempts") or step.get("errors"):
                 state.failures[step["lemma"]] = (
@@ -214,6 +238,9 @@ def restore_state(document: dict) -> ResumeState:
                 )
             if "knowledge" in step:
                 state.knowledge[step["lemma"]] = step["knowledge"]
+        elif event == "lemma_failed" and step["lemma"] in statement_of:
+            key = statement_key(statement_of[step["lemma"]])
+            state.attempts[key] = state.attempts.get(key, 0) + 1
         elif (
             event == "lemma_handback"
             and state.sketch is not None
@@ -234,20 +261,38 @@ def restore_state(document: dict) -> ResumeState:
             key = (target.name, normalize(target.statement))
             if step["action"] == "retry" and "attempts" in step:
                 state.handed_back.discard(key)
-                state.reviewed_at[key] = step["attempts"]
+                state.reviewed_at[statement_key(target.statement)] = step[
+                    "attempts"
+                ]
                 continue
             state.handed_back.add(key)
             if step["action"] == "refute":
                 state.refutations[key] = step["refutation"]
             if step["action"] == "split":
-                position = state.sketch.lemmas.index(target)
-                for offset, statement in enumerate(
-                    step.get("new_lemmas") or []
-                ):
-                    for lemma in parse_lemmas(statement + " := by sorry"):
-                        state.sketch.lemmas.insert(position + offset, lemma)
-                        statement_of[lemma.name] = lemma.statement
-                        names_seen.add(lemma.name)
+                children = recorded_lemmas(step.get("new_lemmas") or [])
+                cdcl.insert_split(state.sketch.lemmas, target, children)
+                for lemma in children:
+                    statement_of[lemma.name] = lemma.statement
+                    names_seen.add(lemma.name)
+        elif (
+            event == "backjump"
+            and state.sketch is not None
+            and step["lemma"] in statement_of
+        ):
+            # Conflict-driven backjump (cdcl.py): retract the subtree and
+            # restate the decision. Proofs of retracted lemmas stay in
+            # `state.proofs`, keyed by statement, for reuse.
+            target = next(
+                lemma
+                for lemma in state.sketch.lemmas
+                if lemma.name == step["lemma"]
+            )
+            for lemma in cdcl.retract(target, state.sketch.lemmas):
+                statement_of.pop(lemma.name, None)
+            state.proofs.pop(normalize(target.statement), None)
+            state.knowledge.pop(target.name, None)
+            target.statement = step["statement"]
+            statement_of[target.name] = target.statement
         elif event == "replan":
             # A replan that follows a refutation is not counted.
             state.replans_started += not step.get("refuted")
@@ -255,19 +300,21 @@ def restore_state(document: dict) -> ResumeState:
     if state.setting_facts and state.formalization is not None:
         state.formalization.add_setting_facts(state.setting_facts)
     if state.sketch is not None:
-        present = {lemma.name for lemma in state.sketch.lemmas}
+        current = statements(state.sketch.lemmas)
         for lemma in state.sketch.lemmas:
             key = (lemma.name, normalize(lemma.statement))
-            lemma.attempts = state.attempts.get(key, 0)
+            state.load_attempts(lemma)
             lemma.handed_back = key in state.handed_back
-            lemma.reviewed_at = state.reviewed_at.get(key, 0)
             lemma.knowledge = state.knowledge.get(lemma.name, "")
             lemma.refutation = state.refutations.get(key, "")
             proof = state.proofs.get(normalize(lemma.statement))
             if proof:
-                lemma.helpers, lemma.proof = proof
-                # A proof kept across a replan needs the lemmas it used.
-                lemma.proved = not missing_lemmas(lemma, names_seen, present)
+                lemma.helpers, lemma.proof, proved_under = proof
+                # A proof kept across a replan needs the lemmas it used, with
+                # the statements they had when it was found.
+                lemma.proved = not missing_lemmas(
+                    lemma, names_seen, unchanged_names(proved_under, current)
+                )
                 if not lemma.proved:
                     lemma.helpers = lemma.proof = ""
             elif lemma.name in state.failures:

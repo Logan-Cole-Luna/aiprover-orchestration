@@ -6,6 +6,8 @@ Guidelines:
 - The main proof should be a short combination of the lemmas and the definitions' constructors. It must not use `sorry`.
 - Lemma names must be unique and must not be `solution`.
 - Theorems named `setting_...` at the end of the definitions are facts about the setting, proved before planning. Use them, and check the theorem against them before you plan a proof.
+- State lemmas in vocabulary that Mathlib supports with API: its standard structures and their lemmas (`Finset`, `Polynomial`, `NumberField`, `Filter` with `∀ᶠ`, `Nat.Primrec`/`Primrec`/`Computable`, and the like). Prefer such a formulation over a bespoke encoding with little API (germs or ultrapowers, custom quotients, hand-rolled codings) whenever an equivalent standard one exists; solvers fail most often on statements whose vocabulary Mathlib barely covers. This concerns how lemmas are stated, never the theorem, which stays as given.
+- Above each lemma, name in a comment the Mathlib declarations its proof should use. With Lean tools, confirm that they exist in the sources under `.lake/packages/mathlib/Mathlib`; cslib, under `.lake/packages/cslib`, also provides API (computability, automata), but lemmas must compile with `import Mathlib` alone.
 - When no proof is known, attempt one anyway. Choose the approach you judge most promising, state it in a comment above the lemmas, and decompose it into concrete steps. Every lemma must be strictly simpler than the theorem: a lemma equivalent to the theorem, or a main proof that only unpacks a single lemma, is not a sketch. A lemma may be a conjecture you cannot prove yourself; solvers, hand-backs and refutation will test it.
 
 <definitions>

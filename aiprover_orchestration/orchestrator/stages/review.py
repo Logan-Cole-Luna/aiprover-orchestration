@@ -9,6 +9,7 @@ describes, so a resumed run reuses it instead of calling the models again.
 
 import hashlib
 import logging
+import re
 import subprocess
 from pathlib import Path
 
@@ -131,9 +132,10 @@ class ReviewStage:
                 "concerns",
             )
         }
-        review["verdict"] = (
-            extract_tag(reply, "verdict").strip().upper() or "UNCERTAIN"
-        )
+        # The verdict's first word ("FAITHFUL." and "FAITHFUL, with notes"
+        # are FAITHFUL), as every reader of the review compares it.
+        words = re.findall(r"[A-Z_]+", extract_tag(reply, "verdict").upper())
+        review["verdict"] = words[0] if words else "UNCERTAIN"
         review["model"] = self.agents.agents["reviewer"].model
         logger.info(f"final review: verdict {review['verdict']}")
         self._decision(

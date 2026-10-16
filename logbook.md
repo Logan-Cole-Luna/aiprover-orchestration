@@ -18,8 +18,10 @@ Orchestration (`aiprover_orchestration/orchestrator/`)
 - Resumable runs reconstructed from the trace; infrastructure failures
   resumed without limit, ended after three resumptions without progress.
 - Claude call budget per run; per-run settings over the served config.
-- Attempts per lemma statement (`aiprover_attempts_per_lemma`); interrupted
-  jobs do not count.
+- Attempt budget per proposition over the whole run
+  (`aiprover_attempts_per_lemma`), across sketches, renames and resumes;
+  interrupted jobs do not count, and a replan may not restate a
+  proposition whose budget is spent.
 - Weighted session sharing across AIProver jobs (`aiprover_session_slots`):
   each job takes a share of the free sessions weighted by its lemma's failed
   attempts, so freed sessions go to the remaining, harder lemmas.
@@ -99,10 +101,6 @@ Results
   separate problems.
 - Orchestrator runs read and extend the theorem library in place of the
   single-file libraries of `libraries/`.
-- On SIGTERM the orchestrator's main thread exits while its solver threads
-  keep polling their AIProver jobs, so a terminated run lives until those
-  jobs end; the threads should cancel their jobs when the run is
-  interrupted.
 - Library search, remaining items of `docs/proposed/mathlib_search.md`:
   retrieval before each job, captain adjudication of stated gaps (closure
   probe), coverage triage at sketch time; evaluate items 1, 2, 5, 6 against
@@ -110,9 +108,6 @@ Results
 - Project upload with our own Lean meta-programs.
 - Authentication for the HTTP API.
 - Missions and milestones; several pinned Lean environments.
-
-- On SIGTERM, cancel the run's AIProver jobs (`aiprover cancel`) so it
-  unwinds at once; it now waits for in-flight jobs (up to 5400 s).
 
 - Render `trace.html` automatically at the end of each run.
 - Evaluate a Lean-specialized open-weights solver that fits 16 GB (for
@@ -128,14 +123,10 @@ Results
   `aiprover/aiprover_vista.toml` (live rollout); run `vista_000004`.
 - Compare `--cpu-offload-gb` and `QUANTIZATION=fp8` at 2 nodes against bf16
   at 4 nodes (throughput, solve rate).
-- Replan prompt: require the captain to split a failed lemma rather than
-  restate it.
 - Query server deployment: tokens, systemd user unit, linger, port 8443 in
   the VM security group; a certificate for HTTPS.
-- Resume re-proves every unproved lemma, including lemmas that already failed
-  in the current sketch; `cobhamF_length_bound` was proved on such a retry.
-  Make retries an explicit per-lemma attempt budget instead.
-- Stop the remaining AIProver samples of a lemma once one sample verifies.
+- Tests for the library verifier: it builds modules in the shared
+  workspace, so its test needs a workspace of its own.
 - Upstream the AIProver branch `resume-interrupted-sessions` (`aiprover
   resume`, automatic resumption after infrastructure faults, target statement
   check) to `PrithwishJana/AIProver` with the repository owner, then point the
@@ -199,8 +190,10 @@ Results
 - Local solvers reference constructors without their namespace
   (`ax_ITR_eps` for `Deriv.ax_ITR_eps`) and invent recursors
   (`Term.induction`); 16 of 45 checks failed on unknown identifiers.
-- On SIGTERM the run waits for in-flight solver calls before unwinding;
-  solver chains should observe a cancellation flag and end their calls.
+- A model call in flight when the run is terminated completes before the
+  process exits (HTTP calls are not interrupted); no further call starts.
+- Spent statements are compared as text up to whitespace: a copy with
+  renamed bound variables is not recognised.
 - `local_000020` was started before outcome recording on termination, so its
   trace has no outcome; it remains resumable.
 - `AIProver_plugin/setup.sh` (PartitionAndProve): the embedded Python of the
@@ -217,6 +210,14 @@ Results
 
 ## Decisions
 
+- The attempt budget (`aiprover_attempts_per_lemma`) counts failed
+  attempts per proposition (`structures.statement_key`, the statement
+  without its name) over the whole run, live and on resume; a replan may
+  not state an unproved proposition whose budget is spent (rejected like a
+  refuted one), and the replan prompt marks such lemmas `BUDGET SPENT`. A
+  captain's retry still extends the budget by `aiprover_handback_after`.
+- Tests use the standard library's `unittest` (`tests/`), so they run in
+  every environment of the repository without a new package.
 - Device setup uses Nix (flake, uv2nix virtualenvs) linked into
   `aiprover/nix/`, so the skill runs from the Claude Code app without a Nix
   shell; elan stays outside Nix (`~/.elan`), where the harness expects it.
@@ -401,6 +402,151 @@ Results
 - Query server with run queue, live progress and Claude call budget.
 - Per-run model choice for orchestrator and subagent (Claude model and
   reasoning level, or AIProver trained/base) on the query server page.
+
+## 2026-10-16: Tests, run termination, attempt budget per statement
+
+- Test suite `tests/` (50 tests, about 100 s; `python3 -m unittest discover
+  -s tests -t .`): Lean text filters, LaTeX filters, the CDCL tree and
+  clauses, replay of every trace in `results/`, the attempt budget, the
+  AIProver phase with a fake solver and real Lean, hand-back and conflict
+  analysis with scripted replies, termination, the SQLite stores and the
+  trace writer. Lean tests are skipped without the workspace.
+- Termination: SIGTERM and SIGINT set `agents.base.STOPPING`. Model calls
+  (`AgentPool.complete`) and Lean checks (`Orchestration._check`) raise
+  `Terminated` instead of starting; a retry wait ends; a Lean check in
+  flight is killed with its process group (`lean/checker._communicate`;
+  `lake env` runs `lean` as a child, which a timeout previously left
+  running). Tested end to end against a stand-in AIProver CLI: on either
+  signal both running jobs are cancelled and the process exits within
+  seconds.
+- Attempt budget per statement over the run (`ResumeState.attempts`,
+  `count_attempt`, `load_attempts`), applied at sketch acceptance, split,
+  restate and backjump; chat-solver prove phases count (`lemma_failed`).
+  Of 11 replans in `results/`, 9 stated a failed lemma again unchanged
+  (048: 12 lemmas at 5 attempts each). Replay of the 38 traces changes only
+  004, where two lemmas state `Primrec (fun a : ℤ => -a)` under different
+  names and now share 4 attempts.
+- `FORBIDDEN_LATEX` ends a control word at the first non-letter, so
+  `\write18` is caught.
+- `stages/aiprover.py` (1,302 lines, one 760-line function of closures)
+  split into `stages/aiprover.py` (812: scheduling, jobs, the Lean gate;
+  shared state in `Phase`) and `stages/handback.py` (441: hand-back,
+  conflict analysis, backjump). One proof check for chat chains, AIProver
+  samples and captain proofs (`Orchestration._check_proof`), one
+  `lemma_proved` record (`_record_proof`), the captain's view of session
+  notes (`_for_captain`), and the trace record of a sample
+  (`agents.aiprover.sample_record`).
+
+## 2026-10-16: Code audit of `aiprover_orchestration/`
+
+- Lean text filters (`lean/text.py` `strip_comments`): string, raw-string
+  and character literals are kept verbatim, so `"/-"` no longer opens a
+  comment that hides later code from `executable_constructs` and
+  `forbidden_constructs`. Identical output on the 101 Lean files of
+  `results/` and the workspace.
+- `sorry` gates: `sorryAx` is a forbidden construct; `CheckResult` records
+  the location of each "declaration uses 'sorry'" warning (`sorry_after`).
+  The library verifier rejects a submission whose own module uses `sorry`
+  (a sketch's `sorryAx` comes only from its imported theorems). Lemma gates
+  (AIProver samples, chat solvers, hand-back proofs) reject a compiled proof
+  that uses `sorry` after the stubs, e.g. through `stop`.
+- AIProver helpers are renamed to `<lemma>_<name>` before the Lean gate,
+  and accepted under the sketch lock only if no other proved lemma declares
+  the same names, so helpers of different lemmas never collide in the
+  assembled file; hand-back helpers are checked the same way. A sample no
+  longer proves a lemma retracted by a backjump while Lean ran.
+- AIProver phase: ends only after the conflict watcher and the rebalancer
+  have returned, and continues with work an analysis in progress submitted;
+  after an infrastructure failure the jobs still running are cancelled
+  (their sessions resume) rather than awaited.
+- Resume: a restored proof stands only if every lemma it uses has the
+  statement it had when the proof was found (as in a live replan). One of 38
+  recorded traces changes (004: `h10q_completeness`, whose proof uses a
+  restated `h10q_index_congruence`).
+- `parse_statement`/`parse_lemmas`: a statement no longer extends across a
+  following declaration; the sketch stage reports lemmas not stated with
+  `:= by sorry`.
+- Run outcome: `BudgetExhausted` (agents/base.py) is the only `budget`
+  stop; other stage failures are `stage_failed`. A run resumed after its
+  last audit round ends as `unfaithful_formalization`.
+- Query server: job state changes are compare-and-set
+  (`JobStore.transition`), so a run cancelled while the worker probes the
+  model servers does not start, and a cancellation before the pid is
+  recorded is delivered once the process starts.
+- Trace: written in the background, at most every 15 s (`WRITE_SECONDS`)
+  and at once on finish, outside the lock that `add` takes; a write of the
+  185 MB trace of 332 takes 3.6 s. A finished trace is not written again.
+- Formalization statement blocks pass `forbidden_problems`; the final
+  review's verdict is its first word; the LaTeX checks also reject
+  `\csname`, `^^`, `\scantokens` and file-reading commands, apply to the
+  referee's text, and `escape` covers `\` and `^`; a `Retry-After` HTTP
+  date is honoured; CLI errors are retried on whole status numbers and
+  phrases only; an unreadable line of `calls.jsonl` is skipped; the
+  proxy's upstream monitor survives a failed pass; the query server
+  rejects a Vista checkpoint for a persistent server's group.
+- Shared building blocks: one declaration grammar (`lean/text.py`:
+  `DECL_START`, `declarations`, `declaration_names`), `forbidden_problems`,
+  `stub_listing`, `recorded_lemmas` (resume reads recorded statements
+  verbatim), `cdcl.insert_split` and `cdcl.retract` for live run and
+  resume, `unchanged_names` for proof reuse, `_captain_repairs` and
+  `_restated_lemma` for hand-back and conflict analysis, `LatexBuilder`
+  for the report and the informalization, `utils/sqlite.SqliteStore` for
+  the job store and the library, `utils/files.write_atomic`, and
+  `agents/base` (`RETRYABLE_STATUS`, `retry_after_seconds`, `add_usage`).
+
+## 2026-10-16: Conflict-driven learning (branch `cdcl-learning`)
+
+- Diagnosis on 004 (summary at 10:04): 118 lemmas, 76 proved (57 by the
+  captain, 19 by AIProver); 289 sessions, 10 verified (3.5%), 219 ended by
+  time or turn limit. Sessions searched Mathlib for the run's own
+  declarations, which existed only as text in `problem.txt`; the run-wide
+  Mathlib map then listed `ratHeight` and `RankOneHyp` as absent. The core
+  lemmas share one cause, the germ encoding (`Filter.Germ` over the
+  hyperfilter), and a split marked its parent proved, so no subtree could be
+  retracted.
+- `orchestrator/cdcl.py`: learned clauses (`ClauseStore`, rebuilt from the
+  trace), conflict detection at the nearest decision with
+  `cdcl_conflict_leaves` (3) stuck leaves or one refuted, conflict analysis
+  by the captain (`templates/conflict.md`), backjump with retraction, job
+  cancellation (`AIProverAgent.cancel`) and proof reuse. `Lemma.parent`
+  links splits; `resume.restore_state` replays backjumps. Refuted statements
+  stay excluded in every later sketch. Options `cdcl` (on) and
+  `cdcl_conflict_leaves`.
+- `knowledge.py`: the run's declarations are kept out of the Mathlib map;
+  every job's guidance opens with the declarations and their line in
+  `Context.lean`, search guidance (Lean Finder first, grep only for known
+  names, cslib covered by local search), and the learned clauses.
+- AIProver fork (branch `cdcl-learning`): `make_project` writes the job's
+  context to `proj/Context.lean` (`AGENT_CONTEXT`, set by `run_sample`); both
+  skill copies and their manifests updated; `aiprover doctor` 13/15 with the
+  DGX config (REPL and cslib builds missing, unrelated).
+- Prompts: the sketch asks for lemmas in vocabulary with Mathlib API, with
+  the expected declarations named and confirmed; the sketch judge revises
+  sparse-API encodings; hand-backs and replans list the learned clauses, and
+  a hand-back may add clauses.
+- Checks: on the 004 trace, conflict detection finds `h10q_integer_model`
+  (4 stuck leaves; `h10q_uniform_height` has 2); a synthetic backjump
+  replayed by `restore_state` retracts 6 lemmas and reopens the decision;
+  stubbed backjump, local and rejected paths of `_conflict` record the
+  expected decisions; all 25 templates format; the session project contains
+  `Context.lean`, where ripgrep finds `ratHeight`.
+- 004 resumed with CDCL (`cdcl_conflict_leaves` 2). Lemma threads check for
+  conflicts before each job, but with a lemma concurrency of 6 stuck leaves
+  waited behind jobs of up to 3 h; a watcher thread now checks the whole tree
+  every minute (`watch_conflicts`). 004 resumed again at 13:50; at 13:51 the
+  first conflict, at `h10q_integer_model` (4 stuck leaves), was judged local,
+  with 5 clauses giving routes for the leaves (e.g. `hensels_lemma` for
+  `integer_model_place`). Clauses of a local verdict are now of kind `fact`.
+  `h10q_uniform_height` and `h10q_index_standard` are not analysed: proved
+  lemmas outside their subtrees use them.
+- The overnight watcher (`temp/overnight/watch.py`) had logged no run event
+  since 10:11: `GET /api/runs` defaults to the `user` page, which lists only
+  runs submitted from it, so the watcher saw none (state changes and stall
+  warnings were missed). It now requests `?page=dev` and was restarted
+  (14:31).
+- 004 resumed at 15:46 from `main`, which now holds the CDCL work and pins
+  the AIProver fork with `Context.lean` (`cdcl_conflict_leaves` 2). At 15:47
+  a conflict at `h10q_uniform_height` (2 stuck leaves) went to analysis.
 
 ## 2026-10-16: Problem 164 proved; slides
 

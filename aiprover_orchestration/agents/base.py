@@ -1,6 +1,47 @@
 """Interface shared by all model backends."""
 
+import threading
+import time
 from dataclasses import dataclass, field
+from email.utils import parsedate_to_datetime
+
+# HTTP statuses of transient failures, retried by every backend.
+RETRYABLE_STATUS = frozenset({408, 409, 429, 500, 502, 503, 504, 529})
+# Cache fields of a call's usage and the totals they add to.
+CACHE_USAGE_KEYS = {
+    "cacheReadInputTokens": "cache_read_tokens",
+    "cacheCreationInputTokens": "cache_creation_tokens",
+}
+
+
+def retry_after_seconds(value: str | None) -> float | None:
+    """The wait a `Retry-After` header asks for: seconds or an HTTP date."""
+    if not value:
+        return None
+    try:
+        return max(0.0, float(value))
+    except ValueError:
+        pass
+    try:
+        return max(0.0, parsedate_to_datetime(value).timestamp() - time.time())
+    except (TypeError, ValueError):
+        return None
+
+
+def add_usage(totals: dict[str, dict], model_usage: dict[str, dict]) -> None:
+    """Add a call's `Completion.usage` to per-model totals of input and
+    output tokens, cache tokens (where reported) and cost."""
+    for model_id, usage in model_usage.items():
+        total = totals.setdefault(
+            model_id,
+            {"input_tokens": 0, "output_tokens": 0, "cost_usd": 0.0},
+        )
+        total["input_tokens"] += int(usage.get("inputTokens") or 0)
+        total["output_tokens"] += int(usage.get("outputTokens") or 0)
+        for key, total_key in CACHE_USAGE_KEYS.items():
+            if usage.get(key):
+                total[total_key] = total.get(total_key, 0) + int(usage[key])
+        total["cost_usd"] += float(usage.get("costUSD") or 0.0)
 
 
 @dataclass
@@ -29,6 +70,29 @@ class AgentCallError(RuntimeError):
 
 class AgentRefusal(AgentCallError):
     """A model call declined by the provider's safety classifier."""
+
+
+class BudgetExhausted(RuntimeError):
+    """The run's budget of billed hosted-model calls is spent."""
+
+
+class Terminated(BaseException):
+    """The run was terminated (`stop_run`) while work was pending."""
+
+
+# Set when the run is terminated: model calls, Lean checks and AIProver jobs
+# in flight end or are cancelled, and none starts. Worker threads would
+# otherwise finish their work and hold the process open.
+STOPPING = threading.Event()
+
+
+def stop_run() -> None:
+    STOPPING.set()
+
+
+def raise_if_stopping() -> None:
+    if STOPPING.is_set():
+        raise Terminated
 
 
 class Agent:

@@ -29,10 +29,15 @@ Related published work (tags defined in docs/lit_review/lit_review.md §6):
 """
 
 import logging
-import re
 
-from ...lean.checker import forbidden_constructs, nonstandard_axioms
-from ...lean.text import drop_imports, indent, normalize
+from ...lean.checker import forbidden_problems, nonstandard_axioms
+from ...lean.text import (
+    declaration_names,
+    drop_imports,
+    indent,
+    normalize,
+    split_declarations,
+)
 from .. import prompts
 from ..config import MAIN_NAME
 from ..structures import (
@@ -44,13 +49,16 @@ from ..structures import (
     failed_lemma_text,
     missing_lemmas,
     parse_lemmas,
+    statement_key,
+    statements,
+    stub_listing,
+    unchanged_names,
 )
 
 logger = logging.getLogger(__name__)
 
 # Facts proved by the setting check, which join the definitions.
 SETTING_PREFIX = "setting_"
-_THEOREM_NAME = re.compile(r"^(?:theorem|lemma)\s+([^\s:({\[]+)", flags=re.M)
 
 
 class SketchStage:
@@ -80,10 +88,7 @@ class SketchStage:
                 ],
             )
         )
-        problems = [
-            f"forbidden construct: {construct}"
-            for construct in forbidden_constructs(text)
-        ]
+        problems = forbidden_problems(text)
         if problems:
             return text, problems
         result = self._check(
@@ -121,11 +126,8 @@ class SketchStage:
             facts = drop_imports(extract_tag(reply, "facts"))
             if not facts:
                 break
-            names = _THEOREM_NAME.findall(facts)
-            problems = [
-                f"forbidden construct: {construct}"
-                for construct in forbidden_constructs(facts)
-            ]
+            names = declaration_names(facts, ("theorem", "lemma"))
+            problems = forbidden_problems(facts)
             problems += [
                 f"`{name}` must be named `{SETTING_PREFIX}...`"
                 for name in names
@@ -168,12 +170,15 @@ class SketchStage:
         self,
         form: Formalization,
         replan_feedback: str = "",
-        refuted: dict[str, str] | None = None,
+        excluded: dict[str, str] | None = None,
     ) -> Sketch:
         """A compiled sketch, or a compiled refutation of the theorem.
-        `refuted` maps the normalized statements of refuted lemmas to their
-        names: a sketch may not state them again."""
+        `excluded` maps statements a sketch may not state again
+        (`statement_key`: refuted, or with the attempt budget spent) to the
+        reason. If the budget ends without an accepted sketch, the last
+        compiled one is accepted."""
         feedback = replan_feedback
+        compiled = None
         for repair in range(self.config.max_repairs + 1):
             reply = self._captain(
                 prompts.SKETCH_TEMPLATE.format(
@@ -218,16 +223,14 @@ class SketchStage:
             lemmas = parse_lemmas(lemma_block)
             names = [lemma.name for lemma in lemmas]
             problems = [
-                f"forbidden construct in main proof: {name}"
-                for name in forbidden_constructs(main_proof)
+                f"lemma `{name}` must be stated with `:= by sorry`"
+                for kind, name, _ in split_declarations(lemma_block)
+                if kind in ("theorem", "lemma") and name not in names
             ]
-            problems += [
-                f"forbidden construct in lemma statements: {name}"
-                for name in forbidden_constructs(
-                    re.sub(r"\bsorry\b", "", lemma_block)
-                )
-                if name != "sorry"
-            ]
+            problems += forbidden_problems(main_proof, "main proof")
+            problems += forbidden_problems(
+                lemma_block, "lemma statements", statements=True
+            )
             if len(set(names)) != len(names) or {
                 MAIN_NAME,
                 form.theorem_name,
@@ -240,10 +243,10 @@ class SketchStage:
             if not main_proof:
                 problems.append("empty main proof")
             problems += [
-                f"lemma `{lemma.name}` states `{refuted[key]}`, which was "
-                f"refuted; it cannot be part of the sketch"
+                f"lemma `{lemma.name}` states a proposition that "
+                f"{excluded[key]}; it cannot be part of the sketch"
                 for lemma in lemmas
-                if (key := normalize(lemma.statement)) in (refuted or {})
+                if (key := statement_key(lemma.statement)) in (excluded or {})
             ]
             if not problems:
                 candidate = Sketch(lemmas, main_proof)
@@ -257,6 +260,7 @@ class SketchStage:
                         f"sketch compiles with {len(lemmas)} "
                         f"lemma(s): {names}"
                     )
+                    compiled = candidate, repair
                     issues = self._judge_sketch(form, candidate, repair)
                     if issues and repair < self.config.max_repairs:
                         problems.append(
@@ -276,13 +280,7 @@ class SketchStage:
                             )
                         )
                         continue
-                    self._decision(
-                        "sketch_accepted",
-                        repair=repair,
-                        lemmas=[lemma.statement for lemma in lemmas],
-                        main_proof=main_proof,
-                    )
-                    return candidate
+                    return self._accept_sketch(candidate, repair)
                 problems.append(result.error_report())
             logger.info(f"sketch repair {repair}: {problems[0][:200]}")
             self._decision("sketch_rejected", repair=repair, problems=problems)
@@ -291,7 +289,54 @@ class SketchStage:
                 main_proof=main_proof,
                 errors="\n".join(problems),
             )
-        raise RuntimeError("sketch did not compile within the repair budget")
+        if compiled is None:
+            raise RuntimeError(
+                "sketch did not compile within the repair budget"
+            )
+        candidate, repair = compiled
+        logger.info(f"accepting the sketch compiled in repair {repair}")
+        return self._accept_sketch(candidate, repair)
+
+    def _excluded_statements(self, sketch: Sketch) -> dict[str, str]:
+        """Statements a revision of `sketch` may not state again, with the
+        reason: those refuted in this run (learned clauses outlive the
+        sketch that taught them, cdcl.py), and those not proved whose
+        attempt budget is spent."""
+        excluded = {
+            statement_key(statement): f"was refuted as `{name}`"
+            for statement, name in self.clauses.refuted_statements().items()
+        }
+        excluded |= {
+            statement_key(lemma.statement): f"was refuted as `{lemma.name}`"
+            for lemma in sketch.lemmas
+            if lemma.refutation
+        }
+        proved = {
+            statement_key(lemma.statement)
+            for lemma in sketch.lemmas
+            if lemma.proved
+        }
+        for key, attempts in self.state.attempts.items():
+            reviewed_at = self.state.reviewed_at.get(key, 0)
+            allowed = self._attempts_allowed(reviewed_at)
+            if key not in proved and attempts >= allowed:
+                excluded.setdefault(
+                    key,
+                    f"failed {attempts} attempts, the run's budget for one "
+                    f"statement",
+                )
+        return excluded
+
+    def _accept_sketch(self, sketch: Sketch, repair: int) -> Sketch:
+        for lemma in sketch.lemmas:
+            self.state.load_attempts(lemma)
+        self._decision(
+            "sketch_accepted",
+            repair=repair,
+            lemmas=[lemma.statement for lemma in sketch.lemmas],
+            main_proof=sketch.main_proof,
+        )
+        return sketch
 
     def _judge_sketch(
         self, form: Formalization, sketch: Sketch, repair: int
@@ -306,9 +351,7 @@ class SketchStage:
             prompts.SKETCH_JUDGE_TEMPLATE.format(
                 signature=form.signature,
                 informal_proof=self.row["informal_proof"],
-                lemmas="\n\n".join(
-                    f"{lemma.statement} := by sorry" for lemma in sketch.lemmas
-                ),
+                lemmas=stub_listing(sketch.lemmas),
                 main_proof=sketch.main_proof,
             ),
             phase=f"judge_sketch{repair}",
@@ -336,7 +379,7 @@ class SketchStage:
                     parts.append(lemma.helpers)
                 parts.append(f"{lemma.statement} := by\n{indent(lemma.proof)}")
             else:
-                parts.append(f"{lemma.statement} := by sorry")
+                parts.append(stub_listing([lemma]))
         parts.append(
             f"theorem {MAIN_NAME}{form.signature}:= by\n"
             f"{indent(sketch.main_proof)}"
@@ -350,34 +393,41 @@ class SketchStage:
         replan interrupted before its new sketch was accepted."""
         proved = [lemma for lemma in sketch.lemmas if lemma.proved]
         failed = [lemma for lemma in sketch.lemmas if not lemma.proved]
-        refuted = {
-            normalize(lemma.statement): lemma.name
+        refuted = [lemma.name for lemma in failed if lemma.refutation]
+        excluded = self._excluded_statements(sketch)
+        spent = [
+            lemma
             for lemma in failed
-            if lemma.refutation
-        }
+            if not lemma.refutation
+            and statement_key(lemma.statement) in excluded
+        ]
         feedback = prompts.REPLAN_FEEDBACK_TEMPLATE.format(
-            lemmas="\n\n".join(
-                f"{lemma.statement} := by sorry" for lemma in sketch.lemmas
-            ),
+            lemmas=stub_listing(sketch.lemmas),
             main_proof=sketch.main_proof,
             proved="\n\n".join(lemma.statement for lemma in proved) or "(none)",
-            failed="\n\n".join(failed_lemma_text(lemma) for lemma in failed),
+            failed="\n\n".join(
+                failed_lemma_text(lemma)
+                + (
+                    f"\nBUDGET SPENT: {lemma.attempts} failed attempts."
+                    if lemma in spent
+                    else ""
+                )
+                for lemma in failed
+            ),
+            clauses=self._clauses_text(),
         )
         self._decision(
             "replan_resumed" if resumed else "replan",
             proved=[lemma.name for lemma in proved],
             failed=[lemma.name for lemma in failed],
-            refuted=sorted(refuted.values()),
+            refuted=sorted(refuted),
+            spent=[lemma.name for lemma in spent],
         )
-        new_sketch = self.sketch(form, feedback, refuted)
+        new_sketch = self.sketch(form, feedback, excluded)
         proofs = {normalize(lemma.statement): lemma for lemma in proved}
-        kept = {
-            lemma.name
-            for lemma in new_sketch.lemmas
-            for old in sketch.lemmas
-            if old.name == lemma.name
-            and normalize(old.statement) == normalize(lemma.statement)
-        }
+        kept = unchanged_names(
+            statements(sketch.lemmas), statements(new_sketch.lemmas)
+        )
         old_names = {lemma.name for lemma in sketch.lemmas}
         for lemma in new_sketch.lemmas:
             previous = proofs.get(normalize(lemma.statement))

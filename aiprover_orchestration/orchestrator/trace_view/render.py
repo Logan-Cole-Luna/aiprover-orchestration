@@ -24,7 +24,6 @@ Usage:
 import argparse
 import html
 import json
-import os
 import re
 import time
 from pathlib import Path
@@ -36,6 +35,7 @@ from ...agents.aiprover import (
     session_ending,
 )
 from ...paths import AIPROVER_JOBS
+from ...utils.files import write_atomic
 from ..benchmark import run_costs
 from ..trace import Trace
 
@@ -229,9 +229,7 @@ def render(trace_path: Path, output_dir: Path) -> list[Path]:
             .replace(DATA_MARKER, payloads[output_name == "trace_replay.html"])
         )
         output_path = output_dir / output_name
-        temporary = output_path.with_name(f".{output_name}.{os.getpid()}.tmp")
-        temporary.write_text(page)
-        os.replace(temporary, output_path)
+        write_atomic(output_path, page)
         written.append(output_path)
     return written
 

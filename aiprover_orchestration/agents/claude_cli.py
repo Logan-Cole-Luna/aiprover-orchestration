@@ -31,7 +31,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..orchestrator.trace import REFUSAL_MARKER
 from ..paths import ROOT, TEMP_DIR, WORKSPACE
-from .base import Agent, Completion
+from .base import RETRYABLE_STATUS, Agent, Completion
 
 logger = logging.getLogger(__name__)
 
@@ -41,24 +41,15 @@ RETRY_BACKOFF_S = [30, 60, 180, 300, 600]
 # A usage limit (as opposed to a short rate limit) reports a reset time that
 # can be hours away, so a single call sleeps at most this long.
 MAX_USAGE_LIMIT_WAIT_S = 3600
-RETRYABLE_MARKERS = (
-    "rate limit",
-    "rate_limit",
-    "usage limit",
-    "session limit",
-    "429",
-    "overloaded",
-    "server error",
-    "500",
-    "502",
-    "503",
-    "529",
-    "timeout",
-    "timed out",
-    "connection error",
-    "econnreset",
-    "network",
-    "temporarily unavailable",
+# Error texts of transient failures: a retryable HTTP status as a whole
+# number (not the digits of a token count), or a phrase.
+RETRYABLE_ERROR = re.compile(
+    r"\b(?:"
+    + "|".join(map(str, sorted(RETRYABLE_STATUS)))
+    + r")\b|rate.limit|usage limit|session limit|overloaded|server error"
+    r"|\btime(?:d)? ?out\b|connection error|econnreset|network error"
+    r"|temporarily unavailable",
+    re.IGNORECASE,
 )
 
 
@@ -165,8 +156,7 @@ def _usage_limit_wait_seconds(text: str) -> float | None:
 
 
 def _is_retryable(error_text: str) -> bool:
-    low = (error_text or "").lower()
-    return any(marker in low for marker in RETRYABLE_MARKERS)
+    return bool(RETRYABLE_ERROR.search(error_text or ""))
 
 
 def invoke_once(

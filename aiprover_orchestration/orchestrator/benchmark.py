@@ -36,6 +36,8 @@ from pathlib import Path
 
 import psutil
 
+from ..agents.base import add_usage
+
 SAMPLE_SECONDS = 30
 
 
@@ -361,16 +363,18 @@ def run_costs(trace: dict) -> dict:
     }
 
 
-def usage_by_model(costs: dict) -> dict:
-    """Tokens and cost per hosted model."""
+def usage_by_model(steps: list[dict]) -> dict:
+    """Tokens and cost per hosted model, in the totals of the run summary
+    (`agents.base.add_usage`). A step records the usage of the model that
+    served it and the cost of the whole call."""
     totals: dict[str, dict] = {}
-    for row in costs["hosted"]:
-        total = totals.setdefault(
-            row["model"],
-            {"output_tokens": 0, "cost_usd": 0.0},
-        )
-        for key in total:
-            total[key] += row[key]
+    for step in steps:
+        if step["kind"] == "model_call" and step.get("backend") != "aiprover":
+            usage = {
+                **(step.get("usage") or {}),
+                "costUSD": step.get("cost_usd"),
+            }
+            add_usage(totals, {step.get("model") or "": usage})
     return totals
 
 
@@ -404,7 +408,7 @@ def summarize(result_dir: Path, trace: dict) -> dict:
         "status": outcome.get("status"),
         "wall_seconds": outcome.get("wall_seconds"),
         "phase_seconds": outcome.get("phase_seconds"),
-        "usage_by_model": usage_by_model(costs),
+        "usage_by_model": usage_by_model(steps),
         "costs": costs,
         "server": server_summary(samples),
         "sessions": session_summary(steps),

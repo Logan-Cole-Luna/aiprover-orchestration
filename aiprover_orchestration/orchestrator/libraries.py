@@ -29,7 +29,7 @@ import sys
 from pathlib import Path
 
 from ..lean.checker import LeanChecker
-from ..lean.text import drop_imports, split_declarations
+from ..lean.text import declaration_names, drop_imports
 from ..paths import ROOT, TEMP_DIR, WORKSPACE
 from .config import FILE_HEADER
 
@@ -45,7 +45,7 @@ def load(path: str) -> str:
 
 
 def declared_names(library: str) -> set[str]:
-    return {name for _, name, _ in split_declarations(library)}
+    return set(declaration_names(library))
 
 
 def contribution(solution: str, library_chars: int, theorem_name: str) -> str:
@@ -98,9 +98,7 @@ def extend(
         current = (
             library_path.read_text() if library_path.exists() else FILE_HEADER
         )
-        if re.search(
-            rf"^theorem {re.escape(theorem_name)}\b", current, flags=re.M
-        ):
+        if theorem_name in declaration_names(current, ("theorem",)):
             return {
                 "added": False,
                 "declarations": [],
@@ -122,7 +120,7 @@ def extend(
     return {
         "added": True,
         "problem": "",
-        "declarations": [name for _, name, _ in split_declarations(added)],
+        "declarations": declaration_names(added),
     }
 
 

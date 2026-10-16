@@ -114,6 +114,42 @@ def extract_lemma_proof(
     return "\n\n".join(filter(None, [*helpers, option])), proof
 
 
+def helper_names(helpers: str) -> set[str]:
+    return {name for _, name, _ in split_declarations(helpers) if name}
+
+
+def proved_helper_names(lemmas, exclude=None) -> set[str]:
+    """Helper names of the proved lemmas other than `exclude`; they share
+    the assembled file with every other helper."""
+    return {
+        name
+        for lemma in lemmas
+        if lemma.proved and lemma is not exclude
+        for name in helper_names(lemma.helpers)
+    }
+
+
+def prefixed_helpers(
+    helpers: str, proof: str, prefix: str
+) -> tuple[str, str, list[str]]:
+    """`helpers` and `proof` with each helper of a plain name renamed to
+    `prefix` + name, so that answers for different lemmas, which choose
+    helper names freely, do not collide in the assembled file. Qualified
+    names are kept. Returns the renamed texts and the new names; Lean
+    checks the result, so a rename that breaks a reference only fails."""
+    renamed = []
+    for name in sorted(helper_names(helpers)):
+        if "." in name or name.startswith(prefix):
+            continue
+        pattern = re.compile(rf"(?<![\w.']){re.escape(name)}(?![\w'])")
+        helpers, proof = (
+            pattern.sub(lambda _: prefix + name, text)
+            for text in (helpers, proof)
+        )
+        renamed.append(prefix + name)
+    return helpers, proof, renamed
+
+
 def failed_attempt(
     sample: AIProverSample, lemma_name: str, fixed_names: set[str]
 ) -> tuple[tuple[int, int, int], str] | None:

@@ -34,12 +34,19 @@ from .. import prompts
 from ..structures import extract_tag
 
 MAX_COMPILE_REPAIRS = 2
-# Constructs the writer's text may not contain: they would read or write
-# files, run code, or replace the document's preamble.
+# Constructs the writer's or the referee's text may not contain: they would
+# read or write files, run code, or replace the document's preamble, also
+# indirectly (a name built with \csname, a character given as ^^5c).
 FORBIDDEN_LATEX = re.compile(
-    r"\\(?:input|include|write|immediate|openout|openin|read|directlua|luaexec|"
-    r"usepackage|RequirePackage|documentclass|catcode|special|ShellEscape)\b"
+    r"\\(?:input|include|write|immediate|openout|openin|read|readline|"
+    r"directlua|luaexec|usepackage|RequirePackage|documentclass|catcode|"
+    r"special|ShellEscape|csname|scantokens|makeatletter|everyeof|"
+    r"VerbatimInput|verbatiminput|lstinputlisting|includegraphics|"
+    r"IfFileExists|InputIfFileExists|pdffiledump|pdfximage|pdfobj)"
+    # A control word ends at the first non-letter: `\write18` is `\write`.
+    r"(?![A-Za-z])"
     r"|\\(?:begin|end)\{document\}"
+    r"|\^\^"
 )
 DOC_COMMENT = re.compile(r"(?:/--(?:(?!-/).)*-/\s*|open [^\n]+ in\s*)+$", re.S)
 
@@ -238,14 +245,154 @@ def plain_lean_names(latex: str) -> str:
     )
 
 
+# Characters with a meaning in LaTeX, as text.
+LATEX_SPECIALS = {
+    "\\": r"\textbackslash{}",
+    "^": r"\textasciicircum{}",
+    "~": r"\textasciitilde{}",
+    **{char: "\\" + char for char in "#$%&_{}"},
+}
+
+
 def escape(text: str) -> str:
-    return re.sub(r"([#$%&_{}])", r"\\\1", text).replace(
-        "~", r"\textasciitilde{}"
+    """`text` typeset as plain text: no character keeps a LaTeX meaning."""
+    return re.sub(
+        r"[\\^~#$%&_{}]", lambda match: LATEX_SPECIALS[match.group(0)], text
     )
 
 
-class ReportBuilder:
+def forbidden_latex(text: "ReportText") -> list[str]:
+    return [
+        f"forbidden construct `{match.group(0)}`"
+        for part in (text.macros, text.body, text.title, text.abstract)
+        for match in FORBIDDEN_LATEX.finditer(part)
+    ]
+
+
+class LatexBuilder:
+    """The writer loop of a LaTeX document about a run: the writer writes
+    it, compile errors and contract violations go back to the writer, the
+    reviewer checks the text against the Lean code, and the writer corrects
+    the discrepancies once.
+
+    Subclasses set `phase` (the prefix of the calls' phases), `out_dir` and
+    `name` (of the .tex and .pdf), and give `write_prompt`, `check_prompt`,
+    `problems` (the contract), `documents` (the documents to try, best
+    first), `notes` (remarks on the final text) and `save`."""
+
+    phase = ""
+
+    def write_prompt(self) -> str:
+        raise NotImplementedError
+
+    def check_prompt(self, text: ReportText) -> str:
+        raise NotImplementedError
+
+    def problems(self, text: ReportText) -> list[str]:
+        raise NotImplementedError
+
+    def documents(self, text: ReportText) -> list[str]:
+        raise NotImplementedError
+
+    def notes(self) -> list[str]:
+        return []
+
+    def save(self, text: ReportText) -> None:
+        raise NotImplementedError
+
+    def compile(self, document: str) -> tuple[bool, str]:
+        return compile_latex(self.out_dir, self.name, document)
+
+    def compile_text(self, text: ReportText) -> tuple[bool, str]:
+        """Compile the first of the text's documents that compiles; the
+        errors are the first document's."""
+        first_errors = None
+        for document in self.documents(text):
+            ok, errors = self.compile(document)
+            if ok:
+                return True, ""
+            first_errors = errors if first_errors is None else first_errors
+        return False, first_errors or ""
+
+    def build(self, complete: Callable[[str, str, str], str]) -> dict:
+        """Write, check and compile; `complete(prompt, role, phase)` calls a
+        model. Returns a record of the result."""
+        record = {
+            "pdf": None,
+            "compiled": False,
+            "discrepancies": "",
+            "problems": [],
+        }
+        text = ReportText.parse(
+            complete(self.write_prompt(), "writer", f"{self.phase}_write")
+        )
+        text, ok, errors = self._compile_with_repairs(
+            text, complete, f"{self.phase}_repair"
+        )
+        record["compiled"] = ok
+        if ok:
+            check = complete(
+                self.check_prompt(text), "reviewer", f"{self.phase}_check"
+            )
+            discrepancies = extract_tag(check, "discrepancies").strip()
+            record["discrepancies"] = discrepancies
+            if discrepancies and discrepancies.lower().rstrip(".") != "none":
+                revised = ReportText.parse(
+                    complete(
+                        prompts.REPORT_REVISE_TEMPLATE.format(
+                            discrepancies=discrepancies, **asdict(text)
+                        ),
+                        "writer",
+                        f"{self.phase}_revise",
+                    )
+                )
+                revised, revised_ok, _ = self._compile_with_repairs(
+                    revised, complete, f"{self.phase}_revise_repair"
+                )
+                if revised_ok:
+                    text = revised
+                else:
+                    record["problems"].append(
+                        "revision did not compile; the checked "
+                        "version before revision was kept"
+                    )
+                    ok, errors = self.compile_text(text)
+        self.save(text)
+        record["problems"] += self.problems(text) + self.notes()
+        if not ok:
+            record["problems"].append(errors[:2000])
+        pdf = self.out_dir / f"{self.name}.pdf"
+        if ok and pdf.exists():
+            record["pdf"] = str(pdf)
+        return record
+
+    def _compile_with_repairs(self, text: ReportText, complete, phase: str):
+        errors = ""
+        for repair in range(MAX_COMPILE_REPAIRS + 1):
+            problems = self.problems(text)
+            if not problems:
+                ok, errors = self.compile_text(text)
+                if ok:
+                    return text, True, ""
+                problems = [errors]
+            if repair == MAX_COMPILE_REPAIRS:
+                return text, False, "\n".join(problems)
+            text = ReportText.parse(
+                complete(
+                    prompts.REPORT_REPAIR_TEMPLATE.format(
+                        errors="\n".join(problems)[:6000], **asdict(text)
+                    ),
+                    "writer",
+                    f"{phase}{repair}",
+                )
+            )
+        return text, False, errors
+
+
+class ReportBuilder(LatexBuilder):
     """Builds, checks and compiles the report of one verified run."""
+
+    phase = "report"
 
     def __init__(
         self,
@@ -261,7 +408,7 @@ class ReportBuilder:
         library_names: list[str] | None = None,
     ):
         self.out_dir = Path(out_dir)
-        self.slug = slug
+        self.slug = self.name = slug
         self.row = row
         self.theorem_name = theorem_name
         self.target_statement = target_statement
@@ -294,12 +441,7 @@ class ReportBuilder:
 
     def problems(self, text: ReportText) -> list[str]:
         """Contract violations of the writer's text, before compiling."""
-        problems = []
-        for part in (text.macros, text.body, text.title, text.abstract):
-            problems += [
-                f"forbidden construct `{m.group(0)}`"
-                for m in FORBIDDEN_LATEX.finditer(part)
-            ]
+        problems = forbidden_latex(text)
         used = re.findall(r"\\LeanDecl\{([^}]*)\}", text.body)
         unknown = sorted(set(used) - set(self.lean_code))
         missing = [
@@ -367,7 +509,7 @@ class ReportBuilder:
             if self.review.get(key):
                 finding = (
                     escape(self.review[key])
-                    if plain
+                    if plain or FORBIDDEN_LATEX.search(self.review[key])
                     else plain_lean_names(self.review[key])
                 )
                 parts.append(f"\\paragraph{{{heading}.}} {finding}")
@@ -410,8 +552,39 @@ class ReportBuilder:
             f"{appendix}\n\\end{{document}}\n"
         )
 
-    def compile(self, document: str) -> tuple[bool, str]:
-        return compile_latex(self.out_dir, self.slug, document)
+    def documents(self, text: ReportText) -> list[str]:
+        """The document, and, if a referee's text is inserted, the document
+        with that text typeset plainly in case it is what fails."""
+        documents = [self.document(text)]
+        if self.review_section():
+            documents.append(self.document(text, plain_review=True))
+        return documents
+
+    def notes(self) -> list[str]:
+        return (
+            [
+                "Unicode characters without a LaTeX symbol: "
+                + " ".join(self.unmapped)
+            ]
+            if self.unmapped
+            else []
+        )
+
+    def write_prompt(self) -> str:
+        return prompts.REPORT_TEMPLATE.format(
+            informal_statement=self.row["informal_statement"],
+            informal_proof=self.row["informal_proof"],
+            lean_solution=self.solution,
+            declarations=self.declaration_list(),
+            theorem_name=self.theorem_name,
+        )
+
+    def check_prompt(self, text: ReportText) -> str:
+        return prompts.REPORT_CHECK_TEMPLATE.format(
+            informal_statement=self.row["informal_statement"],
+            informal_proof=self.row["informal_proof"],
+            report=self.report_with_code(text),
+        )
 
     def report_with_code(self, text: ReportText) -> str:
         """The body with each declaration's Lean code inline, for the check."""
@@ -446,113 +619,6 @@ class ReportBuilder:
         (self.out_dir / "report_parts.json").write_text(
             json.dumps(parts, indent=1, ensure_ascii=False)
         )
-
-    # Writer loop -------------------------------------------------------------
-
-    def build(self, complete: Callable[[str, str, str], str]) -> dict:
-        """Write, check and compile the report; `complete(prompt, role, phase)`
-        calls a model. Returns a record of the result."""
-        record = {
-            "pdf": None,
-            "compiled": False,
-            "discrepancies": "",
-            "problems": [],
-        }
-        reply = complete(
-            prompts.REPORT_TEMPLATE.format(
-                informal_statement=self.row["informal_statement"],
-                informal_proof=self.row["informal_proof"],
-                lean_solution=self.solution,
-                declarations=self.declaration_list(),
-                theorem_name=self.theorem_name,
-            ),
-            "writer",
-            "report_write",
-        )
-        text = ReportText.parse(reply)
-        text, ok, errors = self._compile_with_repairs(
-            text, complete, "report_repair"
-        )
-        record["compiled"] = ok
-        if ok:
-            check = complete(
-                prompts.REPORT_CHECK_TEMPLATE.format(
-                    informal_statement=self.row["informal_statement"],
-                    informal_proof=self.row["informal_proof"],
-                    report=self.report_with_code(text),
-                ),
-                "reviewer",
-                "report_check",
-            )
-            discrepancies = extract_tag(check, "discrepancies").strip()
-            record["discrepancies"] = discrepancies
-            if discrepancies and discrepancies.lower().rstrip(".") != "none":
-                revised = ReportText.parse(
-                    complete(
-                        prompts.REPORT_REVISE_TEMPLATE.format(
-                            discrepancies=discrepancies, **asdict(text)
-                        ),
-                        "writer",
-                        "report_revise",
-                    )
-                )
-                revised, revised_ok, revised_errors = (
-                    self._compile_with_repairs(
-                        revised, complete, "report_revise_repair"
-                    )
-                )
-                if revised_ok:
-                    text = revised
-                else:
-                    record["problems"].append(
-                        "revision did not compile; the checked "
-                        "version before revision was kept"
-                    )
-                    ok, errors = self.compile(self.document(text))
-        self.save(text)
-        record["problems"] += self.problems(text)
-        if self.unmapped:
-            record["problems"].append(
-                "Unicode characters without a LaTeX symbol: "
-                + " ".join(self.unmapped)
-            )
-        if not ok:
-            record["problems"].append(errors[:2000])
-        pdf = self.out_dir / f"{self.slug}.pdf"
-        if ok and pdf.exists():
-            record["pdf"] = str(pdf)
-        return record
-
-    def _compile_with_repairs(self, text: ReportText, complete, phase: str):
-        errors = ""
-        for repair in range(MAX_COMPILE_REPAIRS + 1):
-            problems = self.problems(text)
-            if not problems:
-                ok, errors = self.compile(self.document(text))
-                if ok:
-                    return text, True, ""
-                # The referee's text is inserted verbatim; typeset it as plain
-                # text if it is what fails.
-                if self.review_section():
-                    plain_ok, _ = self.compile(
-                        self.document(text, plain_review=True)
-                    )
-                    if plain_ok:
-                        return text, True, ""
-                problems = [errors]
-            if repair == MAX_COMPILE_REPAIRS:
-                return text, False, "\n".join(problems)
-            text = ReportText.parse(
-                complete(
-                    prompts.REPORT_REPAIR_TEMPLATE.format(
-                        errors="\n".join(problems)[:6000], **asdict(text)
-                    ),
-                    "writer",
-                    f"{phase}{repair}",
-                )
-            )
-        return text, False, errors
-
 
 def compile_latex(out_dir: Path, name: str, document: str) -> tuple[bool, str]:
     """Write `<name>.tex` in `out_dir` and compile it with pdfLaTeX (twice, for

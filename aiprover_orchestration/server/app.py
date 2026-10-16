@@ -464,6 +464,15 @@ def submit(body: Submission, user: str = Depends(current_user)) -> dict:
             f"group {body.gpu_group!r} has no model server: every role, "
             "including the subagent, must use Claude or a hosted model",
         )
+    group = vista.GPU_GROUPS[body.gpu_group]
+    if not group.job_name and models.checkpoint_of(selection) is not None:
+        # A persistent server serves its own version; a Vista checkpoint
+        # needs a group with Vista server jobs.
+        raise HTTPException(
+            400,
+            f"group {body.gpu_group!r} serves AIProver "
+            f"{', '.join(sorted(models.PERSISTENT_VERSIONS))} only",
+        )
 
     if body.uuid:
         row = read_dataset(page).get(body.uuid)
