@@ -116,7 +116,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     options     TEXT,                        -- JSON {config field: value} for this run
     agents      TEXT,                        -- JSON models of the run, see models.py
     gpu_group   TEXT,                        -- GPU group (vista.GPU_GROUPS); NULL = main
-    hidden      INTEGER NOT NULL DEFAULT 0   -- 1: left out of the page's run list
+    hidden      INTEGER NOT NULL DEFAULT 0,  -- 1: left out of the page's run list
+    page        TEXT                         -- page submitting (app.PAGES); NULL = dev
 );
 -- Vista server jobs submitted by the worker (only these are cancelled when idle).
 CREATE TABLE IF NOT EXISTS vista_jobs (
@@ -138,6 +139,7 @@ MIGRATIONS = [
     "ALTER TABLE jobs ADD COLUMN gpu_group TEXT",
     "ALTER TABLE jobs ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE vista_jobs ADD COLUMN gpu_group TEXT",
+    "ALTER TABLE jobs ADD COLUMN page TEXT",
 ]
 
 

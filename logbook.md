@@ -415,6 +415,19 @@ Results
   comments and author records removed, an unused template photo
   recompressed (1.7 MB).
 
+## 2026-10-16: User page of the query server
+
+- One page file in two modes (`server/app.py`, `PAGES`). `/user`, where
+  `/` redirects, is the user mode:
+  GPU group `dgx` only, AIProver version `dgx` only (the default subagent),
+  the problems of `data/open_problems.jsonl` and `data/openai_math.jsonl`,
+  and a run list of the runs submitted from it (column `jobs.page`). The
+  server enforces the group, version and dataset limits on submission.
+- `/dev` (development) keeps every group, model and dataset and lists every
+  run. An API call without `?page=dev` is the user page's.
+- Tested in the `~/test` clone: the user page rejects other groups, Vista
+  versions and other datasets; its run list holds only its own runs.
+
 ## 2026-10-16: DGX group of a cloned checkout
 
 - GPU group `dgx` resolves its harness configuration and proxy port in

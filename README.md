@@ -34,10 +34,28 @@ flowchart LR
 ├── orchestration_workspace/    # Lake project of library and run modules
 ├── AIProver/                   # AIProver harness and prover (submodule)
 ├── data/                       # problem datasets (openai_math.jsonl in git)
-└── results/                    # run records (trace, Lean, report)
+├── results/                    # run records (trace, Lean, report)
+└── slides/                     # talk slides on the OpenAI math results
 ```
 
 Work log: [logbook.md](logbook.md).
+
+## Submitting problems without setup
+
+The query server on the orchestration VM runs problems on the DGX. With an
+account on the VM (its address `<vm-host>` comes with the account), forward
+its port and open the page in a browser:
+
+```bash
+ssh -N -L 8443:localhost:8443 <user>@<vm-host>
+```
+
+Then open http://localhost:8443 (it leads to `/user`); the `ssh` command
+holds the connection until Ctrl+C. When 8443 is in use on the local machine,
+forward another local port (`-L 8450:localhost:8443`, then
+http://localhost:8450). The page submits an informal statement and proof, or
+a problem of the open and OpenAI math datasets, and lists the runs submitted
+from it with their Lean files, reports and traces.
 
 ## Setup: the aiprover-captain skill
 
@@ -53,16 +71,17 @@ cd aiprover_orchestration
 ./setup --endpoint http://<host>:<port>          # AIProver model server
 ```
 
-`./setup` installs Nix if needed (after confirmation), builds the tools and
+`./setup` installs Nix if needed (after confirmation; the installer needs
+sudo once per machine, to create `/nix`), builds the tools and
 the AIProver virtualenvs, writes the device's configuration, builds the Lean
 project and installs the plugin. `--dry-run` prints the steps.
 
-| Model server | Option |
-|---|---|
-| none | `--endpoint none` |
-| reachable from this device | `--endpoint URL [--api-key KEY]` |
-| reachable through an SSH host | `--endpoint URL --via HOST [--user USER]` |
-| a cluster job that writes `node=<n> port=<p>` to a file | `--via HOST --handoff FILE` |
+| Model server                                              | Option                                      |
+| --------------------------------------------------------- | ------------------------------------------- |
+| none                                                      | `--endpoint none`                         |
+| reachable from this device                                | `--endpoint URL [--api-key KEY]`          |
+| reachable through an SSH host                             | `--endpoint URL --via HOST [--user USER]` |
+| a cluster job that writes `node=<n> port=<p>` to a file | `--via HOST --handoff FILE`               |
 
 The harness reaches the server through a local reasoning proxy, directly or
 over an SSH tunnel. `orchestration_plugin/setup.sh` has the steps `connect`
@@ -93,7 +112,7 @@ aiprover/nix/tools/bin/python3 -m aiprover_orchestration.orchestrator.run \
     --problem-uuid OpenAIMath_164_HindmanDistinctExpressions
 aiprover/nix/tools/bin/python3 -m aiprover_orchestration.orchestrator.run --run-id <run_id> --resume
 
-# Query server; then open http://127.0.0.1:8443 in a browser (Ctrl+C stops it)
+# Query server; then open http://127.0.0.1:8443/dev in a browser (Ctrl+C stops it)
 aiprover/nix/tools/bin/python3 -m uvicorn aiprover_orchestration.server.app:app --host 127.0.0.1 --port 8443 --workers 1
 
 # Theorem library
@@ -113,9 +132,21 @@ The query server queues submissions and runs them as orchestrator processes;
 choose another `--port` when 8443 is in use (for example by an editor that
 forwards a remote server's port).
 GPU group `cpu` needs no model server (every role on Claude or a hosted
-model). Access is open; `QUERY_SERVER_AUTH=on` requires tokens
-(`configs/server/tokens.example.json`) and approval. A systemd unit is in
-`scripts/systemd/`.
+model). In a checkout set up with `./setup --endpoint dgx`, GPU group `dgx`
+uses that checkout's `orchestration_plugin/aiprover.toml` and reasoning proxy
+(`orchestration_plugin/setup.sh endpoint` restarts the proxy after a reboot);
+`configs/aiprover/dgx.toml` serves the deployment it names. Access is open;
+`QUERY_SERVER_AUTH=on` requires tokens
+(`configs/server/tokens.example.json`) and approval. A systemd user unit is
+in `scripts/systemd/`; `systemctl --user restart aiprover_query_server`
+loads a code change, and runs in progress continue.
+
+The server has two pages. `/user`, where `/` leads, offers GPU group `dgx`,
+the open and OpenAI math problems, and the runs submitted from it. `/dev`
+offers every GPU group, model and dataset and lists every run. The server
+enforces the user page's limits, and an API call without `?page=dev` is
+the user page's. The pages scope what is offered; they are not access
+control.
 
 `./setup` provides Lean, Mathlib and these Python packages; without it,
 the requirements are elan with Lean v4.23.0, the Mathlib project linked by
@@ -124,12 +155,15 @@ the requirements are elan with Lean v4.23.0, the Mathlib project linked by
 
 ## Results
 
-| Problem | Status | Lemmas | Final review |
-|---|---|---|---|
-| OpenAIMath 332, metric Markov cotype of L1 | proved (2026-10-10) | 49 | faithful |
-| OpenAIMath 011, large totient fibers, conditional on (H) | proved (2026-10-11) | 20 | faithful |
+| Problem                                                       | Status              | Lemmas | Final review |
+| ------------------------------------------------------------- | ------------------- | ------ | ------------ |
+| OpenAIMath 332, metric Markov cotype of L1                    | proved (2026-10-14) | 39     | faithful     |
+| OpenAIMath 011, large totient fibers, conditional on (H)      | proved (2026-10-11) | 20     | faithful     |
+| OpenAIMath 164, Hindman FS+FP, Corollary 1.2 from Theorem 1.1 | proved (2026-10-15) | 15     | faithful     |
 
-Run records are in `results/<run_id>/`.
+Run records are in `results/<run_id>/`. Slides on these results (method,
+formalization, results, run trace, cost, future work):
+[slides/aiprover_orchestration_openai_math.pptx](slides/aiprover_orchestration_openai_math.pptx).
 
 ## Future work
 
