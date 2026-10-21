@@ -414,7 +414,7 @@ class SketchStage:
                 )
                 for lemma in failed
             ),
-            clauses=self._clauses_text(),
+            clauses=self._clauses_text(failed, sketch.lemmas),
         )
         self._decision(
             "replan_resumed" if resumed else "replan",

@@ -573,6 +573,16 @@ Results
   a conflict at `h10q_uniform_height` (2 stuck leaves) went to analysis.
 - 004 restarted at 16:24 (resume from step 1324) to load the updated
   orchestrator code.
+- Conflict-driven learning returns as run options, off by default and not
+  offered on the server pages: `cdcl` (clauses and conflict analysis) and
+  `cdcl_backjump`. Prompts carry clause blocks only with `cdcl`
+  (`CLAUSES_BLOCK`, `CLAUSE_OUTPUT`). Conflict analysis applies proofs of
+  stuck leaves (`<leaf_proof name=...>`, checked by Lean; unit
+  propagation) and offers backjumping only with `cdcl_backjump`. Clauses
+  hold one fact of at most two sentences. Tests:
+  `test_conflict_proves_leaf_without_backjump`, the backjump replay test.
+- 004 restarted at 22:16 (step 1535) with `cdcl` on, backjumping off,
+  `cdcl_conflict_leaves` 2; the restart also loads the `open` fix.
 - Error analysis of 004 in `docs/error_analysis.md`. Measures applied to
   004: `aiprover_relevant_context` (default on; `cdcl.context_lemmas`), a
   job receives the sketch's lemmas and those split along its branch
@@ -588,6 +598,18 @@ Results
   off without a Lean Finder URL; fails open). Both skill copies and their
   MANIFEST hashes updated; `aiprover doctor` 13/15 as before; vibe parses
   the hooks file. New sessions of 004 load it without a restart.
+- Clause selection by relevance (`cdcl.ClauseStore.text`,
+  `cdcl.branch_names`): run-wide kinds first, then clauses learned on the
+  focus lemmas' branches (the lemma, its ancestors, its split siblings),
+  then the newest others; 4,000 characters for solver jobs, 8,000 for
+  captain prompts (`CAPTAIN_CLAUSES_CHARS`); conflict prompts focus on the
+  decision and its stuck leaves, replans on the failed lemmas. Replay over
+  004's 13 captain calls since 22:33: on-branch clauses shown 34 to 52,
+  clauses whose declarations the reply used 31 to 68; the four
+  `uniform_height` route clauses of 2026-10-16 would have reached the
+  hand-back that proved `uniform_height_sum`. Test:
+  `test_text_ranks_the_branch_before_newer_clauses`. 004 restarted at
+  09:49 (hints are not part of a job's resume key; sessions resumed).
 - Early revision (`aiprover_early_revision`, default on;
   `AIProverStage._revise`): a lemma whose statement has used its attempts
   is handed back once more (once per statement, counted toward

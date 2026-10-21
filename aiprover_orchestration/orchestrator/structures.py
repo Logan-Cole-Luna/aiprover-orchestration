@@ -88,6 +88,17 @@ def extract_tactics(text: str, tag: str) -> str:
     return strip_leading_by(extract_block(text, tag))
 
 
+def extract_named(text: str, tag: str) -> dict[str, str]:
+    """Content of each <tag name="...">...</tag> block by name, the last
+    block of a name winning, as `extract_block` returns it."""
+    return {
+        name: extract_block(f"<{tag}>{body}</{tag}>", tag)
+        for name, body in re.findall(
+            rf'<{tag}\s+name="([^"]+)"\s*>(.*?)</{tag}>', text, flags=re.S
+        )
+    }
+
+
 # A `theorem` or `lemma` ending in `:= sorry`; its signature does not run
 # into a later declaration (a line that starts one).
 _DECL_RE = re.compile(
