@@ -3,6 +3,12 @@ Lean, and the replay of their decisions on resume."""
 
 import unittest
 
+from aiprover_orchestration.agents import (
+    Agent,
+    AgentLimitReached,
+    AgentPool,
+    Completion,
+)
 from aiprover_orchestration.orchestrator.config import Config
 from aiprover_orchestration.orchestrator.resume import restore_state
 from aiprover_orchestration.orchestrator.structures import (
@@ -58,6 +64,31 @@ class HandbackTest(TemporaryDirectoryTest):
         )
         self.assertFalse(goal.proved)
         self.assertIn(("lemma_handback", "retry"), self.decisions(run))
+
+    def test_reply_at_its_limit_is_followed_by_a_split(self):
+        goal = Lemma("goal", GOAL)
+
+        def at_limit():
+            raise AgentLimitReached("error_max_budget_usd")
+
+        run, submitted = self.handback(
+            [at_limit, SPLIT], goal, Sketch([goal], "trivial")
+        )
+        self.assertNotIn("(action 1) is not available", run.agents.prompts[0])
+        self.assertIn("(action 1) is not available", run.agents.prompts[1])
+        self.assertEqual([lemma.name for lemma in submitted], ["goal_part"])
+
+    def test_direct_proof_after_the_limit_is_rejected(self):
+        goal = Lemma("goal", GOAL)
+
+        def at_limit():
+            raise AgentLimitReached("error_max_turns")
+
+        run, _ = self.handback(
+            [at_limit, "<proof>rfl</proof>"], goal, Sketch([goal], "trivial")
+        )
+        self.assertFalse(goal.proved)
+        self.assertIn(("lemma_handback", "rejected"), self.decisions(run))
 
     def test_restate_takes_the_attempts_of_the_new_statement(self):
         other = Lemma("other", "theorem other : (1 : Nat) = 2", attempts=3)
@@ -190,6 +221,30 @@ class HandbackTest(TemporaryDirectoryTest):
             statement_key(state.sketch.lemmas[0].statement),
             statement_key(GOAL),
         )
+
+
+class LimitedAgent(Agent):
+    """An endpoint whose every call stops at its spend limit."""
+
+    backend = "limited"
+
+    def __init__(self):
+        super().__init__("limited", max_retries=3)
+        self.calls = 0
+
+    def complete_once(self, prompt, system_prompt):
+        self.calls += 1
+        return Completion(error="error_max_budget_usd", limited=True)
+
+
+class LimitTest(TemporaryDirectoryTest):
+
+    def test_call_at_its_limit_is_not_retried(self):
+        agent = LimitedAgent()
+        pool = AgentPool({"captain": agent}, self.directory / "calls.jsonl")
+        with self.assertRaises(AgentLimitReached):
+            pool.complete("p", role="captain", system_prompt="s", phase="x")
+        self.assertEqual(agent.calls, 1)
 
 
 if __name__ == "__main__":

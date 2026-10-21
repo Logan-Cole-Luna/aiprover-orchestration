@@ -62,6 +62,9 @@ class Completion:
     # Declined by the provider's safety classifier. A refused call is billed
     # and the same prompt is refused again, so it is never retried.
     refused: bool = False
+    # Stopped at the call's spend, turn or reply-length limit. It is billed
+    # and the same prompt reaches the limit again, so it is never retried.
+    limited: bool = False
 
 
 class AgentCallError(RuntimeError):
@@ -70,6 +73,10 @@ class AgentCallError(RuntimeError):
 
 class AgentRefusal(AgentCallError):
     """A model call declined by the provider's safety classifier."""
+
+
+class AgentLimitReached(AgentCallError):
+    """A model call stopped at its spend, turn or reply-length limit."""
 
 
 class BudgetExhausted(RuntimeError):

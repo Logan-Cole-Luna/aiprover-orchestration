@@ -7,6 +7,7 @@ import unittest
 from aiprover_orchestration.agents.aiprover import AIProverAgent
 from aiprover_orchestration.lean.text import normalize
 from aiprover_orchestration.orchestrator.config import Config
+from aiprover_orchestration.orchestrator.stages.aiprover import named_lemmas
 from aiprover_orchestration.orchestrator.structures import (
     Lemma,
     Sketch,
@@ -148,6 +149,28 @@ class DirectionTest(TemporaryDirectoryTest):
             ScriptedPool(), Config(aiprover_cite_lemmas=False)
         )
         self.assertEqual(off._cited_lemmas(earlier, "by lem_a"), "")
+
+
+    def test_condensed_prompt(self):
+        lemma = Lemma("lem_b", "theorem lem_b (n : Nat) : n + 0 = n")
+        earlier = [
+            Lemma("lem_a", "theorem lem_a (n : Nat) : n + 0 = n"),
+            Lemma("lem_c", "theorem lem_c : True"),
+        ]
+        run = self.orchestration(
+            ScriptedPool(["1. Apply `lem_a`."]),
+            Config(aiprover_condensed_prompt=True),
+        )
+        phase = aiprover_phase(run, Sketch([*earlier, lemma], "trivial"))
+        key = (lemma.name, normalize(lemma.statement))
+        proof = run._directed_proof(phase, lemma, "context", key)
+        self.assertIn("1. Apply `lem_a`.", proof)
+        self.assertNotIn("source's proof", proof)
+        cited = named_lemmas(earlier, proof)
+        self.assertEqual([other.name for other in cited], ["lem_a"])
+        stubs, context = run._job_context(phase, cited)
+        self.assertIn("theorem lem_a", context)
+        self.assertNotIn("lem_c", context)
 
 
 class ProbeTest(TemporaryDirectoryTest):

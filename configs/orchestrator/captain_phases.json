@@ -1,5 +1,5 @@
 {
   "judge": {"model": "claude-sonnet-5-5", "effort": "medium"},
   "formalize": {"effort": "medium"},
-  "handback": {"max_output_tokens": 32000}
+  "handback": {"max_output_tokens": 64000, "max_budget_usd": 3, "max_turns": 60}
 }

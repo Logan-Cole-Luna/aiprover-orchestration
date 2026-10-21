@@ -49,6 +49,7 @@ from .base import (
     STOPPING,
     Agent,
     AgentCallError,
+    AgentLimitReached,
     AgentRefusal,
     BudgetExhausted,
     Completion,
@@ -191,6 +192,7 @@ class AgentPool:
                 record.get("model_usage") or {},
                 error=record.get("error"),
                 refused=_refused(record),
+                limited=bool(record.get("limited")),
             )
 
     def _load_trace_history(self) -> None:
@@ -205,6 +207,7 @@ class AgentPool:
                     {step.get("model") or "": usage} if usage else {},
                     error=step.get("error"),
                     refused=_refused(step),
+                    limited=bool(step.get("limited")),
                 )
 
     def _accumulate(
@@ -214,10 +217,12 @@ class AgentPool:
         model_usage: dict,
         error: str | None = None,
         refused: bool = False,
+        limited: bool = False,
     ) -> None:
         # The budget counts the calls to hosted models that are billed: a
-        # refusal is billed, a failure on a rate limit or outage is not.
-        self.claude_calls += hosted and (error is None or refused)
+        # refusal or a call stopped at its limit is billed, a failure on a
+        # rate limit or outage is not.
+        self.claude_calls += hosted and (error is None or refused or limited)
         # The reported totals cover the calls the trace keeps.
         if is_untraced(error, refused):
             return
@@ -272,7 +277,11 @@ class AgentPool:
             # A terminated run stops waiting, so the process can exit.
             if STOPPING.wait(max(wait, 1.0)):
                 raise Terminated
-        error = AgentRefusal if completion.refused else AgentCallError
+        error = (
+            AgentRefusal
+            if completion.refused
+            else AgentLimitReached if completion.limited else AgentCallError
+        )
         raise error(
             f"{agent.backend} call failed ({role}/{phase}): "
             f"{completion.error}"
@@ -341,6 +350,7 @@ class AgentPool:
             "seconds": round(seconds, 1),
             "error": completion.error,
             "refused": completion.refused,
+            "limited": completion.limited,
             "system_prompt": system_prompt,
             "prompt": prompt,
             "response": completion.text,
@@ -352,6 +362,7 @@ class AgentPool:
                 completion.usage,
                 error=completion.error,
                 refused=completion.refused,
+                limited=completion.limited,
             )
             with open(self.calls_path, "a") as f:
                 f.write(json.dumps(record) + "\n")
@@ -379,6 +390,7 @@ class AgentPool:
                 response=completion.text,
                 error=completion.error,
                 refused=completion.refused,
+                limited=completion.limited,
                 seconds=record["seconds"],
                 cost_usd=cost,
                 usage=primary_usage,

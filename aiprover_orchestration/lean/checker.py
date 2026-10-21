@@ -86,6 +86,11 @@ _AXIOMS_RE = re.compile(
     r"'(?P<name>[^']+)' depends on axioms: \[(?P<axioms>[^\]]*)\]"
 )
 _NO_AXIOMS_RE = re.compile(r"'(?P<name>[^']+)' does not depend on any axioms")
+_DECLARATION_RE = re.compile(
+    r"^(?:(?:private|protected|noncomputable)\s+)*"
+    r"(?:theorem|lemma|def|abbrev|instance|structure|inductive|class)\s+"
+    r"(?P<name>[^\s:({\[]+)"
+)
 
 
 @dataclass
@@ -98,11 +103,54 @@ class CheckResult:
     sorry_warnings: list[tuple[str, int]] = field(default_factory=list)
     axioms: dict[str, list[str]] = field(default_factory=dict)
     timed_out: bool = False
+    # The checked text, when the checker wrote it (`check_text`).
+    source: str = ""
 
     def error_report(self, max_chars: int = 4000) -> str:
-        """Errors in a compact form for feeding back to a model."""
-        text = "\n\n".join(self.errors) if self.errors else self.output
-        return text[:max_chars]
+        """Errors in a compact form for feeding back to a model. With the
+        checked text at hand, each position is given as the declaration
+        that contains it and the line itself with the column marked, so
+        that a model that never saw the checked file finds it in its own
+        text."""
+        if not self.errors:
+            return self.output[:max_chars]
+        errors = self.errors
+        if self.source:
+            lines = self.source.split("\n")
+            errors = [
+                _MESSAGE_RE.sub(
+                    lambda match: located(lines, match), error, count=1
+                )
+                for error in errors
+            ]
+        return "\n\n".join(errors)[:max_chars]
+
+
+def located(lines: list[str], match: re.Match) -> str:
+    """The position of a Lean message `match` within `lines`, as the
+    enclosing declaration and the source line with a caret under the
+    column."""
+    number, column = int(match.group("line")), int(match.group("col"))
+    if not 0 < number <= len(lines):
+        return match.group(0)
+    start, found = next(
+        (
+            (index, found)
+            for index in range(number - 1, -1, -1)
+            if (found := _DECLARATION_RE.match(lines[index]))
+        ),
+        (0, None),
+    )
+    place = (
+        f"in `{found.group('name')}`, line {number - start} of it"
+        if found
+        else f"line {number}"
+    )
+    severity = match.group("severity") or match.group("lake_severity")
+    return (
+        f"{place}, column {column + 1}:\n    {lines[number - 1]}\n"
+        f"    {' ' * column}^\n{severity or 'error'}:"
+    )
 
 
 def executable_constructs(lean_text: str) -> list[str]:
@@ -332,7 +380,9 @@ class LeanChecker:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(lean_text)
-        return self.check_file(path)
+        result = self.check_file(path)
+        result.source = lean_text
+        return result
 
 
 @contextmanager

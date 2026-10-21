@@ -2,7 +2,7 @@
 
 import unittest
 
-from aiprover_orchestration.lean.checker import forbidden_problems
+from aiprover_orchestration.lean.checker import CheckResult, forbidden_problems
 from aiprover_orchestration.lean.text import (
     declaration_names,
     declarations,
@@ -90,6 +90,27 @@ class ForbiddenTest(unittest.TestCase):
 
     def test_comments_are_not_constructs(self):
         self.assertFalse(forbidden_problems("trivial -- not sorry"))
+
+
+class ErrorLocationTest(unittest.TestCase):
+
+    def test_position_given_in_its_declaration(self):
+        result = CheckResult(
+            ok=False,
+            output="",
+            errors=["/tmp/x.lean:5:9: error: unexpected token ')'"],
+            source="import Mathlib\n\ntheorem a : True := trivial\n"
+            "theorem b :\n    1 = 1) := by sorry\n",
+        )
+        report = result.error_report()
+        self.assertTrue(report.startswith("in `b`, line 2 of it, column 10:"))
+        self.assertIn("    1 = 1) := by sorry\n             ^", report)
+        self.assertNotIn("/tmp/x.lean", report)
+
+    def test_report_without_source_is_unchanged(self):
+        error = "/tmp/x.lean:5:9: error: unexpected token ')'"
+        result = CheckResult(ok=False, output="", errors=[error])
+        self.assertEqual(result.error_report(), error)
 
 
 class HelperRenamingTest(unittest.TestCase):

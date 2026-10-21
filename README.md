@@ -168,7 +168,7 @@ flowchart LR
 ├── orchestration_workspace/    # Lake project of library and run modules
 ├── AIProver/                   # AIProver harness and prover (submodule)
 ├── data/                       # problem datasets (openai_math.jsonl in git)
-├── results/                    # run records (trace, Lean, report)
+├── results/                    # run records (Lean, report, informalization)
 └── docs/                       # slides and figures
 ```
 
@@ -201,7 +201,9 @@ gates every stage.
 
 *Figure 4. Claude cost and prover compute per problem.*
 
-Run records are in `results/<run_id>/`. Slides on these results:
+Run records are in `results/<run_id>/`: Lean files, summary, report and
+informalization; traces and server metrics are kept out of the repository
+for size. Slides on these results:
 [docs/slides/aiprover_orchestration_openai_math.pptx](docs/slides/aiprover_orchestration_openai_math.pptx).
 
 ## 7. Configuration
