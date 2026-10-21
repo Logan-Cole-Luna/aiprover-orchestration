@@ -361,6 +361,29 @@ class AIProverAgent(Agent):
             samples.append(self._sample(summary, len(offered)))
         return samples
 
+    def _changed(self, job: str, probed: dict[int, int]) -> list[AIProverSample]:
+        """Running sessions of `job` whose working file changed since the
+        last call, as samples of status "running"; `probed` maps a session to
+        the hash of its file when last returned."""
+        samples = []
+        sessions = self.work_root / "jobs" / job
+        for work in sorted(sessions.glob("s*/proj/Work.lean")):
+            session = work.parents[1]
+            if (session / "summary.json").exists():
+                continue
+            try:
+                text = work.read_text(errors="replace")
+                index = int(session.name[1:])
+            except (OSError, ValueError):
+                continue
+            if probed.get(index) == hash(text):
+                continue
+            probed[index] = hash(text)
+            samples.append(
+                AIProverSample(index=index, status="running", lean=text)
+            )
+        return samples
+
     def solve(
         self,
         *,
@@ -375,6 +398,8 @@ class AIProverAgent(Agent):
         on_start: Callable[[str], None] | None = None,
         hint: str = "",
         accept: Callable[[AIProverSample], bool] | None = None,
+        probe: Callable[[AIProverSample], bool] | None = None,
+        probe_seconds: int = 0,
     ) -> AIProverJob:
         """Run one AIProver job and return its samples (blocks until done).
 
@@ -386,7 +411,10 @@ class AIProverAgent(Agent):
         new job is submitted instead. `hint` is guidance added to a new job's
         problem (the harness's `--hint-file`). `accept` is offered each
         session's answer once as the session finishes; when it returns True
-        the job's remaining sessions are cancelled."""
+        the job's remaining sessions are cancelled. `probe` is offered, every
+        `probe_seconds` while the job runs, the working file of each running
+        session that changed since; when it returns True the job is cancelled
+        as for `accept`."""
         raise_if_stopping()
         work_dir.mkdir(parents=True, exist_ok=True)
         start = time.time()
@@ -484,6 +512,8 @@ class AIProverAgent(Agent):
         if on_start:
             on_start(job)
         offered: set[int] = set()
+        probed: dict[int, int] = {}
+        probed_at = time.time()
         try:
             while (
                 not STOPPING.is_set()
@@ -496,10 +526,21 @@ class AIProverAgent(Agent):
                 ).returncode
                 == 3
             ):
-                if accept and any(
+                proved = accept and any(
                     accept(sample)
                     for sample in self._finished(job, offered)
+                )
+                if (
+                    not proved
+                    and probe
+                    and probe_seconds
+                    and time.time() - probed_at >= probe_seconds
                 ):
+                    probed_at = time.time()
+                    proved = any(
+                        probe(sample) for sample in self._changed(job, probed)
+                    )
+                if proved:
                     # The settled job reports the sessions cut off here as
                     # cancelled.
                     self._cli("cancel", job, timeout=60)

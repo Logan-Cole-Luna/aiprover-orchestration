@@ -86,9 +86,10 @@ BACKENDS = {
 
 # Roles whose Claude agent has Lean tools unless its specification says
 # otherwise, and the captain phases that have none by default: the judges
-# assess text, and tools would let them consult more than they are shown.
+# assess text, and tools would let them consult more than they are shown;
+# a direction is written from the job's inputs, as the prover sees them.
 TOOL_ROLES = ("captain",)
-TOOLLESS_PHASES = ("judge",)
+TOOLLESS_PHASES = ("judge", "direction")
 
 
 def role_spec(role: str, spec: dict) -> dict:
