@@ -37,6 +37,22 @@ class TreeTest(unittest.TestCase):
             ["a", "root"],
         )
 
+    def test_context_leaves_out_other_branches(self):
+        lemmas = [Lemma(name, f"theorem {name} : True") for name in "xy"]
+        cdcl.insert_split(
+            lemmas, lemmas[0], [Lemma(n, f"theorem {n} : True") for n in "pq"]
+        )
+        cdcl.insert_split(
+            lemmas, lemmas[3], [Lemma(n, f"theorem {n} : True") for n in "rs"]
+        )
+        self.assertEqual(
+            [lemma.name for lemma in lemmas], ["p", "q", "x", "r", "s", "y"]
+        )
+        self.assertEqual(
+            [lemma.name for lemma in cdcl.context_lemmas(lemmas[4], lemmas)],
+            ["x", "r"],
+        )
+
     def test_retract_reopens_the_decision(self):
         lemmas = tree()
         root = lemmas[-1]
@@ -97,6 +113,24 @@ class ClauseStoreTest(unittest.TestCase):
         text = store.text()
         self.assertLessEqual(len(text), cdcl.MAX_CLAUSES_CHARS + 200)
         self.assertIn("fact 99", text)  # newest first
+
+    def test_text_ranks_the_branch_before_newer_clauses(self):
+        lemmas = tree()  # a1, a, b, root
+        store = cdcl.ClauseStore()
+        store.add(cdcl.LearnedClause("fact", "", "route for a1 " * 30, "a1"))
+        for index in range(30):
+            store.add(
+                cdcl.LearnedClause("fact", "", f"other {index} " * 30, "x")
+            )
+        store.add(cdcl.LearnedClause("refuted", "theorem z : False", "neg", "z"))
+        text = store.text([lemmas[2]], lemmas)  # b, a sibling of a
+        lines = text.splitlines()[1:]
+        self.assertTrue(lines[0].startswith("- [refuted]"))
+        # a1 is not on b's branch, so newer clauses crowd it out there ...
+        self.assertNotIn("route for a1", text)
+        # ... while on a1's own branch it outranks every newer clause.
+        own = store.text([lemmas[0]], lemmas)
+        self.assertIn("route for a1", own.splitlines()[2])
 
     def test_from_steps(self):
         steps = [

@@ -139,9 +139,9 @@ class Orchestration(
             )
         self.state = restore_state(previous) if previous else ResumeState()
         # Clauses learned from conflicts, shared by every later job and
-        # prompt of the run (cdcl.py).
+        # prompt of the run (cdcl.py); empty unless `config.cdcl`.
         self.clauses = cdcl.ClauseStore.from_steps(
-            (previous or {}).get("steps", [])
+            (previous or {}).get("steps", []) if config.cdcl else []
         )
         self.trace = Trace(
             trace_path,
@@ -287,8 +287,17 @@ class Orchestration(
         if self.config.cdcl and self.clauses.add(clause):
             self._decision("clause_learned", **cdcl.clause_fields(clause))
 
-    def _clauses_text(self) -> str:
-        return self.clauses.text() or "(none)"
+    def _clauses_text(self, focus=(), lemmas=()) -> str:
+        """The learned-clauses block of a captain prompt about the `focus`
+        lemmas (cdcl.ClauseStore.text); empty unless the run learns
+        clauses."""
+        if not self.config.cdcl:
+            return ""
+        text = self.clauses.text(focus, lemmas, cdcl.CAPTAIN_CLAUSES_CHARS)
+        return prompts.CLAUSES_BLOCK.format(clauses=text or "(none)")
+
+    def _clause_output(self) -> str:
+        return prompts.CLAUSE_OUTPUT if self.config.cdcl else ""
 
     def _load_library(self) -> str:
         """The library text the run started with. It is kept as library.lean

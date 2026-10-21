@@ -46,7 +46,12 @@ from .structures import Lemma, recorded_lemmas, refers_to
 #   fact           any other fact the captain learned (an absent Mathlib
 #                  declaration, a working lemma, a pitfall of the encoding)
 CLAUSE_KINDS = ("refuted", "failed_route", "conflict_cause", "fact")
+# Clause text per prompt: a solver job repeats its prompt in every session,
+# while a captain prompt is long already and the captain acts on routes.
 MAX_CLAUSES_CHARS = 4000
+CAPTAIN_CLAUSES_CHARS = 8000
+# Kinds that hold for every lemma of the run, shown before any other.
+RUN_WIDE_KINDS = ("refuted", "conflict_cause")
 MAX_CLAUSE_CHARS = 400
 CLAUSES_HEADER = (
     "Learned clauses: facts this run established after conflicts (failed or "
@@ -101,13 +106,29 @@ class ClauseStore:
             if clause.kind == "refuted"
         }
 
-    def text(self) -> str:
-        """The clauses as guidance, newest first, within MAX_CLAUSES_CHARS."""
+    def text(
+        self,
+        focus: list[Lemma] = (),
+        lemmas: list[Lemma] = (),
+        budget: int = MAX_CLAUSES_CHARS,
+    ) -> str:
+        """The clauses as guidance within `budget` characters, ranked by
+        relevance to the `focus` lemmas: run-wide kinds first, then those
+        learned on the focus lemmas' branches (`branch_names`), then the
+        rest; newest first within each group."""
+        branch = branch_names(focus, lemmas)
+        ranked = sorted(
+            reversed(self.clauses()),
+            key=lambda clause: (
+                clause.kind not in RUN_WIDE_KINDS,
+                clause.lemma not in branch,
+            ),
+        )
         lines, size = [], len(CLAUSES_HEADER)
-        for clause in reversed(self.clauses()):
+        for clause in ranked:
             line = clause.line()
-            if size + len(line) > MAX_CLAUSES_CHARS:
-                break
+            if size + len(line) > budget:
+                continue
             lines.append(line)
             size += len(line) + 1
         return f"{CLAUSES_HEADER}\n" + "\n".join(lines) if lines else ""
@@ -176,6 +197,37 @@ def subtree(name: str, lemmas: list[Lemma]) -> list[Lemma]:
         found.append(child)
         found += subtree(child.name, lemmas)
     return found
+
+
+def branch_names(focus: list[Lemma], lemmas: list[Lemma]) -> set[str]:
+    """The names on the branches of the `focus` lemmas: each lemma, its
+    ancestors, and the lemmas split from the same decision (its siblings
+    under a non-root parent). Clauses learned there are about the same
+    statements and encodings."""
+    names = set()
+    for lemma in focus:
+        names.add(lemma.name)
+        names |= {other.name for other in ancestors(lemma, lemmas)}
+        if lemma.parent:
+            names |= {
+                other.name for other in lemmas if other.parent == lemma.parent
+            }
+    return names
+
+
+def context_lemmas(lemma: Lemma, lemmas: list[Lemma]) -> list[Lemma]:
+    """The lemmas before `lemma` that its solvers receive: the sketch's own
+    lemmas, and the lemmas split from `lemma`'s parent or from one of its
+    ancestors. Lemmas split from other branches serve only the proofs in
+    those branches."""
+    parents = {"", lemma.parent} | {
+        other.name for other in ancestors(lemma, lemmas)
+    }
+    return [
+        other
+        for other in lemmas[: lemmas.index(lemma)]
+        if other.parent in parents
+    ]
 
 
 def ancestors(lemma: Lemma, lemmas: list[Lemma]) -> list[Lemma]:
