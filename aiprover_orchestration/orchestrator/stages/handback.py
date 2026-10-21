@@ -22,12 +22,13 @@ import re
 
 from ...agents.base import AgentCallError
 from ...lean.checker import forbidden_problems
-from ...lean.text import drop_imports
+from ...lean.text import drop_imports, strip_leading_by
 from .. import cdcl, knowledge, prompts
 from ..extraction import helper_names, proved_helper_names
 from ..structures import (
     Lemma,
     Sketch,
+    extract_named,
     extract_tag,
     extract_tactics,
     failed_lemma_text,
@@ -112,11 +113,7 @@ class HandbackStage:
             stubs = stub_listing(sketch.lemmas[: sketch.lemmas.index(lemma)])
             names = {other.name for other in sketch.lemmas}
             other_helpers = proved_helper_names(sketch.lemmas, lemma)
-            used_by_proofs = any(
-                refers_to(other.helpers + "\n" + other.proof, lemma.name)
-                for other in sketch.lemmas
-                if other.proved
-            )
+        retries = self._retries_spent(phase, lemma)
         prompt = prompts.HANDBACK_TEMPLATE.format(
             attempts=lemma.attempts,
             lemma_name=lemma.name,
@@ -127,7 +124,11 @@ class HandbackStage:
             informal_proof=self.row["informal_proof"],
             failed=failed_lemma_text(lemma),
             knowledge=self._for_captain(lemma.knowledge) or "(none)",
-            clauses=self._clauses_text(),
+            clauses=self._clauses_text([lemma], list(sketch.lemmas)),
+            clause_output=self._clause_output(),
+            retry_note=prompts.NO_RETRY.format(retries=retries)
+            if retries
+            else "",
         )
 
         def record(action: str, diagnosis: str, **fields) -> None:
@@ -139,11 +140,20 @@ class HandbackStage:
                 **fields,
             )
 
+        def used_by_proofs() -> bool:
+            """Whether a proved lemma uses `lemma` (call with `phase.lock`
+            held): other lemmas are proved while the captain answers."""
+            return any(
+                refers_to(other.helpers + "\n" + other.proof, lemma.name)
+                for other in sketch.lemmas
+                if other.proved
+            )
+
         def restate(diagnosis: str, restated: str, reply: str) -> list[str]:
-            if used_by_proofs:
-                return [
-                    f"proved lemmas use `{lemma.name}`; it cannot be restated"
-                ]
+            used = [f"proved lemmas use `{lemma.name}`; it cannot be restated"]
+            with phase.lock:
+                if used_by_proofs():
+                    return used
             new, problems = self._restated_lemma(
                 phase, lemma, restated, "restate", f"{lemma.name}_restated"
             )
@@ -151,8 +161,11 @@ class HandbackStage:
                 return problems
             old = lemma.statement
             with phase.lock:
+                if used_by_proofs():
+                    return used
                 lemma.statement = new.statement
                 lemma.handed_back = False
+                phase.retries.pop(lemma.name, None)
                 self.state.load_attempts(lemma)
                 if "<knowledge>" not in reply:
                     lemma.knowledge = ""
@@ -274,6 +287,8 @@ class HandbackStage:
             if proof := extract_tactics(reply, "proof"):
                 split_block = drop_imports(extract_tag(reply, "split"))
                 return prove(diagnosis, helpers, proof, split_block)
+            if "<retry" in reply and retries:
+                return [f"retry is not available after {retries} retries"]
             if "<retry" in reply:
                 logger.info(f"{lemma.name}: captain asks for a retry")
                 # The captain reviews the lemma again after as many further
@@ -281,6 +296,7 @@ class HandbackStage:
                 with phase.lock:
                     lemma.handed_back = False
                     self.state.record_review(lemma)
+                    phase.retries[lemma.name] += 1
                 record(
                     "retry",
                     diagnosis,
@@ -329,7 +345,15 @@ class HandbackStage:
                 f"{decision.helpers}\n{decision.proof}".strip() or "(none)"
             ),
             stuck=stuck,
-            clauses=self._clauses_text(),
+            clauses=self._clauses_text(
+                [decision, *stuck_leaves], list(phase.sketch.lemmas)
+            ),
+            clause_output=self._clause_output(),
+            backjump_action=(
+                prompts.BACKJUMP_ACTION.format(decision_name=decision.name)
+                if self.config.cdcl_backjump
+                else prompts.NO_BACKJUMP
+            ),
         )
         logger.info(
             f"conflict at {decision.name}: {len(names)} stuck lemma(s) "
@@ -345,8 +369,13 @@ class HandbackStage:
         def apply(reply: str) -> list[str]:
             nonlocal diagnosis
             diagnosis = extract_tag(reply, "diagnosis")
+            problems = self._leaf_proofs(phase, reply, stuck_leaves)
+            if problems:
+                return problems
             facts = extract_clauses(reply)
             restated = extract_tag(reply, "backjump")
+            if restated and not self.config.cdcl_backjump:
+                return ["backjumping is off in this run; choose <local/>"]
             if not restated and "<local" in reply:
                 self._decision(
                     "conflict", **conflict, action="local", diagnosis=diagnosis
@@ -421,6 +450,67 @@ class HandbackStage:
                 diagnosis=diagnosis,
                 problems=problems[:5],
             )
+
+
+    def _leaf_proofs(
+        self, phase, reply: str, stuck_leaves: list[Lemma]
+    ) -> list[str]:
+        """Prove the stuck leaves for which a conflict analysis gave a proof
+        (<leaf_proof name=...>), each checked by Lean against the lemmas
+        before it, as unit propagation closes a forced literal at once.
+        Leaves proved before a rejected one stay proved, so a repair round
+        repeats only what failed."""
+        proofs = extract_named(reply, "leaf_proof")
+        all_helpers = extract_named(reply, "leaf_helpers")
+        by_name = {leaf.name: leaf for leaf in stuck_leaves}
+        problems = [
+            f"`{name}` is not a stuck lemma of this conflict"
+            for name in proofs
+            if name not in by_name
+        ]
+        for name, proof in proofs.items():
+            leaf = by_name.get(name)
+            if leaf is None or leaf.proved:
+                continue
+            helpers = drop_imports(all_helpers.get(name, ""))
+            proof = strip_leading_by(proof)
+            with phase.lock:
+                lemmas = phase.sketch.lemmas
+                stubs = stub_listing(lemmas[: lemmas.index(leaf)])
+                taken = {other.name for other in lemmas} | proved_helper_names(
+                    lemmas, leaf
+                )
+            found = [
+                f"helper `{helper}` of `{name}` reuses the name of a lemma "
+                f"or of another lemma's helper"
+                for helper in sorted(helper_names(helpers) & taken)
+            ] + forbidden_problems(helpers + "\n" + proof)
+            if not found:
+                result, problem = self._check_proof(
+                    phase.form,
+                    stubs,
+                    leaf,
+                    helpers,
+                    proof,
+                    f"{name}_conflict",
+                    worker="captain",
+                )
+                if result.timed_out:
+                    raise AgentCallError(
+                        f"Lean check of the conflict proof of {name} timed out"
+                    )
+                found = [f"`{name}`: {problem}"] if problem else []
+            if found:
+                problems += found
+                continue
+            with phase.lock:
+                if not phase.present(leaf) or leaf.proved:
+                    continue
+                leaf.helpers, leaf.proof = helpers, proof
+                leaf.proved = True
+            logger.info(f"{name}: proved in conflict analysis")
+            self._record_proof(leaf, "captain")
+        return problems
 
 
 def marked_listing(lemmas: list[Lemma], target: Lemma, mark: str) -> str:

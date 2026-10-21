@@ -588,6 +588,49 @@ Results
   off without a Lean Finder URL; fails open). Both skill copies and their
   MANIFEST hashes updated; `aiprover doctor` 13/15 as before; vibe parses
   the hooks file. New sessions of 004 load it without a restart.
+- Early revision (`aiprover_early_revision`, default on;
+  `AIProverStage._revise`): a lemma whose statement has used its attempts
+  is handed back once more (once per statement, counted toward
+  `max_handbacks`, event `early_revision`) instead of waiting for the
+  replan at the end of the phase; jobs continue after a restatement or a
+  retry. In 004, `h10q_root_of_delta_zero` and `h10q_completeness` had
+  used their attempts since 2026-10-17 while the `tests_construction`
+  subtree kept the phase open; an earlier hand-back of each left them
+  marked as handed back. Tests: `test_early_revision_once_per_statement`,
+  `test_early_revision_split`.
+- 004 restarted at 20:45 (step 1868) with early revision and
+  `max_handbacks` 160 (was 120; 100 used); sessions resumed. The captain
+  proved `h10q_root_of_delta_zero` (20:46) and `h10q_completeness` (20:47)
+  in their early revisions.
+- Restatement in a hand-back is checked against the proved lemmas when it
+  is applied, not only when the hand-back starts (`handback.py`,
+  `used_by_proofs`): in 004 a proof of `h10q_completeness` found during the
+  captain's call on `h10q_index_congruence` used the statement that call
+  then replaced. Test: `test_restate_refused_after_a_proof_found_meanwhile`.
+  004 loads it at its next restart.
+- Error analysis of 004 updated (`docs/error_analysis.md`, 2026-10-19).
+- Retry limit (`aiprover_max_retries`, default 2): the captain may grant a
+  lemma statement at most two retries; later hand-backs offer proof, split,
+  restatement or refutation (`NO_RETRY`), and a lemma retried more often
+  returns to the captain before its next job. In 004 the captain had
+  retried `h10q_tests_construction_system_main` three times (six failed
+  jobs, none past the statement). Test:
+  `test_retry_refused_past_the_limit`. 004 restarted at 07:37 on
+  2026-10-20 (step 2320); sessions resumed.
+- 004 hand-backs moved from Sonnet to Opus (high effort): server option
+  `captain_phases` from `economy` to the default phases; judges stay on
+  Sonnet. Over 004, Sonnet hand-backs on lemmas under 1,000 characters all
+  ended in a proof or split (83), while those on larger lemmas included
+  every retry it chose (4 of 21); the two open lemmas of
+  `system_main` are of the larger kind. Restarted at 08:18 (step 2330);
+  sessions resumed.
+- 004 rewound to before the Sonnet hand-back of
+  `h10q_tests_construction_system_main` (07:56; split into `_engine` and
+  `_axioms`, the latter 10,287 characters against 7,869 for the lemma):
+  trace cut after step 2321, the split and its two jobs removed, so the
+  lemma (three retries, past the limit) returns to the captain on Opus.
+  The removed call (3.72 USD) no longer appears in the trace totals. Backup
+  of the full trace in `temp/rewind_004/`. Resumed at 08:26 (step 2322).
 - Decision: conflict-driven learning is disabled pending a controlled
   evaluation. `cdcl.ENABLED = False` and `cdcl.CONFLICT_LEAVES` replace the
   config fields `cdcl` and `cdcl_conflict_leaves`, which are commented out
