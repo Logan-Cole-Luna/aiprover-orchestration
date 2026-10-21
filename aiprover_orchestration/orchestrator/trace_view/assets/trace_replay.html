@@ -126,7 +126,7 @@ svg.exporting *, svg.exporting { transition: none !important; animation: none !i
 .rnode .chip-role.r-auditor, .rnode .chip-role.r-reviewer { fill: var(--auditor); }
 .rnode .chip-role.r-solver { fill: var(--solver); }
 .rnode .chip-role.r-lean { fill: var(--lean); }
-.rnode.root rect.body { stroke-width: 2.2; fill: var(--accent-soft); }
+.rnode.root rect.body { stroke-width: 2.2; fill: var(--surface-2); }
 .rnode.problem rect.body { stroke: var(--muted); stroke-dasharray: 5 3; }
 .rnode.final rect.body { stroke-width: 2.4; }
 .rnode.running rect.body { stroke-width: 2.4; animation: pulse 1.4s ease-in-out infinite; }
@@ -359,8 +359,9 @@ function buildLayout() {
   addEdge(problemNode, root, "captain", { label: "statement + proof" });
 
   const sketchEvents = eventsOf("sketch_accepted");
+  // A lemma's direction is shown with the lemma, not as a step of the spine.
   const spineCalls = calls.filter(c => (c.role === "captain" || c.role === "auditor") && !isHandback(c)
-    && !/^report/.test(c.label))
+    && !/^(report|direction\/)/.test(c.label))
     .sort((a, b) => a.index - b.index);
   // Captain and auditor calls up to each accepted sketch; the auditor branches right.
   const segments = sketchEvents.map((event, k) => spineCalls.filter(c => c.index < event.index
@@ -1077,8 +1078,10 @@ function openNode(node) {
   }
   if (node.kind === "lemma") {
     const statement = node.statement || (finalSketch?.lemmas || []).find(l => lemmaName(l) === node.lemma);
+    const direction = eventsOf("lemma_direction").filter(d => d.lemma === node.lemma).at(-1);
     return showDrawer(summaryHead(`<code>${escapeHTML(node.lemma)}</code>`, `<span>${plural(calls.filter(c => c.lemma === node.lemma).length, "solver call")}</span>`, "solver"),
       `${statement ? `<div class="tagblock"><span class="tagname">statement</span>${leanHTML(statement)}</div>` : ""}
+       ${direction?.direction ? `<div class="tagblock"><span class="tagname">direction · ${escapeHTML(direction.source || "captain")}</span><div class="prose">${mathHTML(direction.direction)}</div></div>` : ""}
        ${node.win ? `<div class="tagblock"><span class="tagname">kept proof · ${winnerText(node.win)}</span>${leanHTML(node.win.proof || "")}</div>` : ""}
        ${stepList(steps.filter(s => s.lemma === node.lemma))}`);
   }

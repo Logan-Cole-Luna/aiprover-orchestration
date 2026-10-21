@@ -355,6 +355,15 @@ Results
   (default, the call above), `sketch` (the comments above the lemma in the
   captain's reply that stated it; no call), or empty for none.
 
+- Trace pages (2026-10-20): an AIProver job's Lean checks and
+  `lemma_proved` decision are attributed to it from its
+  `aiprover_job_started` decision on, since the job's own step is recorded
+  when its last session ends (`jobStartIndex`, `trace_common.js`). A job
+  whose session proved its lemma before the others were cancelled shows as
+  the winning job, not as after the proof or interrupted. The captain's role
+  colour in the editorial theme is blue, distinct from the failure red, and
+  the root node is filled neutrally.
+
 - Run-process lookup of the query server's worker and the run's machine
   samples (load, memory, Lean processes) through `psutil`, so the server
   and the pipeline run on macOS as on Linux; `psutil` is in the Nix
@@ -573,6 +582,21 @@ Results
   a conflict at `h10q_uniform_height` (2 stuck leaves) went to analysis.
 - 004 restarted at 16:24 (resume from step 1324) to load the updated
   orchestrator code.
+- 004, cancelled at 21:11, resumed on 2026-10-17 at 09:13 from step 1386
+  with CDCL disabled; six AIProver jobs resumed.
+- The query server resumes runs: `POST /api/runs/{run_id}/resume` and a
+  Resume button for cancelled runs and finished runs that neither proved
+  nor disproved their theorem and have a trace. The run is queued again
+  under the submission limits (`check_capacity`) and the worker passes
+  `--resume`. Test: `test_resume_only_ended`.
+- Issue (fixed): an answer's `open` commands were split into words and
+  sorted (`opened_namespaces`), so `open scoped NumberField` became
+  `open NumberField scoped in`, which does not parse. A verified AIProver
+  proof of `h10q_coarsening_place_exists_val` (004, 10:32) that uses the
+  scoped notation `𝓞` was rejected for this reason. `open_commands` keeps
+  each command whole; the fixed wrapper compiles that answer. Test:
+  `ScopeTest`. The CDCL backjump test is skipped while `cdcl.ENABLED` is
+  false. The running 004 process loads the fix at its next restart.
 - Conflict-driven learning returns as run options, off by default and not
   offered on the server pages: `cdcl` (clauses and conflict analysis) and
   `cdcl_backjump`. Prompts carry clause blocks only with `cdcl`
@@ -653,6 +677,10 @@ Results
   lemma (three retries, past the limit) returns to the captain on Opus.
   The removed call (3.72 USD) no longer appears in the trace totals. Backup
   of the full trace in `temp/rewind_004/`. Resumed at 08:26 (step 2322).
+- `docs/contributions.md` updated: CDCL unit propagation and clause
+  relevance, branch-relevant solver context, solver-shaped decomposition,
+  run definitions in `Context.lean`, sandboxed captain tools, grep routing,
+  run control, result 164, 004 in progress, findings 8 to 12.
 - Decision: conflict-driven learning is disabled pending a controlled
   evaluation. `cdcl.ENABLED = False` and `cdcl.CONFLICT_LEAVES` replace the
   config fields `cdcl` and `cdcl_conflict_leaves`, which are commented out

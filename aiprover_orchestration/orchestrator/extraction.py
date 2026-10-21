@@ -11,7 +11,7 @@ import re
 from ..agents.aiprover import AIProverSample
 from ..lean.text import (
     heartbeat_option,
-    opened_namespaces,
+    open_commands,
     split_declarations,
     strip_comments,
 )
@@ -24,10 +24,8 @@ MAX_ATTEMPT_ERRORS = 2000
 def scope(lean_text: str) -> str:
     """The commands an answer's declarations may rely on, as a prefix scoped
     to one declaration: its `open` commands and a raised heartbeat limit."""
-    opened = opened_namespaces(lean_text)
-    return (
-        f"open {' '.join(opened)} in\n" if opened else ""
-    ) + heartbeat_option(lean_text)
+    opens = "".join(f"open {line} in\n" for line in open_commands(lean_text))
+    return opens + heartbeat_option(lean_text)
 
 
 def answer_helpers(
