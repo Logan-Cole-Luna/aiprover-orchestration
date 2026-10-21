@@ -3,6 +3,7 @@ Lean, and the replay of their decisions on resume."""
 
 import unittest
 
+from aiprover_orchestration.orchestrator.config import Config
 from aiprover_orchestration.orchestrator.resume import restore_state
 from aiprover_orchestration.orchestrator.structures import (
     Lemma,
@@ -70,22 +71,99 @@ class HandbackTest(TemporaryDirectoryTest):
         self.assertEqual(other.statement, "theorem other : (1 : Nat) = 1")
         self.assertEqual(other.attempts, 1)
 
-    def test_conflict_backjump_and_replay(self):
+    def test_restate_refused_after_a_proof_found_meanwhile(self):
+        other = Lemma("other", "theorem other : (1 : Nat) = 2", attempts=3)
+        user = Lemma("user", "theorem user : True")
+        sketch = Sketch([other, user], "trivial")
+
+        def reply():
+            # `user` is proved from `other` while the captain answers.
+            user.proof, user.proved = "exact (fun _ => trivial) other", True
+            return "<restate>theorem other : (1 : Nat) = 1</restate>"
+
+        run = self.orchestration(ScriptedPool([reply, "<retry/>"]))
+        run._handback(aiprover_phase(run, sketch), other)
+        self.assertEqual(other.statement, "theorem other : (1 : Nat) = 2")
+        self.assertIn(("lemma_handback", "retry"), self.decisions(run))
+
+    def test_retry_refused_past_the_limit(self):
+        goal = Lemma("goal", GOAL, attempts=6, reviewed_at=6)
+        sketch = Sketch([goal], "trivial")
+        run = self.orchestration(
+            ScriptedPool(["<retry/>", SPLIT]), Config(aiprover_handback_after=2)
+        )
+        phase = aiprover_phase(run, sketch)
+        phase.retries["goal"] = 3
+        # Retried more often than allowed: handed back before another job.
+        run._maybe_handback(phase, goal)
+        self.assertIn("Retry is not available", run.agents.prompts[0])
+        self.assertEqual(run.agents.phases, ["handback/goal"] * 2)
+        self.assertTrue(goal.proved)
+
+    def test_early_revision_once_per_statement(self):
+        goal = Lemma("goal", GOAL, attempts=1, handed_back=True)
+        sketch = Sketch([goal], "trivial")
+        run = self.orchestration(
+            ScriptedPool(["<retry/>"]), Config(aiprover_handback_after=2)
+        )
+        phase = aiprover_phase(run, sketch)
+        # A retry leaves attempts, so jobs continue ...
+        self.assertTrue(run._revise(phase, goal))
+        self.assertIn(("early_revision", None), self.decisions(run))
+        # ... and the statement is not revised again once they are used.
+        goal.attempts = 5
+        self.assertFalse(run._revise(phase, goal))
+        self.assertEqual(run.agents.phases, ["handback/goal"])
+        self.assertEqual([name for name, _ in phase.revised], ["goal"])
+
+    def test_early_revision_split(self):
+        goal = Lemma("goal", GOAL, attempts=1, handed_back=True)
+        sketch = Sketch([goal], "trivial")
+        run = self.orchestration(ScriptedPool([SPLIT]))
+        phase = aiprover_phase(run, sketch)
+        self.assertFalse(run._revise(phase, goal))
+        self.assertTrue(goal.proved)
+        self.assertEqual(
+            [lemma.name for lemma in phase.pool.lemmas], ["goal_part"]
+        )
+
+    def conflict_run(self, replies, config):
+        """A split of `goal` whose child is stuck, and a run whose captain
+        answers its conflict analysis with `replies`."""
         goal = Lemma("goal", GOAL)
         sketch = Sketch([goal], "trivial")
         first, _ = self.handback([SPLIT], goal, sketch)
         child = sketch.lemmas[0]
         child.handed_back = True
-        run = self.orchestration(
-            ScriptedPool(
-                [
-                    "<diagnosis>bad split</diagnosis>"
-                    f"<backjump>{GOAL}</backjump>"
-                    "<clause>splitting does not help</clause>"
-                ]
-            )
-        )
+        run = self.orchestration(ScriptedPool(replies), config)
         run.trace.document["steps"] += first.trace.document["steps"]
+        return run, goal, child, sketch
+
+    def test_conflict_proves_leaf_without_backjump(self):
+        run, goal, child, sketch = self.conflict_run(
+            [
+                f"<diagnosis>bad split</diagnosis><backjump>{GOAL}</backjump>",
+                "<diagnosis>local</diagnosis><local/>"
+                "<clause>norm_num closes it</clause>"
+                '<leaf_proof name="goal_part">norm_num</leaf_proof>',
+            ],
+            Config(cdcl=True),
+        )
+        run._conflict(aiprover_phase(run, sketch), goal, [child])
+        self.assertEqual(run.agents.phases, ["conflict/goal"] * 2)
+        self.assertEqual(sketch.lemmas, [child, goal])
+        self.assertTrue(child.proved)
+        self.assertEqual(len(run.clauses.clauses()), 1)
+
+    def test_conflict_backjump_and_replay(self):
+        run, goal, child, sketch = self.conflict_run(
+            [
+                "<diagnosis>bad split</diagnosis>"
+                f"<backjump>{GOAL}</backjump>"
+                "<clause>splitting does not help</clause>"
+            ],
+            Config(cdcl=True, cdcl_backjump=True),
+        )
         phase = aiprover_phase(run, sketch)
         run._conflict(phase, goal, [child])
         self.assertEqual(sketch.lemmas, [goal])

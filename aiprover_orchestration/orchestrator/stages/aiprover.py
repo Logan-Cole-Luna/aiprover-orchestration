@@ -6,7 +6,9 @@ completed jobs per lemma statement over the run, across sketches and resumes
 weighted towards lemmas with more failures. Every sample's proof passes the
 same Lean gate as chat solvers. After `aiprover_handback_after` failures a
 lemma is handed back to the captain, and several stuck leaves under one
-decision start a conflict analysis (`stages/handback.py`). A refuted lemma
+decision start a conflict analysis (`stages/handback.py`). A lemma whose
+statement has used its attempts is handed back once more (early revision)
+instead of waiting for the replan. A refuted lemma
 ends the phase once the running jobs return, and the sketch is revised. A
 later lemma whose statement equals a proved one retracted by a backjump
 reuses its proof.
@@ -19,7 +21,9 @@ Related published work (tags defined in docs/lit_review/lit_review.md §6):
 
 import logging
 import math
+import re
 import threading
+from collections import Counter
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 
@@ -77,6 +81,13 @@ class Phase:
     handbacks: int
     # Conflicts analysed: (decision, statement, stuck leaves).
     analysed: set[tuple]
+    # Statements revised after their last attempt: (lemma, statement).
+    revised: set[tuple] = field(default_factory=set)
+    # Captain retries per lemma since its last restatement.
+    retries: Counter = field(default_factory=Counter)
+    # The captain's informal proof of each lemma statement for its jobs:
+    # (lemma, statement): direction.
+    directions: dict[tuple, str] = field(default_factory=dict)
     lock: threading.Lock = field(default_factory=threading.Lock)
     sessions_in_flight: dict[str, int] = field(default_factory=dict)
     running_jobs: dict[str, str] = field(default_factory=dict)  # lemma: job
@@ -138,10 +149,37 @@ class AIProverStage:
                 if step["kind"] == "decision"
                 and step.get("event") == "conflict"
             },
+            revised={
+                (step["lemma"], normalize(step["statement"]))
+                for step in steps
+                if step["kind"] == "decision"
+                and step.get("event") == "early_revision"
+            },
+            directions={
+                (step["lemma"], normalize(step["statement"])): step["direction"]
+                for step in steps
+                if step["kind"] == "decision"
+                and step.get("event") == "lemma_direction"
+            },
         )
+        for step in steps:
+            if step["kind"] == "decision" and step.get("event") == (
+                "lemma_handback"
+            ):
+                if step.get("action") == "retry":
+                    phase.retries[step["lemma"]] += 1
+                elif step.get("action") == "restate":
+                    phase.retries.pop(step["lemma"], None)
         if any(lemma.refutation for lemma in sketch.lemmas):
             phase.refuted.set()
         return phase
+
+    def _retries_spent(self, phase: Phase, lemma: Lemma) -> int:
+        """The lemma's retries if they have reached
+        `aiprover_max_retries`, else 0."""
+        limit = self.config.aiprover_max_retries
+        retries = phase.retries[lemma.name]
+        return retries if limit and retries >= limit else 0
 
     def _prove_with_aiprover(
         self,
@@ -221,6 +259,14 @@ class AIProverStage:
             raise
 
     def _attempt(self, phase: Phase, lemma: Lemma) -> None:
+        """Jobs on `lemma` until it is proved or out of attempts, then one
+        early revision; jobs resume if it leaves attempts (a restatement or
+        a retry)."""
+        self._jobs(phase, lemma)
+        while self._revise(phase, lemma):
+            self._jobs(phase, lemma)
+
+    def _jobs(self, phase: Phase, lemma: Lemma) -> None:
         """Jobs on `lemma` until it is proved or out of attempts. The
         hand-back comes before the next job, so a lemma restored with enough
         failures (after a resume) goes to the captain first."""
@@ -362,17 +408,23 @@ class AIProverStage:
                 other.name in phase.in_analysis
                 for other in cdcl.ancestors(lemma, phase.sketch.lemmas)
             )
+        # Retried more often than allowed (before the limit existed).
+        over = phase.retries[lemma.name] > self.config.aiprover_max_retries > 0
         if (
             waiting
             or not handback_after
             or lemma.proved
             or lemma.handed_back
-            or lemma.attempts - lemma.reviewed_at < handback_after
+            or (
+                lemma.attempts - lemma.reviewed_at < handback_after
+                and not over
+            )
             or phase.halted()
         ):
             return
         if (
-            not lemma.last_attempts
+            not over
+            and not lemma.last_attempts
             and not lemma.knowledge
             and not self._exhausted(lemma)
         ):
@@ -421,6 +473,58 @@ class AIProverStage:
         finally:
             with phase.lock:
                 phase.in_handback.discard(lemma.name)
+
+    def _revise(self, phase: Phase, lemma: Lemma) -> bool:
+        """Hand `lemma` back once more when its statement has used its
+        attempts, so that the captain may split, restate, prove, refute or
+        retry it now rather than at the replan (once per statement). True
+        if jobs on it should continue."""
+        if (
+            not self.config.aiprover_early_revision
+            or lemma.proved
+            or lemma.refutation
+            or not self._exhausted(lemma)
+            or phase.halted()
+            or self.agents.claude_budget_left() < 2
+        ):
+            return False
+        key = (lemma.name, normalize(lemma.statement))
+        limit = self.config.max_handbacks
+        with phase.lock:
+            if (
+                key in phase.revised
+                or not phase.present(lemma)
+                or lemma.name in phase.in_handback
+                or any(
+                    other.name in phase.in_analysis
+                    for other in cdcl.ancestors(lemma, phase.sketch.lemmas)
+                )
+                or (limit and phase.handbacks >= limit)
+            ):
+                return False
+            phase.revised.add(key)
+            phase.in_handback.add(lemma.name)
+            phase.handbacks += 1
+        logger.info(f"{lemma.name}: attempts used; early revision")
+        self._decision(
+            "early_revision",
+            lemma=lemma.name,
+            statement=lemma.statement,
+            attempts=lemma.attempts,
+        )
+        try:
+            self._handback(phase, lemma)
+            if lemma.refutation:
+                phase.refuted.set()
+        except AgentRefusal as error:
+            logger.warning(
+                f"{lemma.name}: early revision refused by the model; "
+                f"continuing without it ({str(error)[:200]})"
+            )
+        finally:
+            with phase.lock:
+                phase.in_handback.discard(lemma.name)
+        return not lemma.proved and not self._exhausted(lemma)
 
     def _analyse_conflict(self, phase: Phase, lemma: Lemma) -> None:
         """Conflict analysis at the nearest decision above `lemma` with
@@ -524,17 +628,120 @@ class AIProverStage:
 
     # Jobs and the Lean gate ------------------------------------------------
 
+    def _directed_proof(
+        self, phase: Phase, lemma: Lemma, context: str, key: tuple
+    ) -> str:
+        """The informal proof a job on `lemma` receives: the direction for
+        its statement (`aiprover_direction`), fixed before the statement's
+        first job, ahead of the source's proof. Without a direction (none
+        configured, no comments, no Claude budget left, or a failed call)
+        the source's proof alone."""
+        source = self.row["informal_proof"]
+        mode = self.config.aiprover_direction
+        if not mode:
+            return source
+        with phase.lock:
+            direction = phase.directions.get(key)
+        if direction is None:
+            direction = (
+                self._sketch_note(lemma)
+                if mode == "sketch"
+                else self._captain_direction(lemma, context, source)
+            )
+            if direction is None:
+                return source
+            with phase.lock:
+                phase.directions[key] = direction
+            self._decision(
+                "lemma_direction",
+                lemma=lemma.name,
+                statement=lemma.statement,
+                direction=direction,
+                source=mode,
+            )
+        if not direction:
+            return source
+        return prompts.DIRECTED_PROOF.format(
+            lemma_name=lemma.name, direction=direction, informal_proof=source
+        )
+
+    def _captain_direction(
+        self, lemma: Lemma, context: str, source: str
+    ) -> str | None:
+        """The captain's informal proof of `lemma`; None without budget or
+        after a failed call."""
+        if self.agents.claude_budget_left() < 1:
+            return None
+        prompt = prompts.DIRECTION_TEMPLATE.format(
+            lemma_name=lemma.name,
+            theorem_text=self.row["informal_statement"],
+            context=context.rstrip(),
+            statement=lemma.statement,
+            informal_proof=source,
+        )
+        try:
+            return self._captain(
+                prompt, phase=f"direction/{lemma.name}"
+            ).strip()
+        except AgentCallError as error:
+            logger.warning(f"{lemma.name}: no direction: {error}")
+            return None
+
+    def _cited_lemmas(self, earlier: list[Lemma], proof_text: str) -> str:
+        """The earlier lemmas a job's direction names, with their
+        statements, as facts to cite; empty without any."""
+        if not self.config.aiprover_cite_lemmas:
+            return ""
+        cited = [
+            other
+            for other in earlier
+            if re.search(rf"(?<![\w.']){re.escape(other.name)}(?![\w.'])",
+                         proof_text)
+        ]
+        if not cited:
+            return ""
+        return prompts.CITED_LEMMAS.format(
+            statements="\n\n".join(other.statement for other in cited)
+        )
+
+    def _sketch_note(self, lemma: Lemma) -> str:
+        """The comment lines directly above `lemma` in the latest captain
+        reply that stated it (a sketch, a replan or a split), without the
+        comment markers; empty if there are none."""
+        pattern = re.compile(
+            r"((?:^[ \t]*--.*\n)+)[ \t]*(?:theorem|lemma)\s+"
+            + re.escape(lemma.name)
+            + r"(?![\w.'])",
+            re.M,
+        )
+        for step in reversed(self.trace.document["steps"]):
+            if step["kind"] != "model_call" or step.get("role") != "captain":
+                continue
+            match = pattern.search(step.get("response") or "")
+            if match:
+                return "\n".join(
+                    line.strip().removeprefix("--").strip()
+                    for line in match.group(1).splitlines()
+                )
+        return ""
+
     def _one_job(self, phase: Phase, lemma: Lemma, samples: int) -> None:
         """One AIProver job on `lemma`; the first sample that passes the Lean
         gate proves it. The job receives the definitions and earlier lemmas
         as fixed context and the lemma as fixed statement."""
         solver = phase.solver
         with phase.lock:
-            stubs = stub_listing(
-                phase.sketch.lemmas[: phase.sketch.lemmas.index(lemma)]
+            lemmas = phase.sketch.lemmas
+            earlier = (
+                cdcl.context_lemmas(lemma, lemmas)
+                if self.config.aiprover_relevant_context
+                else lemmas[: lemmas.index(lemma)]
             )
-            known = {other.name for other in phase.sketch.lemmas}
+            stubs = stub_listing(earlier)
+            known = {other.name for other in lemmas}
             mathlib = phase.mathlib.text(known | phase.run_names)
+        if stubs and self.config.aiprover_cite_lemmas:
+            stubs = prompts.EARLIER_LEMMAS_HEADER + stubs
         context = self._standalone(phase.form, stubs).rstrip() + "\n"
         fixed_names = {name for _, name, _ in split_declarations(context)}
         key = (lemma.name, normalize(lemma.statement))
@@ -577,22 +784,36 @@ class AIProverStage:
                 lemma_name=lemma.name,
                 informal_statement=self.row["informal_statement"],
             ),
-            proof_text=self.row["informal_proof"],
+            proof_text=(proof_text := self._directed_proof(
+                phase, lemma, context, key
+            )),
             context=context,
             statement=f"{lemma.statement} := by\n  sorry\n",
             samples=samples,
             work_dir=self.temp_dir / "aiprover",
             resume_job=resume_job,
-            hint=knowledge.hint(
+            hint=self._cited_lemmas(earlier, proof_text)
+            + knowledge.hint(
                 lemma.knowledge,
                 mathlib,
                 setting=knowledge.setting_index(context),
-                clauses=self.clauses.text() if self.config.cdcl else "",
+                clauses=(
+                    self.clauses.text([lemma], lemmas)
+                    if self.config.cdcl
+                    else ""
+                ),
             ),
             on_start=started,
             # A session's answer is gated when the session ends; the first
             # accepted one ends the job's other sessions.
             accept=gate,
+            # A running session's latest file is gated as well, so a proof
+            # written early is not held until the session's time limit. Its
+            # errors are not kept: the file is unfinished.
+            probe=lambda sample: self._gate_sample(
+                phase, lemma, sample, stubs, fixed_names, []
+            ),
+            probe_seconds=self.config.aiprover_probe_seconds,
         )
         with phase.lock:
             for sample in job.samples:
@@ -787,9 +1008,18 @@ class AIProverStage:
             lemma.helpers, lemma.proof = helpers, proof
             lemma.proved = True
         kept = ", own statement kept" if "_kept" in label else ""
+        # A session that did not end verified may still hold a proof of the
+        # lemma, which Lean has just accepted on its own.
+        source = (
+            "verified"
+            if sample.status == "verified"
+            else "session running; lemma proof checked"
+            if sample.status == "running"
+            else f"session ended {sample.status}; lemma proof checked"
+        )
         logger.info(
             f"lemma {lemma.name} proved by AIProver sample {sample.index} "
-            f"({sample.status}{kept})"
+            f"({source}{kept})"
         )
         self._record_proof(lemma, sample.index)
         return ""

@@ -331,6 +331,30 @@ Results
 
 ## Done
 
+- Citing earlier lemmas (2026-10-21, `aiprover_cite_lemmas`, on by
+  default): the earlier lemmas in an AIProver job's fixed context sit under
+  a header stating that they are proved elsewhere and are facts to cite,
+  not goals; the job's guidance opens with the full statements of the
+  earlier lemmas its direction names; the direction prompt asks for cited
+  lemmas to be named, and the solver prompt states that a lemma ending in
+  `sorry` is never to be proved again (`prompts.EARLIER_LEMMAS_HEADER`,
+  `CITED_LEMMAS`, `_cited_lemmas`). Motivation: sessions re-proved context
+  lemmas in their own files, which dropped the fixed setting, and re-derived
+  facts inline.
+
+- Lemma directions (2026-10-20, `aiprover_direction`, on by default): before
+  a statement's first AIProver job the captain writes the lemma's informal
+  proof, which every job on it receives ahead of the source's proof
+  (`prompts/templates/direction.md`, `_directed_proof`; decision
+  `lemma_direction`, rebuilt on resume; tool-free captain phase
+  `direction/`). Adopted from a paired comparison on 12 lemmas that failed
+  their first job (one 1 h session per arm, same statement and setting):
+  with the direction 2 of 6 completed pairs verified, without it 0. The
+  comparison continues to all 12 pairs. A run uses one extra Claude call
+  per lemma statement. `aiprover_direction` selects the source: `captain`
+  (default, the call above), `sketch` (the comments above the lemma in the
+  captain's reply that stated it; no call), or empty for none.
+
 - Run-process lookup of the query server's worker and the run's machine
   samples (load, memory, Lean processes) through `psutil`, so the server
   and the pipeline run on macOS as on Linux; `psutil` is in the Nix
@@ -549,6 +573,64 @@ Results
   a conflict at `h10q_uniform_height` (2 stuck leaves) went to analysis.
 - 004 restarted at 16:24 (resume from step 1324) to load the updated
   orchestrator code.
+- Error analysis of 004 in `docs/error_analysis.md`. Measures applied to
+  004: `aiprover_relevant_context` (default on; `cdcl.context_lemmas`), a
+  job receives the sketch's lemmas and those split along its branch
+  (late-lemma context 60 KB to 21 KB, `problem.txt` 122 KB to 85 KB);
+  extracted proofs are logged as checked; the captain system prompt states
+  the lemma shape on which AIProver verifies (short, few hypotheses, one
+  step, Mathlib vocabulary, concrete conclusions). 004 restarted at 22:29
+  (the context change resubmitted five in-progress jobs) and at 22:33
+  (sessions resumed). Test: `test_context_leaves_out_other_branches`.
+- AIProver fork: `hook_grep_semantic`, a vibe `post_tool` hook on `grep`.
+  A grep whose path names `.lake`, Mathlib or cslib is answered with the
+  semantic index's best matches as well (`AGENT_GREP_SEMANTIC`, default 5;
+  off without a Lean Finder URL; fails open). Both skill copies and their
+  MANIFEST hashes updated; `aiprover doctor` 13/15 as before; vibe parses
+  the hooks file. New sessions of 004 load it without a restart.
+- Early revision (`aiprover_early_revision`, default on;
+  `AIProverStage._revise`): a lemma whose statement has used its attempts
+  is handed back once more (once per statement, counted toward
+  `max_handbacks`, event `early_revision`) instead of waiting for the
+  replan at the end of the phase; jobs continue after a restatement or a
+  retry. In 004, `h10q_root_of_delta_zero` and `h10q_completeness` had
+  used their attempts since 2026-10-17 while the `tests_construction`
+  subtree kept the phase open; an earlier hand-back of each left them
+  marked as handed back. Tests: `test_early_revision_once_per_statement`,
+  `test_early_revision_split`.
+- 004 restarted at 20:45 (step 1868) with early revision and
+  `max_handbacks` 160 (was 120; 100 used); sessions resumed. The captain
+  proved `h10q_root_of_delta_zero` (20:46) and `h10q_completeness` (20:47)
+  in their early revisions.
+- Restatement in a hand-back is checked against the proved lemmas when it
+  is applied, not only when the hand-back starts (`handback.py`,
+  `used_by_proofs`): in 004 a proof of `h10q_completeness` found during the
+  captain's call on `h10q_index_congruence` used the statement that call
+  then replaced. Test: `test_restate_refused_after_a_proof_found_meanwhile`.
+  004 loads it at its next restart.
+- Error analysis of 004 updated (`docs/error_analysis.md`, 2026-10-19).
+- Retry limit (`aiprover_max_retries`, default 2): the captain may grant a
+  lemma statement at most two retries; later hand-backs offer proof, split,
+  restatement or refutation (`NO_RETRY`), and a lemma retried more often
+  returns to the captain before its next job. In 004 the captain had
+  retried `h10q_tests_construction_system_main` three times (six failed
+  jobs, none past the statement). Test:
+  `test_retry_refused_past_the_limit`. 004 restarted at 07:37 on
+  2026-10-20 (step 2320); sessions resumed.
+- 004 hand-backs moved from Sonnet to Opus (high effort): server option
+  `captain_phases` from `economy` to the default phases; judges stay on
+  Sonnet. Over 004, Sonnet hand-backs on lemmas under 1,000 characters all
+  ended in a proof or split (83), while those on larger lemmas included
+  every retry it chose (4 of 21); the two open lemmas of
+  `system_main` are of the larger kind. Restarted at 08:18 (step 2330);
+  sessions resumed.
+- 004 rewound to before the Sonnet hand-back of
+  `h10q_tests_construction_system_main` (07:56; split into `_engine` and
+  `_axioms`, the latter 10,287 characters against 7,869 for the lemma):
+  trace cut after step 2321, the split and its two jobs removed, so the
+  lemma (three retries, past the limit) returns to the captain on Opus.
+  The removed call (3.72 USD) no longer appears in the trace totals. Backup
+  of the full trace in `temp/rewind_004/`. Resumed at 08:26 (step 2322).
 - Decision: conflict-driven learning is disabled pending a controlled
   evaluation. `cdcl.ENABLED = False` and `cdcl.CONFLICT_LEAVES` replace the
   config fields `cdcl` and `cdcl_conflict_leaves`, which are commented out

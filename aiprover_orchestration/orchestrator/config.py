@@ -47,22 +47,31 @@ ALGORITHM = [
     },
     {
         "stage": "prove",
+        "actor": "captain (orchestrator model)",
+        "description": "Before a lemma's first AIProver job, write its "
+        "informal proof as the job's direction: numbered steps "
+        "naming the hypotheses, earlier lemmas and Mathlib "
+        "declarations each uses.",
+    },
+    {
+        "stage": "prove",
         "actor": "solvers (worker model, parallel)",
         "description": "Each lemma is attacked by several independent solver "
         "chains. A chain proposes a proof, receives Lean errors, "
         "and repairs; the first proof that compiles is kept and "
         "the other chains stop.",
     },
-    {
-        "stage": "prove",
-        "actor": "captain (orchestrator model)",
-        "description": "Conflict-driven learning, after CDCL SAT solvers: "
-        "when several leaves under one decision (a sketch lemma or "
-        "a split) are stuck, or one is refuted, the captain "
-        "analyses the conflict, records learned clauses that "
-        "every later job and prompt receives, and may backjump: "
-        "the subtree is retracted and the decision restated.",
-    },
+    # Conflict-driven learning (cdcl.py), disabled pending evaluation:
+    # {
+    #     "stage": "prove",
+    #     "actor": "captain (orchestrator model)",
+    #     "description": "Conflict-driven learning, after CDCL SAT solvers: "
+    #     "when several leaves under one decision (a sketch lemma or "
+    #     "a split) are stuck, or one is refuted, the captain "
+    #     "analyses the conflict, records learned clauses that "
+    #     "every later job and prompt receives, and may backjump: "
+    #     "the subtree is retracted and the decision restated.",
+    # },
     {
         "stage": "sketch",
         "actor": "captain (orchestrator model)",
@@ -141,14 +150,42 @@ class Config:
     aiprover_session_slots: int = 0
     # Sessions of one job, including those added while it runs; 0 = no limit.
     aiprover_job_sessions: int = 0
+    # Give a job only the lemmas relevant to its lemma (cdcl.context_lemmas):
+    # the sketch's lemmas and those split along its branch, not the
+    # internal lemmas of other branches. Every answer repeats its context,
+    # so this bounds the size of each session's files.
+    aiprover_relevant_context: bool = True
     # Completed failed jobs after which a lemma is handed back to the captain
     # (prove it, split it, restate it, or retry); 0 = never.
     aiprover_handback_after: int = 0
     # Hand-backs per run; 0 = unlimited. Conflict analyses count as well.
     max_handbacks: int = 0
-    # Conflict-driven learning (cdcl.py): learned clauses, conflict analysis
-    # and backjumping over the lemma tree.
-    cdcl: bool = True
+    # Hand a lemma back once more when its statement has used its attempts,
+    # rather than leaving it to the replan at the end of the phase; once per
+    # statement, counted as a hand-back.
+    aiprover_early_revision: bool = True
+    # Retries the captain may grant one lemma statement; past it, hand-backs
+    # offer proof, split, restatement or refutation only, and a lemma
+    # retried more often goes back to the captain at once. 0 = unlimited.
+    aiprover_max_retries: int = 2
+    # The direction every AIProver job on a lemma statement receives ahead
+    # of the source's proof: "captain", an informal proof of the lemma the
+    # captain writes before the statement's first job (one Claude call per
+    # statement); "sketch", the comments above the lemma in the captain's
+    # reply that stated it (no call); "" for none.
+    aiprover_direction: str = "captain"
+    # Mark the earlier lemmas in a job's context as facts to cite, and list
+    # those its direction names, with their statements, in its guidance.
+    aiprover_cite_lemmas: bool = True
+    # Seconds between Lean gates of the working files of a job's running
+    # sessions; 0 gates a session's answer only when the session ends.
+    aiprover_probe_seconds: int = 600
+    # Conflict-driven learning (cdcl.py), off by default pending a
+    # controlled evaluation and not offered on the server pages: learned
+    # clauses and conflict analysis, whose proofs of stuck lemmas are
+    # applied at once; backjumping is a separate switch.
+    cdcl: bool = False
+    cdcl_backjump: bool = False
     # Stuck leaves under one decision that make a conflict; a refuted leaf
     # makes one alone.
     cdcl_conflict_leaves: int = 3
