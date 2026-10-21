@@ -331,6 +331,30 @@ Results
 
 ## Done
 
+- Citing earlier lemmas (2026-10-21, `aiprover_cite_lemmas`, on by
+  default): the earlier lemmas in an AIProver job's fixed context sit under
+  a header stating that they are proved elsewhere and are facts to cite,
+  not goals; the job's guidance opens with the full statements of the
+  earlier lemmas its direction names; the direction prompt asks for cited
+  lemmas to be named, and the solver prompt states that a lemma ending in
+  `sorry` is never to be proved again (`prompts.EARLIER_LEMMAS_HEADER`,
+  `CITED_LEMMAS`, `_cited_lemmas`). Motivation: sessions re-proved context
+  lemmas in their own files, which dropped the fixed setting, and re-derived
+  facts inline.
+
+- Lemma directions (2026-10-20, `aiprover_direction`, on by default): before
+  a statement's first AIProver job the captain writes the lemma's informal
+  proof, which every job on it receives ahead of the source's proof
+  (`prompts/templates/direction.md`, `_directed_proof`; decision
+  `lemma_direction`, rebuilt on resume; tool-free captain phase
+  `direction/`). Adopted from a paired comparison on 12 lemmas that failed
+  their first job (one 1 h session per arm, same statement and setting):
+  with the direction 2 of 6 completed pairs verified, without it 0. The
+  comparison continues to all 12 pairs. A run uses one extra Claude call
+  per lemma statement. `aiprover_direction` selects the source: `captain`
+  (default, the call above), `sketch` (the comments above the lemma in the
+  captain's reply that stated it; no call), or empty for none.
+
 - Run-process lookup of the query server's worker and the run's machine
   samples (load, memory, Lean processes) through `psutil`, so the server
   and the pipeline run on macOS as on Linux; `psutil` is in the Nix
@@ -549,6 +573,21 @@ Results
   a conflict at `h10q_uniform_height` (2 stuck leaves) went to analysis.
 - 004 restarted at 16:24 (resume from step 1324) to load the updated
   orchestrator code.
+- Error analysis of 004 in `docs/error_analysis.md`. Measures applied to
+  004: `aiprover_relevant_context` (default on; `cdcl.context_lemmas`), a
+  job receives the sketch's lemmas and those split along its branch
+  (late-lemma context 60 KB to 21 KB, `problem.txt` 122 KB to 85 KB);
+  extracted proofs are logged as checked; the captain system prompt states
+  the lemma shape on which AIProver verifies (short, few hypotheses, one
+  step, Mathlib vocabulary, concrete conclusions). 004 restarted at 22:29
+  (the context change resubmitted five in-progress jobs) and at 22:33
+  (sessions resumed). Test: `test_context_leaves_out_other_branches`.
+- AIProver fork: `hook_grep_semantic`, a vibe `post_tool` hook on `grep`.
+  A grep whose path names `.lake`, Mathlib or cslib is answered with the
+  semantic index's best matches as well (`AGENT_GREP_SEMANTIC`, default 5;
+  off without a Lean Finder URL; fails open). Both skill copies and their
+  MANIFEST hashes updated; `aiprover doctor` 13/15 as before; vibe parses
+  the hooks file. New sessions of 004 load it without a restart.
 - Decision: conflict-driven learning is disabled pending a controlled
   evaluation. `cdcl.ENABLED = False` and `cdcl.CONFLICT_LEAVES` replace the
   config fields `cdcl` and `cdcl_conflict_leaves`, which are commented out

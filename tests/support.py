@@ -40,7 +40,8 @@ class Captain:
 
 
 class ScriptedPool:
-    """An agent pool whose captain gives `replies` in order."""
+    """An agent pool whose captain gives `replies` in order; a callable
+    reply is called when the captain answers."""
 
     def __init__(self, replies=(), solver=None, budget: int = 100):
         self.replies = list(replies)
@@ -52,7 +53,8 @@ class ScriptedPool:
     def complete(self, prompt, *, role, phase, system_prompt, **_):
         self.phases.append(phase)
         self.prompts.append(prompt)
-        return self.replies.pop(0)
+        reply = self.replies.pop(0)
+        return reply() if callable(reply) else reply
 
     def claude_budget_left(self) -> int:
         return self.budget

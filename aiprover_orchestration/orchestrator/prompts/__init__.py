@@ -12,6 +12,7 @@ library's gating rules. Reviewer: referees the verified result. Writer:
 writes the report and the informalization.
 """
 
+import re
 from pathlib import Path
 
 from ... import roles
@@ -20,8 +21,14 @@ PROMPT_DIR = Path(__file__).parent
 LEAN_ENVIRONMENT_MARKER = "{lean_environment}"
 
 
+# HTML comments in templates are removed on loading: they hold disabled
+# instructions (conflict-driven learning, cdcl.py) and notes.
+COMMENT = re.compile(r"\n?<!--.*?-->\n?", re.S)
+
+
 def template(name: str) -> str:
-    return (PROMPT_DIR / "templates" / f"{name}.md").read_text()
+    text = (PROMPT_DIR / "templates" / f"{name}.md").read_text()
+    return COMMENT.sub("", text)
 
 
 def system_prompt(role: str) -> str:
@@ -60,11 +67,63 @@ HANDBACK_TEMPLATE = template("handback")
 HANDBACK_REPAIR_TEMPLATE = template("handback_repair")
 # Conflict analysis over the lemma tree (cdcl.py).
 CONFLICT_TEMPLATE = template("conflict")
+# Learned clauses as prompts receive them, when the run learns clauses.
+CLAUSES_BLOCK = (
+    "\n<learned_clauses>\n{clauses}\n</learned_clauses>\n"
+    "Learned clauses hold for the whole run (refuted statements, routes that "
+    "failed and why, pitfalls of the encoding): do not state, propose or "
+    "retry what they exclude.\n"
+)
+CLAUSE_OUTPUT = (
+    "Record what this taught as learned clauses, one per <clause>fact"
+    "</clause> tag: a single fact of at most two sentences that holds beyond "
+    "these lemmas and that later sessions and decisions should not "
+    "rediscover, such as a declaration absent from Mathlib, the Mathlib "
+    "lemma that does a step, or why a route fails. A clause never holds a "
+    "proof.\n"
+)
+BACKJUMP_ACTION = (
+    "- Backjump, when the cause lies in the decision: <backjump>theorem "
+    "{decision_name} <binders> : <type> := by sorry</backjump>, the decision "
+    "restated so that the cause is removed (for example in standard Mathlib "
+    "vocabulary). All lemmas below `{decision_name}` are retracted; "
+    "`{decision_name}` is reopened with the new statement and handed to "
+    "solvers, and proofs of retracted lemmas are reused if their statements "
+    "return. The main proof and the proofs that use `{decision_name}` must "
+    "still compile with the new statement.\n"
+)
+NO_RETRY = (
+    "Retry is not available: the solvers have failed on this statement "
+    "after {retries} retries. Prove it yourself, split it, restate it or "
+    "refute it; with your Lean tools you can build a long proof in steps.\n\n"
+)
+NO_BACKJUMP = (
+    "Backjumping is off in this run: name a shared cause in the diagnosis "
+    "and the clauses, and choose local.\n"
+)
 
 # Solvers.
 SOLVER_TEMPLATE = template("solver")
 SOLVER_REPAIR_TEMPLATE = template("solver_repair")
 AIPROVER_LEMMA_TEMPLATE = template("aiprover_lemma")
+DIRECTION_TEMPLATE = template("direction")
+# Above the earlier lemmas in an AIProver job's fixed context.
+EARLIER_LEMMAS_HEADER = (
+    "-- Earlier lemmas of this proof. Each is proved elsewhere in the run;\n"
+    "-- its `sorry` stands for that proof. They are facts to cite by name,\n"
+    "-- not goals: do not prove, restate or re-derive them.\n\n"
+)
+# Ahead of the guidance of a job whose direction names earlier lemmas.
+CITED_LEMMAS = (
+    "Lemmas to cite (proved elsewhere in the run; apply them by name, do "
+    "not prove them again):\n```lean\n{statements}\n```\n\n"
+)
+# The informal proof an AIProver job receives with a captain's direction.
+DIRECTED_PROOF = (
+    "Proof of the lemma `{lemma_name}` (the captain's direction):\n"
+    "{direction}\n\n"
+    "The source's proof of the main result, for context:\n{informal_proof}"
+)
 
 # Review, report and informalization.
 FINAL_REVIEW_TEMPLATE = template("final_review")
