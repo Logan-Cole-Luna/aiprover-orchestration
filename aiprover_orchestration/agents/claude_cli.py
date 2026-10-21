@@ -92,6 +92,10 @@ before replying. Your final message is the reply, in the format the task
 requires."""
 # Spend limit of one call with tools, in USD.
 LEAN_TOOLS_BUDGET_USD = 10.0
+# Result subtypes and error text of a call stopped at its spend, turn or
+# reply-length limit.
+LIMIT_SUBTYPES = ("error_max_budget_usd", "error_max_turns")
+OUTPUT_LIMIT_MARKER = "output token maximum"
 
 
 def get_account_status(timeout: int = 30) -> dict | None:
@@ -168,6 +172,7 @@ def invoke_once(
     max_output_tokens: int = 0,
     tools: bool = False,
     max_budget_usd: float = LEAN_TOOLS_BUDGET_USD,
+    max_turns: int = 0,
 ) -> tuple[str, dict, str | None]:
     """One `claude -p` call. Returns (text, payload, error); error is None on success.
 
@@ -197,6 +202,8 @@ def invoke_once(
     if tools:
         cmd += ["--permission-mode", "dontAsk", "--max-budget-usd"]
         cmd += [str(max_budget_usd), "--allowedTools", *LEAN_TOOL_PERMISSIONS]
+        if max_turns:
+            cmd += ["--max-turns", str(max_turns)]
     env = dict(os.environ)
     if tools:
         env["PATH"] = f"{LEAN_CHECK_BIN}:{env.get('PATH', '')}"
@@ -242,6 +249,7 @@ def invoke_once(
         detail = str(
             payload.get("result")
             or payload.get("error")
+            or payload.get("subtype")
             or proc.stderr.strip()
             or "unknown"
         )[:500]
@@ -281,6 +289,7 @@ class ClaudeCLIAgent(Agent):
         max_output_tokens: int = 0,
         tools: bool = False,
         max_budget_usd: float = LEAN_TOOLS_BUDGET_USD,
+        max_turns: int = 0,
         **options,
     ):
         if get_account_status() is None:
@@ -299,6 +308,7 @@ class ClaudeCLIAgent(Agent):
         self.max_output_tokens = max_output_tokens
         self.tools = tools
         self.max_budget_usd = max_budget_usd
+        self.max_turns = max_turns
 
     def complete_once(self, prompt: str, system_prompt: str) -> Completion:
         text, payload, error = invoke_once(
@@ -310,6 +320,7 @@ class ClaudeCLIAgent(Agent):
             self.max_output_tokens,
             self.tools,
             self.max_budget_usd,
+            self.max_turns,
         )
         usage = {
             model_id: {
@@ -328,8 +339,13 @@ class ClaudeCLIAgent(Agent):
         if error is None:
             return Completion(text=text, usage=usage)
         refused = REFUSAL_MARKER in error
+        limited = (
+            payload.get("subtype") in LIMIT_SUBTYPES
+            or OUTPUT_LIMIT_MARKER in error
+        )
         retryable = (
             not refused
+            and not limited
             and not error.startswith("__fatal__")
             and _is_retryable(error)
         )
@@ -339,6 +355,7 @@ class ClaudeCLIAgent(Agent):
             retryable=retryable,
             retry_after_s=_usage_limit_wait_seconds(error),
             refused=refused,
+            limited=limited,
         )
 
 
