@@ -133,12 +133,13 @@ def declaration_names(lean_text: str, kinds=DECLARATION_KINDS) -> list[str]:
     ]
 
 
-def opened_namespaces(lean_text: str) -> list[str]:
-    """Namespaces opened by top-level `open` commands."""
+def open_commands(lean_text: str) -> list[str]:
+    """The arguments of top-level `open` commands, each kept whole and in
+    order (`scoped NumberField`, `Finset hiding sum`), without a trailing
+    `in`: their words are not separable namespaces."""
     lines = re.findall(r"^open\s+([^\n]+)$", strip_comments(lean_text), re.M)
-    return sorted(
-        {name for line in lines for name in line.removesuffix(" in").split()}
-    )
+    arguments = (line.strip().removesuffix(" in").strip() for line in lines)
+    return list(dict.fromkeys(argument for argument in arguments if argument))
 
 
 def file_scoped(preamble: str) -> str:

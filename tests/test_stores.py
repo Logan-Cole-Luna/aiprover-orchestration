@@ -76,6 +76,19 @@ class JobStoreTest(TemporaryDirectoryTest):
         self.assertFalse(worker.reject("r1", "admin"))
         self.assertEqual(self.store.get("r1")["state"], "queued")
 
+    def test_resume_only_ended(self):
+        worker = Worker(self.store)
+        for run_id, state in [("stopped", "cancelled"), ("running", "running")]:
+            self.store.add(job(run_id, state))
+        self.store.update("stopped", status="failed", ended=1.0)
+        self.assertTrue(worker.resume("stopped"))
+        self.assertFalse(worker.resume("running"))
+        stopped = self.store.get("stopped")
+        self.assertEqual(
+            (stopped["state"], stopped["status"], stopped["ended"]),
+            ("queued", None, None),
+        )
+
 
 class LibraryStoreTest(TemporaryDirectoryTest):
 

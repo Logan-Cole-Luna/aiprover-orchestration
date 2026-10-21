@@ -83,6 +83,8 @@ ROOT_FILES = {
     "result.jsonl": f"*{RESULT_ROW_SUFFIX}",
 }
 TERMINAL_STATES = ("finished", "cancelled", "rejected")
+# Statuses of a finished run that settle its theorem; such a run is final.
+CONCLUSIVE = ("proved", "disproved")
 
 LOGS_DIR.mkdir(exist_ok=True)
 logging.basicConfig(
@@ -426,8 +428,8 @@ def new_run_id(suffix: str) -> str:
     return run_id
 
 
-@app.post("/api/runs", status_code=201)
-def submit(body: Submission, user: str = Depends(current_user)) -> dict:
+def check_capacity(user: str) -> None:
+    """Refuse a new or resumed run beyond the per-user and queue limits."""
     open_jobs = [job for job in store.jobs(user) if job["state"] in OPEN_STATES]
     if AUTH_REQUIRED and len(open_jobs) >= MAX_OPEN_JOBS_PER_USER:
         raise HTTPException(
@@ -435,6 +437,11 @@ def submit(body: Submission, user: str = Depends(current_user)) -> dict:
         )
     if len(store.in_states("awaiting_approval", "queued")) >= MAX_QUEUED_JOBS:
         raise HTTPException(503, "queue is full")
+
+
+@app.post("/api/runs", status_code=201)
+def submit(body: Submission, user: str = Depends(current_user)) -> dict:
+    check_capacity(user)
 
     page = page_of(body.page)
     if body.gpu_group not in page.gpu_groups:
@@ -574,6 +581,15 @@ def list_libraries(user: str = Depends(current_user)) -> list[dict]:
     ]
 
 
+def resumable(job: dict) -> bool:
+    """A cancelled run, or a finished one that neither proved nor disproved
+    its theorem, with a trace to continue from."""
+    ended = job["state"] == "cancelled" or (
+        job["state"] == "finished" and job["status"] not in CONCLUSIVE
+    )
+    return ended and (RESULTS_DIR / job["run_id"] / "trace.json").exists()
+
+
 def describe(job: dict) -> dict:
     result_dir = RESULTS_DIR / job["run_id"]
     files = [name for name in RESULT_PAGES if (result_dir / name).exists()]
@@ -612,6 +628,7 @@ def describe(job: dict) -> dict:
         "agents": job_selection(job),
         "gpu_group": job.get("gpu_group") or vista.DEFAULT_GROUP,
         "hidden": bool(job.get("hidden")),
+        "resumable": resumable(job),
     }
 
 
@@ -642,6 +659,19 @@ def get_run(job: dict = Depends(owned_job)) -> dict:
 def cancel_run(job: dict = Depends(owned_job)) -> dict:
     if not worker.cancel(job["run_id"]):
         raise HTTPException(409, f"run is {job['state']}")
+    return describe(store.get(job["run_id"]))
+
+
+@app.post("/api/runs/{run_id}/resume")
+def resume_run(
+    job: dict = Depends(owned_job), user: str = Depends(current_user)
+) -> dict:
+    """Queue an ended run again; it continues from its last completed step."""
+    if not resumable(job):
+        raise HTTPException(409, f"run is {job['state']}; it cannot resume")
+    check_capacity(user)
+    if not worker.resume(job["run_id"]):
+        raise HTTPException(409, "run changed state; reload the list")
     return describe(store.get(job["run_id"]))
 
 

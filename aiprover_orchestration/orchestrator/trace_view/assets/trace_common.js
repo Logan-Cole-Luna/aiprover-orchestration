@@ -14,6 +14,16 @@ const plural = (n, word, many = word + "s") => `${n} ${n === 1 ? word : many}`;
 
 // Derived views of the trace --------------------------------------------------
 
+// Index of the step at which an AIProver job started: its
+// `aiprover_job_started` decision, or the job itself in traces without one.
+// A job is recorded when its last session ends, so the Lean check and
+// lemma_proved decision of a session verified earlier precede it.
+function jobStartIndex(job, all) {
+  const started = job.aiprover_job && all.find(s => s.event === "aiprover_job_started"
+    && s.aiprover_job === job.aiprover_job);
+  return started ? started.index : job.index;
+}
+
 // An AIProver job cut short by a lost model server or an interrupted run ends
 // with neither a proved lemma nor a recorded failure, or with every session
 // cancelled; the lemma is attempted again after the run resumes. Such a job and its Lean checks are left out, so the later job takes
@@ -23,8 +33,9 @@ function interruptedSteps(all) {
   const jobs = all.filter(s => s.kind === "model_call" && s.backend === "aiprover");
   for (const job of jobs) {
     const next = jobs.find(j => j.index > job.index && j.lemma === job.lemma);
-    const window = all.filter(s => s.index > job.index && (!next || s.index < next.index)
-      && s.lemma === job.lemma);
+    const start = jobStartIndex(job, all);
+    const window = all.filter(s => s.index > start
+      && (!next || s.index < jobStartIndex(next, all)) && s.lemma === job.lemma);
     // A job whose sessions were all cancelled or never reached the model was
     // stopped by the interruption too, even if its failure was recorded.
     const unrun = (job.samples || []).length > 0
@@ -49,7 +60,7 @@ const eventsOf = name => decisions.filter(d => d.event === name);
 // An AIProver call is one job of several samples, not one chat reply. Its Lean
 // checks and its lemma_proved decision follow it in the trace and carry the
 // sample index as `worker`, so they are attributed to the job by position: the
-// job of a step is the last job on the same lemma recorded before it.
+// job of a step is the last job on the same lemma started before it.
 const isJob = step => step?.kind === "model_call" && step.backend === "aiprover";
 const jobsByLemma = new Map();
 for (const call of calls.filter(isJob)) {
@@ -59,7 +70,8 @@ for (const call of calls.filter(isJob)) {
 const jobOfStep = new Map();
 for (const step of steps) {
   if (step.lemma == null || step.kind === "model_call") continue;
-  const job = (jobsByLemma.get(step.lemma) || []).filter(j => j.index < step.index).at(-1);
+  const job = (jobsByLemma.get(step.lemma) || [])
+    .filter(j => jobStartIndex(j, steps) < step.index).at(-1);
   if (job) jobOfStep.set(step.index, job);
 }
 const jobOf = step => (isJob(step) ? step : jobOfStep.get(step.index)) || null;
@@ -119,7 +131,7 @@ function sampleOutcome(job, k) {
   const check = checks.find(c => jobOf(c) === job && c.worker === k) || null;
   const win = lemmaWins.get(job.lemma);
   const kept = !!win && jobOf(win) === job && win.worker === k;
-  const late = !!win && !kept && job.index > win.index;
+  const late = !!win && !kept && jobStartIndex(job, steps) > win.index;
   const state = kept ? "win" : late ? "late" : check ? (check.ok ? "ok" : "fail") : "pending";
   const text = sample ? sampleText(sample) : job.error ? "job failed" : "no answer";
   const start = job.elapsed_seconds - (job.seconds || 0);
@@ -424,6 +436,8 @@ const EVENT_TEXT = {
   replan: "Sketch revision requested",
   lemma_reused: "Proved lemma reused",
   lemma_handback: "Lemma handed back to the captain",
+  early_revision: "Attempts used: lemma revised early",
+  lemma_direction: "Captain's direction for the lemma's jobs",
   conflict: "Conflict analysed (CDCL)",
   backjump: "Backjump: subtree retracted, decision restated",
   clause_learned: "Clause learned",

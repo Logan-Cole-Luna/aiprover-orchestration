@@ -5,7 +5,7 @@
   color-scheme: light;
   --bg: #f5efe4; --surface: #fffaf1; --surface-2: #ece4d4; --ink: #1d1a16;
   --muted: #74695a; --line: #ddd2bf; --accent: #c8401c; --accent-soft: #f7e0d4;
-  --captain: #c8401c; --auditor: #6a4c93; --solver: #2f7d6d; --lean: #b5831f;
+  --captain: #2b5797; --auditor: #6a4c93; --solver: #2f7d6d; --lean: #b5831f;
   --ok: #2f7d4d; --ok-soft: #e1efe2; --fail: #b3261e; --fail-soft: #f7dcd7;
   --warn: #a8660a; --warn-soft: #f6e6c8; --code-bg: #f9f4ea; --err-line: #f7dcd7;
   --kw: #c8401c; --cm: #8b7f6e; --str: #2f7d6d;
@@ -31,7 +31,7 @@ body { font-size: 15px; }
 .rnode .t1 { font-family: var(--font-display); font-size: 14px; font-weight: 600; }
 .rnode .t1.mono { font-family: var(--font-mono); font-size: 12px; }
 .rnode .t2 { font-family: var(--font-prose); font-size: 12px; }
-.rnode.root rect.body { fill: var(--accent-soft); }
+.rnode.root rect.body { fill: var(--surface-2); }
 .redge { opacity: 0.7; stroke-width: 1.8; stroke-linecap: round; }
 .rlabel { font-family: var(--font-prose); font-size: 12px; }
 .band { fill: var(--surface-2); opacity: 0.45; }

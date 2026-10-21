@@ -904,6 +904,17 @@ class Worker(threading.Thread):
         logger.info(f"{run_id} approved by {approver}")
         return True
 
+    def resume(self, run_id: str) -> bool:
+        """Queue an ended run again; the worker continues it from its trace
+        (`--resume`). False if it is not cancelled or finished."""
+        for state in ("cancelled", "finished"):
+            if self.store.transition(
+                run_id, state, state="queued", status=None, ended=None, pid=None
+            ):
+                logger.info(f"{run_id} queued to resume")
+                return True
+        return False
+
     def reject(self, run_id: str, approver: str) -> bool:
         if not self.store.transition(
             run_id,

@@ -498,6 +498,10 @@ function actions(run) {
   if (["awaiting_approval", "queued", "running"].includes(run.state)) {
     buttons.push(`<button class="plain" data-cancel="${run.run_id}">Cancel</button>`);
   }
+  // A cancelled or unproved run continues from its trace.
+  if (run.resumable) {
+    buttons.push(`<button class="plain" data-resume="${run.run_id}">Resume</button>`);
+  }
   // Ended runs can be hidden from the list (nothing is deleted) and shown again.
   if (["finished", "cancelled", "rejected"].includes(run.state)) {
     buttons.push(run.hidden
@@ -567,7 +571,7 @@ function openRun(runId) {
 }
 
 $("runs").addEventListener("click", async event => {
-  const {open, cancel, approve, reject, hide, unhide} = event.target.dataset;
+  const {open, cancel, resume, approve, reject, hide, unhide} = event.target.dataset;
   if (hide || unhide) {
     await api(`/api/runs/${hide || unhide}/${hide ? "hide" : "unhide"}`, {method: "POST"})
       .catch(e => alert(e.message));
@@ -581,6 +585,10 @@ $("runs").addEventListener("click", async event => {
   if (reject && confirm(`Reject ${reject}?`)) {
     await api(`/api/runs/${reject}/reject`, {method: "POST"}).catch(e => alert(e.message));
     refreshRuns();
+  }
+  if (resume && confirm(`Resume ${resume}?`)) {
+    await api(`/api/runs/${resume}/resume`, {method: "POST"}).catch(e => alert(e.message));
+    refreshRuns(); refreshHealth();
   }
   if (cancel && confirm(`Cancel ${cancel}?`)) {
     await api(`/api/runs/${cancel}`, {method: "DELETE"}).catch(e => alert(e.message));

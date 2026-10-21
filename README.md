@@ -138,7 +138,8 @@ connection until Ctrl+C. When 8443 is in use locally, forward another port
 (`-L 8450:localhost:8443`, then http://localhost:8450). The page submits an
 informal statement and proof, or a problem of the open and OpenAI math
 datasets, and lists the proved OpenAI problems and the runs submitted from
-it with their Lean files, reports and traces.
+it with their Lean files, reports and traces. A cancelled or unproved run
+has a Resume button that continues it from its trace.
 
 ## 4. Layout
 

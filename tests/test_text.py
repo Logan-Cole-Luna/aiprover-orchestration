@@ -8,7 +8,10 @@ from aiprover_orchestration.lean.text import (
     declarations,
     strip_comments,
 )
-from aiprover_orchestration.orchestrator.extraction import prefixed_helpers
+from aiprover_orchestration.orchestrator.extraction import (
+    prefixed_helpers,
+    scope,
+)
 from aiprover_orchestration.orchestrator.reports.report import (
     ReportText,
     escape,
@@ -102,6 +105,18 @@ class HelperRenamingTest(unittest.TestCase):
         self.assertIn("theorem Foo.bar", helpers)
         self.assertEqual(proof, "exact lem_aux")
         self.assertEqual(renamed, ["lem_aux"])
+
+
+class ScopeTest(unittest.TestCase):
+
+    def test_open_commands_kept_whole(self):
+        answer = (
+            "import Mathlib\nopen scoped NumberField\nopen Finset in\n"
+            "open Finset\ntheorem t : True := trivial\n"
+        )
+        self.assertEqual(
+            scope(answer), "open scoped NumberField in\nopen Finset in\n"
+        )
 
 
 class LatexTest(unittest.TestCase):
