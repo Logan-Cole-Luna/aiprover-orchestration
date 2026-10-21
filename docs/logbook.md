@@ -210,6 +210,11 @@ Results
 
 ## Decisions
 
+- The repository stores no file in Git LFS, and run records in git are
+  limited to Lean files, summaries, reports and informalizations (LaTeX
+  sources and PDFs): traces (`trace.json.gz`, `trace.html`), server
+  metrics (`metrics.jsonl`) and LaTeX build files stay out, keeping every
+  file under 2 MB.
 - The attempt budget (`aiprover_attempts_per_lemma`) counts failed
   attempts per proposition (`structures.statement_key`, the statement
   without its name) over the whole run, live and on resume; a replan may
