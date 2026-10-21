@@ -210,6 +210,15 @@ Results
 
 ## Decisions
 
+- The captain's hand-back output limit
+  (`configs/orchestrator/captain_phases.json`) is 64000 tokens: a
+  hand-back on a lemma of 10k characters (004,
+  `h10q_tests_construction_system_main`) exceeds 32000.
+- The repository stores no file in Git LFS, and run records in git are
+  limited to Lean files, summaries, reports and informalizations (LaTeX
+  sources and PDFs): traces (`trace.json.gz`, `trace.html`), server
+  metrics (`metrics.jsonl`) and LaTeX build files stay out, keeping every
+  file under 2 MB.
 - The attempt budget (`aiprover_attempts_per_lemma`) counts failed
   attempts per proposition (`structures.statement_key`, the statement
   without its name) over the whole run, live and on resume; a replan may
@@ -331,6 +340,44 @@ Results
 
 ## Done
 
+- Hand-back prompt (2026-10-21): a statement in an encoding with little
+  Mathlib API (germs over `Filter.hyperfilter`) is to be split or restated
+  as `Filter.Eventually` statements about ordinary functions, connected to
+  germs by `Filter.Germ.coe_eq`, `liftPred_coe` and `liftRel_coe`. 004
+  restarted at 16:08 to load it; its four jobs resumed their sessions.
+
+- Located Lean errors and condensed prompts (2026-10-21): a Lean error
+  returned to a model now names the enclosing declaration and quotes the
+  line with the column marked (`CheckResult.source`, set by `check_text`),
+  instead of a position in an assembled file the model never sees; the
+  captain's split of `h10q_tests_construction_system_main` in 004 failed
+  twice on one extra parenthesis reported as `2103:127`. New option
+  `aiprover_condensed_prompt` (off by default): a directed job omits the
+  source's proof and keeps only the earlier lemmas its direction names; in
+  004 the job prompt of `_rep` was 131,000 characters (51,000 context,
+  48,000 source proof). Enabled for 004, restarted at 15:42; its four
+  running jobs resumed their sessions with the original context.
+
+- 004, manual application of a captain split (2026-10-21 14:32): the
+  hand-back on `h10q_tests_construction_system_main` split it into five
+  lemmas (`_root`, `_rec`, `_comb3`, `_point`, `_rep`) with a 68-line proof
+  from them; both replies were rejected for one extra closing parenthesis at
+  the end of `_rep`. With that parenthesis removed the sketch compiled
+  (`temp/manual_split/check.lean`). The run was stopped, the split and the
+  proof appended to the trace as a `lemma_handback` (with a `manual_fix`
+  note) and a `lemma_proved` decision (backup `temp/rewind_004_split/`),
+  and the run resumed with the five lemmas as AIProver jobs.
+- Hand-back effort limits (2026-10-21): hand-back calls are capped at 3 USD
+  and 60 turns (`configs/orchestrator/captain_phases*.json`; 95% of 156
+  earlier hand-backs, mostly short fixes of the solvers' code, cost under
+  1.63 USD). A call stopped at its spend, turn or reply-length limit raises
+  `AgentLimitReached`, is billed and not retried, and is followed by one
+  call without the direct-proof action, so the lemma is split, restated,
+  retried or refuted. The prompt reserves a direct proof for a short fix or
+  a routine argument. In 004, the
+  hand-backs of `h10q_tests_construction_system_main` (10,169 characters)
+  each ran for up to 31 minutes and 195,000 output tokens and exhausted the
+  Claude session limit.
 - Citing earlier lemmas (2026-10-21, `aiprover_cite_lemmas`, on by
   default): the earlier lemmas in an AIProver job's fixed context sit under
   a header stating that they are proved elsewhere and are facts to cite,

@@ -95,7 +95,14 @@ BACKJUMP_ACTION = (
 NO_RETRY = (
     "Retry is not available: the solvers have failed on this statement "
     "after {retries} retries. Prove it yourself, split it, restate it or "
-    "refute it; with your Lean tools you can build a long proof in steps.\n\n"
+    "refute it.\n\n"
+)
+# After a hand-back reply that stopped at its spend or turn limit.
+NO_DIRECT_PROOF = (
+    "Your previous reply stopped at the hand-back's spend or turn limit, so "
+    "proving `{lemma_name}` yourself (action 1) is not available. Split it "
+    "into lemmas the solvers can prove, with a short proof of `{lemma_name}` "
+    "from them, or restate, retry or refute it.\n\n"
 )
 NO_BACKJUMP = (
     "Backjumping is off in this run: name a shared cause in the diagnosis "
@@ -123,6 +130,11 @@ DIRECTED_PROOF = (
     "Proof of the lemma `{lemma_name}` (the captain's direction):\n"
     "{direction}\n\n"
     "The source's proof of the main result, for context:\n{informal_proof}"
+)
+# The same without the source's proof (`aiprover_condensed_prompt`).
+DIRECTION_ONLY = (
+    "Proof of the lemma `{lemma_name}` (the captain's direction):\n"
+    "{direction}\n"
 )
 
 # Review, report and informalization.

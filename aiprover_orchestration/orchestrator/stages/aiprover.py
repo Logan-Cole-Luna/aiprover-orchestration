@@ -661,6 +661,10 @@ class AIProverStage:
             )
         if not direction:
             return source
+        if self.config.aiprover_condensed_prompt:
+            return prompts.DIRECTION_ONLY.format(
+                lemma_name=lemma.name, direction=direction
+            )
         return prompts.DIRECTED_PROOF.format(
             lemma_name=lemma.name, direction=direction, informal_proof=source
         )
@@ -687,17 +691,20 @@ class AIProverStage:
             logger.warning(f"{lemma.name}: no direction: {error}")
             return None
 
+    def _job_context(self, phase: Phase, earlier: list[Lemma]):
+        """The stubs of `earlier` and the fixed context of a job that
+        receives them."""
+        stubs = stub_listing(earlier)
+        if stubs and self.config.aiprover_cite_lemmas:
+            stubs = prompts.EARLIER_LEMMAS_HEADER + stubs
+        return stubs, self._standalone(phase.form, stubs).rstrip() + "\n"
+
     def _cited_lemmas(self, earlier: list[Lemma], proof_text: str) -> str:
         """The earlier lemmas a job's direction names, with their
         statements, as facts to cite; empty without any."""
         if not self.config.aiprover_cite_lemmas:
             return ""
-        cited = [
-            other
-            for other in earlier
-            if re.search(rf"(?<![\w.']){re.escape(other.name)}(?![\w.'])",
-                         proof_text)
-        ]
+        cited = named_lemmas(earlier, proof_text)
         if not cited:
             return ""
         return prompts.CITED_LEMMAS.format(
@@ -737,18 +744,27 @@ class AIProverStage:
                 if self.config.aiprover_relevant_context
                 else lemmas[: lemmas.index(lemma)]
             )
-            stubs = stub_listing(earlier)
             known = {other.name for other in lemmas}
             mathlib = phase.mathlib.text(known | phase.run_names)
-        if stubs and self.config.aiprover_cite_lemmas:
-            stubs = prompts.EARLIER_LEMMAS_HEADER + stubs
-        context = self._standalone(phase.form, stubs).rstrip() + "\n"
-        fixed_names = {name for _, name, _ in split_declarations(context)}
         key = (lemma.name, normalize(lemma.statement))
         # A job of this statement cut off by a lost server or an
         # interruption continues its sessions instead of starting new ones.
         with phase.lock:
             resume_job = self.state.resumable_jobs.pop(key, None)
+        stubs, context = self._job_context(phase, earlier)
+        # The captain writes a direction from the whole context.
+        proof_text = self._directed_proof(phase, lemma, context, key)
+        with phase.lock:
+            directed = bool(phase.directions.get(key))
+        # A resumed job keeps the context its sessions started with.
+        if (
+            directed
+            and self.config.aiprover_condensed_prompt
+            and not resume_job
+        ):
+            earlier = named_lemmas(earlier, proof_text)
+            stubs, context = self._job_context(phase, earlier)
+        fixed_names = {name for _, name, _ in split_declarations(context)}
         logger.info(
             f"AIProver job on {lemma.name}: "
             + (
@@ -784,9 +800,7 @@ class AIProverStage:
                 lemma_name=lemma.name,
                 informal_statement=self.row["informal_statement"],
             ),
-            proof_text=(proof_text := self._directed_proof(
-                phase, lemma, context, key
-            )),
+            proof_text=proof_text,
             context=context,
             statement=f"{lemma.statement} := by\n  sorry\n",
             samples=samples,
@@ -1039,3 +1053,12 @@ class AIProverStage:
             f"helpers {names} collide with sketch lemmas or the helpers of "
             f"other lemmas"
         )
+
+
+def named_lemmas(lemmas: list[Lemma], text: str) -> list[Lemma]:
+    """The lemmas whose names occur in `text` as whole names."""
+    return [
+        lemma
+        for lemma in lemmas
+        if re.search(rf"(?<![\w.']){re.escape(lemma.name)}(?![\w.'])", text)
+    ]

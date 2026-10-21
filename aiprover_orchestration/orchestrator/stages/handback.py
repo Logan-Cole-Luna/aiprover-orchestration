@@ -2,7 +2,9 @@
 
 A lemma the solvers keep failing on is handed back to the captain
 (`_handback`), who proves, splits, restates or refutes it, or asks for a
-retry. Conflict-driven learning (cdcl.py): when several leaves under one
+retry. A hand-back whose reply stopped at its spend or turn limit may not
+prove the lemma directly: it is split, restated, retried or refuted, so the
+solvers take the parts. Conflict-driven learning (cdcl.py): when several leaves under one
 decision are stuck, the captain analyses the conflict (`_conflict`). What it
 learns is recorded as clauses that every later job receives, and when the
 cause lies in the decision it backjumps: the subtree is retracted, its
@@ -20,7 +22,7 @@ Related published work (tags defined in docs/lit_review/lit_review.md §6):
 import logging
 import re
 
-from ...agents.base import AgentCallError
+from ...agents.base import AgentCallError, AgentLimitReached
 from ...lean.checker import forbidden_problems
 from ...lean.text import drop_imports, strip_leading_by
 from .. import cdcl, knowledge, prompts
@@ -42,17 +44,29 @@ logger = logging.getLogger(__name__)
 
 class HandbackStage:
 
-    def _captain_repairs(self, prompt: str, phase: str, apply) -> list[str]:
+    def _captain_repairs(
+        self, prompt: str, phase: str, apply, on_limit=None
+    ) -> list[str]:
         """Ask the captain, and once more with the problems of a rejected
         reply (HANDBACK_REPAIR_TEMPLATE) while the budget allows.
         `apply(reply)` applies a reply and returns its problems, empty when
-        it was accepted. Returns the problems of the last reply, empty if
-        one was accepted."""
+        it was accepted. A reply stopped at the call's spend or turn limit
+        is rejected; `on_limit()` returns the note for the second call, and
+        without it there is none. Returns the problems of the last reply,
+        empty if one was accepted."""
         feedback, problems = "", ["no reply"]
         for repair in range(2):
             if repair and self.agents.claude_budget_left() < 1:
                 break
-            reply = self._captain(prompt + feedback, phase=phase)
+            try:
+                reply = self._captain(prompt + feedback, phase=phase)
+            except AgentLimitReached as error:
+                problems = [f"the reply stopped at its limit: {error}"[:500]]
+                logger.info(f"{phase}: {problems[0][:200]}")
+                if on_limit is None:
+                    break
+                feedback = on_limit()
+                continue
             problems = apply(reply)
             if not problems:
                 return []
@@ -114,6 +128,8 @@ class HandbackStage:
             names = {other.name for other in sketch.lemmas}
             other_helpers = proved_helper_names(sketch.lemmas, lemma)
         retries = self._retries_spent(phase, lemma)
+        # Cleared when a reply stops at the hand-back's spend or turn limit.
+        direct_proof = True
         prompt = prompts.HANDBACK_TEMPLATE.format(
             attempts=lemma.attempts,
             lemma_name=lemma.name,
@@ -210,6 +226,11 @@ class HandbackStage:
             diagnosis: str, helpers: str, proof: str, split_block: str
         ) -> list[str]:
             """The captain's proof, from new lemmas if it splits."""
+            if not split_block and not direct_proof:
+                return [
+                    f"proving `{lemma.name}` directly is not available; "
+                    f"split, restate, retry or refute it"
+                ]
             new_lemmas = parse_lemmas(split_block) if split_block else []
             problems = [
                 f"new lemma `{other.name}` reuses an existing name"
@@ -306,8 +327,15 @@ class HandbackStage:
                 return []
             return ["the reply names no action"]
 
+        def on_limit() -> str:
+            nonlocal direct_proof
+            direct_proof = False
+            return "\n\n" + prompts.NO_DIRECT_PROOF.format(
+                lemma_name=lemma.name
+            )
+
         problems = self._captain_repairs(
-            prompt, f"handback/{lemma.name}", apply
+            prompt, f"handback/{lemma.name}", apply, on_limit
         )
         if problems:
             record("rejected", "", problems=problems[:5])
