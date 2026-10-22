@@ -340,6 +340,21 @@ Results
 
 ## Done
 
+- Resumed jobs under condensed prompts (2026-10-22): a job interrupted by a
+  restart resumes with whichever context it started with, condensed or full
+  (`AIProverAgent.job_matches`). Before, a resumed job always received the
+  full context, so a job started with the condensed one was resubmitted
+  from scratch on resume (two jobs of a G-Simple run at its 07:26 restart).
+
+- Informalization of disproved runs (2026-10-21): a run whose claim is
+  refuted now also writes the informal document, from its refutation file
+  (`templates/informal_refutation.md`): the claim as a remark, its negation
+  as the main theorem with its proof, and the refutation's helper theorems
+  as lemmas; the reviewer check and the correspondence table are as for a
+  proof. A finished disproved run is informalized with
+  `python3 -m aiprover_orchestration.orchestrator.reports.informal
+  results/<run_id>`.
+
 - Hand-back prompt (2026-10-21): a statement in an encoding with little
   Mathlib API (germs over `Filter.hyperfilter`) is to be split or restated
   as `Filter.Eventually` statements about ordinary functions, connected to

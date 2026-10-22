@@ -310,7 +310,7 @@ class AIProverAgent(Agent):
         except subprocess.TimeoutExpired:
             return False
 
-    def _job_matches(self, job: str, context: str, statement: str) -> bool:
+    def job_matches(self, job: str, context: str, statement: str) -> bool:
         """True if job `job` was submitted with this context and statement."""
         job_dir = self.work_root / "jobs" / job
         return all(
@@ -431,7 +431,7 @@ class AIProverAgent(Agent):
                 "submitting a new job."
             )
             resume_job = None
-        if resume_job and not self._job_matches(
+        if resume_job and not self.job_matches(
             resume_job, context, statement
         ):
             logger.warning(

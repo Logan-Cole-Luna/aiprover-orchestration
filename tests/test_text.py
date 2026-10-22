@@ -12,6 +12,10 @@ from aiprover_orchestration.orchestrator.extraction import (
     prefixed_helpers,
     scope,
 )
+from aiprover_orchestration.orchestrator.reports.informal import (
+    refutation_parts,
+    summary_rows,
+)
 from aiprover_orchestration.orchestrator.reports.report import (
     ReportText,
     escape,
@@ -111,6 +115,23 @@ class ErrorLocationTest(unittest.TestCase):
         error = "/tmp/x.lean:5:9: error: unexpected token ')'"
         result = CheckResult(ok=False, output="", errors=[error])
         self.assertEqual(result.error_report(), error)
+
+
+class RefutationInformalTest(unittest.TestCase):
+
+    def test_negation_and_helper_lemmas(self):
+        source = (
+            "theorem setting_fact : True := trivial\n\n"
+            "theorem solution : False := by sorry\n\n"
+            "theorem solution_ne : True := trivial\n\n"
+            "theorem solution_refuted : ¬ False := id\n"
+        )
+        self.assertEqual(
+            refutation_parts(source),
+            ("solution_refuted", [("solution_ne", True)]),
+        )
+        rows = dict(summary_rows({"uuid": "u"}, "run", [], False, "w", True))
+        self.assertTrue(rows["Status"].startswith("claim disproved"))
 
 
 class HelperRenamingTest(unittest.TestCase):
