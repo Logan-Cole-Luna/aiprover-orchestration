@@ -18,6 +18,7 @@ lemmas. A role absent from a stored selection keeps the served config's model.
 """
 
 import json
+import os
 import re
 from pathlib import Path
 
@@ -212,8 +213,9 @@ HARNESS_CONFIGS = {"dgx": GPU_GROUPS["dgx"].solver_config}
 # DGX completes a median 11 turns per hour against 76 on Vista.
 SOLVER_TIMEOUTS = {"dgx": 10800}
 # Sessions per run on the DGX: 32 concurrent requests, the load its owners
-# asked to test.
-VERSION_SETTINGS = {"dgx": {"aiprover_session_slots": 32}}
+# asked to test, within a per-user server's share of the machine's rollouts.
+DGX_SLOTS = min(32, int(os.environ.get("AIPROVER_MAX_PARALLEL") or 32))
+VERSION_SETTINGS = {"dgx": {"aiprover_session_slots": DGX_SLOTS}}
 
 
 def checkpoint_of(selection: dict) -> str | None:

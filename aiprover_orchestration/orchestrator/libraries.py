@@ -30,13 +30,12 @@ from pathlib import Path
 
 from ..lean.checker import LeanChecker
 from ..lean.text import declaration_names, drop_imports
-from ..paths import ROOT, TEMP_DIR, WORKSPACE
+from ..paths import TEMP_DIR, WORKSPACE, locate
 from .config import FILE_HEADER
 
 
 def resolve(path: str) -> Path:
-    candidate = Path(path)
-    return candidate if candidate.is_absolute() else ROOT / candidate
+    return locate(path)
 
 
 def load(path: str) -> str:

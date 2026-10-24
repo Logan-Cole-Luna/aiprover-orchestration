@@ -18,6 +18,11 @@ bearer token from `configs/server/tokens.json` (`{"<token>": "<user
 name>"}`), sent as `Authorization: Bearer <token>` or as the `token` cookie
 that `POST /api/login` sets for the web page, and a submission awaits
 approval by a token holder.
+
+Claude roles run on the `claude` login of the account that runs the server.
+The user page therefore accepts them only on a per-user server
+(scripts/user/aiprover-server, `QUERY_SERVER_PER_USER=on`), where that account
+is the submitting user's own.
 """
 
 import asyncio
@@ -45,10 +50,10 @@ from ..orchestrator.config import FILE_HEADER
 from ..orchestrator.reports.informal import RESULT_ROW_SUFFIX
 from ..paths import (
     CONFIG_DIR,
+    HOME_DIR,
     LIBRARIES_DIR,
     LOGS_DIR,
     RESULTS_DIR,
-    ROOT,
     TEMP_DIR,
 )
 
@@ -66,6 +71,7 @@ from .vista import control_master_running
 
 TOKENS = CONFIG_DIR / "server" / "tokens.json"
 AUTH_REQUIRED = os.environ.get("QUERY_SERVER_AUTH", "off") == "on"
+PER_USER = os.environ.get("QUERY_SERVER_PER_USER", "off") == "on"
 GUEST = "guest"
 INDEX_PAGE = Path(__file__).parent / "static" / "index.html"
 MAX_OPEN_JOBS_PER_USER = 3
@@ -218,14 +224,16 @@ def book_label(statement: str) -> str:
 @dataclass(frozen=True)
 class Page:
     """What a page offers: GPU groups (the first is the default), AIProver
-    versions and datasets of data/ (None: all), default model choices, and
-    whether its run list holds only the runs submitted from it."""
+    versions and datasets of data/ (None: all), default model choices,
+    whether its run list holds only the runs submitted from it, and whether
+    its runs may use Claude roles on the server's login."""
 
     gpu_groups: tuple[str, ...]
     versions: tuple[str, ...] | None = None
     datasets: tuple[str, ...] | None = None
     defaults: dict = field(default_factory=dict)
     own_runs: bool = False
+    claude: bool = True
 
 
 PAGES = {
@@ -240,6 +248,7 @@ PAGES = {
             "subagent": {"provider": "aiprover", "model": "dgx", "effort": ""}
         },
         own_runs=True,
+        claude=PER_USER,
     ),
 }
 
@@ -460,6 +469,14 @@ def submit(body: Submission, user: str = Depends(current_user)) -> dict:
         )
     except ValueError as error:
         raise HTTPException(400, str(error))
+    if not page.claude and any(
+        choice["provider"] == "claude" for choice in selection.values()
+    ):
+        raise HTTPException(
+            400,
+            "Claude roles run on your own Claude login: start your own server "
+            "with scripts/user/aiprover-server (docs/server.md)",
+        )
     if page.versions is not None and not (
         models.checkpoint_names(selection) <= set(page.versions)
     ):
@@ -559,7 +576,7 @@ def library_options(body: Submission, run_id: str) -> dict:
         path = LIBRARY_DIR / "uploads" / f"{run_id}.lean"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(body.library_text)
-        options["library"] = str(path.relative_to(ROOT))
+        options["library"] = str(path.relative_to(HOME_DIR))
     elif body.new_library:
         # A new library starts empty; the run extends it with its result.
         name = body.new_library.removesuffix(".lean") + ".lean"
@@ -581,7 +598,7 @@ def library_options(body: Submission, run_id: str) -> dict:
         options["after"] = body.after
     if body.new_library:
         # Written once the submission is valid.
-        (ROOT / options["library"]).write_text(FILE_HEADER)
+        libraries.resolve(options["library"]).write_text(FILE_HEADER)
     return options
 
 

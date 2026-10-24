@@ -53,8 +53,11 @@ RETRYABLE_ERROR = re.compile(
 )
 
 
-# Neutral working directory for CLI subprocesses (no CLAUDE.md above it).
-CLI_WORKDIR = Path(tempfile.gettempdir()) / "aiprover_orchestration_cli_cwd"
+# Neutral working directory for CLI subprocesses (no CLAUDE.md above it),
+# one per account on a shared host.
+CLI_WORKDIR = (
+    Path(tempfile.gettempdir()) / f"aiprover_orchestration_cli_cwd_{os.getuid()}"
+)
 
 # Lean tools: the built-in tools offered, the permissions granted (all
 # others are denied without a prompt), and the scratch projects, one per call.

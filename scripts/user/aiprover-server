@@ -1,0 +1,182 @@
+#!/bin/sh
+# aiprover-server: a query server of your own account, whose runs use your
+# own Claude login (`claude auth login`, once).
+#
+#   scripts/user/aiprover-server [start]   sign in if needed; start the server and its reasoning proxy
+#   scripts/user/aiprover-server stop      stop both (runs in progress continue and are adopted on start)
+#   scripts/user/aiprover-server status
+#   scripts/user/aiprover-server ssh       the tunnel command for your own machine
+#
+#   --allow-owner   run as the owner of the checkout (who otherwise runs the systemd service)
+#
+# Environment:
+#   AIPROVER_ORCHESTRATION_HOME  runtime state (default ~/.local/share/aiprover_orchestration)
+#   AIPROVER_MAX_PARALLEL        this server's AIProver rollouts on the DGX (default 12 of 48)
+#   AIPROVER_PYTHON              interpreter (default the owner's lean_env)
+#
+# TEMPORARY: other accounts read this checkout and its toolchain from the owner's home,
+# opened for development (docs/server.md, "Per-user server"). The access is closed once a
+# read-only deployment exists at /opt/aiprover_orchestration.
+set -eu
+
+ROOT=$(cd "$(dirname "$0")/../.." && pwd -P)
+OWNER=$(stat -c %U "$ROOT")
+OWNER_HOME=$(getent passwd "$OWNER" | cut -d: -f6)
+HOME_DIR=${AIPROVER_ORCHESTRATION_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/aiprover_orchestration}
+PYTHON=${AIPROVER_PYTHON:-$OWNER_HOME/lean_env/bin/python3}
+MAX_PARALLEL=${AIPROVER_MAX_PARALLEL:-12}
+ELAN_HOME=$OWNER_HOME/.elan
+DGX_URL="http://cic-dgx-01.tacc.cloud:8040"
+DGX_MODEL="aip-leanstral"
+VM_ADDRESS="129.114.35.157"
+STATE=$HOME_DIR/state
+PIDS=$STATE/pids
+PORTS=$STATE/ports
+
+say() { printf '%s\n' "$*"; }
+die() {
+  printf 'aiprover-server: %s\n' "$*" >&2
+  exit 1
+}
+
+running() { [ -f "$PIDS/$1" ] && kill -0 "$(cat "$PIDS/$1")" 2>/dev/null; }
+
+port_free() {
+  "$PYTHON" -c 'import socket, sys; socket.socket().bind(("127.0.0.1", int(sys.argv[1])))' "$1" 2>/dev/null
+}
+
+free_port() {
+  "$PYTHON" -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])'
+}
+
+# Ports of the last start, kept while free; new ones otherwise.
+choose_ports() {
+  SERVER_PORT="" PROXY_PORT=""
+  [ -f "$PORTS" ] && . "$PORTS"
+  running server || { [ -n "$SERVER_PORT" ] && port_free "$SERVER_PORT"; } || SERVER_PORT=$(free_port)
+  running proxy || { [ -n "$PROXY_PORT" ] && port_free "$PROXY_PORT"; } || PROXY_PORT=$(free_port)
+  printf 'SERVER_PORT=%s\nPROXY_PORT=%s\n' "$SERVER_PORT" "$PROXY_PORT" >"$PORTS"
+}
+
+logged_in() {
+  claude auth status --json 2>/dev/null \
+    | "$PYTHON" -c 'import json, sys; sys.exit(not json.load(sys.stdin).get("loggedIn"))'
+}
+
+# The unmodified `claude` binary, signed in to the user's own account. Without
+# an installation of the user's own, the owner's binary is used (no updates).
+sign_in() {
+  if ! command -v claude >/dev/null 2>&1; then
+    [ -x "$OWNER_HOME/.local/bin/claude" ] || die "claude not found; install it: curl -fsSL https://claude.ai/install.sh | bash"
+    ln -sf "$OWNER_HOME/.local/bin/claude" "$HOME_DIR/bin/claude"
+    export DISABLE_AUTOUPDATER=1
+    say "Using the shared claude binary; to install your own: curl -fsSL https://claude.ai/install.sh | bash"
+  fi
+  logged_in && return
+  say "Sign in to Claude with your own account (once; the login is kept in ~/.claude)."
+  claude auth login
+  logged_in || die "not signed in to Claude"
+}
+
+# Runtime state: a Lake project on the shared Mathlib packages, an empty
+# library folder, and the DGX harness configuration of this server's proxy.
+prepare() {
+  mkdir -p "$HOME_DIR" && chmod 700 "$HOME_DIR"
+  mkdir -p "$PIDS" "$HOME_DIR/bin" "$HOME_DIR/results" "$HOME_DIR/logs" \
+    "$HOME_DIR/temp" "$HOME_DIR/libraries" "$HOME_DIR/aiprover/work"
+  workspace=$HOME_DIR/orchestration_workspace
+  if [ ! -d "$workspace" ]; then
+    mkdir -p "$workspace/.lake" "$workspace/Definitions" "$workspace/Theorems" "$workspace/Solutions"
+    for name in lakefile.lean lake-manifest.json lean-toolchain; do
+      cp "$ROOT/orchestration_workspace/$name" "$workspace/"
+    done
+    ln -s "$ROOT/orchestration_workspace/.lake/packages" "$workspace/.lake/packages"
+  fi
+  sed -e "s|\"~/workspace/aiprover_orchestration/|\"$ROOT/|" \
+    -e "s|\"~/|\"$OWNER_HOME/|" \
+    -e "s|^work_root = .*|work_root = \"$HOME_DIR/aiprover/work\"|" \
+    -e "s|^api_base = .*|api_base = \"http://127.0.0.1:$PROXY_PORT/v1\"|" \
+    -e "s|^max_parallel = .*|max_parallel = $MAX_PARALLEL|" \
+    "$ROOT/configs/aiprover/dgx.toml" >"$STATE/aiprover_dgx.toml"
+}
+
+launch() {
+  name=$1
+  shift
+  running "$name" && return
+  setsid nohup "$@" >>"$HOME_DIR/logs/$name.log" 2>&1 </dev/null &
+  echo $! >"$PIDS/$name"
+}
+
+tunnel() {
+  . "$PORTS"
+  say "On your own machine:"
+  say "  ssh -N -L $SERVER_PORT:127.0.0.1:$SERVER_PORT $(id -un)@$VM_ADDRESS"
+  say "then open http://localhost:$SERVER_PORT/user"
+}
+
+start() {
+  mkdir -p "$HOME_DIR/bin" "$PIDS"
+  export PATH="$HOME_DIR/bin:$(dirname "$PYTHON"):$ELAN_HOME/bin:$PATH"
+  unset ANTHROPIC_API_KEY
+  sign_in
+  choose_ports
+  prepare
+  export AIPROVER_ORCHESTRATION_HOME="$HOME_DIR" \
+    AIPROVER_DGX_CONFIG="$STATE/aiprover_dgx.toml" \
+    AIPROVER_DGX_PROXY_PORT="$PROXY_PORT" \
+    AIPROVER_MAX_PARALLEL="$MAX_PARALLEL" \
+    CLAUDE_AUTH=subscription \
+    QUERY_SERVER_PER_USER=on \
+    QUERY_SERVER_AUTH=off \
+    ELAN_HOME \
+    PYTHONPATH="$ROOT"
+  cd "$ROOT"
+  launch proxy "$PYTHON" -m aiprover_orchestration.server.reasoning_proxy \
+    --listen "$PROXY_PORT" --upstream "$DGX_URL" --model "$DGX_MODEL" --max-reply-tokens 16384
+  launch server "$PYTHON" -m uvicorn aiprover_orchestration.server.app:app \
+    --host 127.0.0.1 --port "$SERVER_PORT" --workers 1
+  for _ in $(seq 60); do
+    "$PYTHON" -c 'import sys, urllib.request; urllib.request.urlopen(sys.argv[1], timeout=2)' \
+      "http://127.0.0.1:$SERVER_PORT/user" 2>/dev/null && break
+    running server || die "the server stopped; see $HOME_DIR/logs/server.log"
+    sleep 1
+  done
+  say "Server on 127.0.0.1:$SERVER_PORT, reasoning proxy on 127.0.0.1:$PROXY_PORT; state in $HOME_DIR"
+  tunnel
+}
+
+stop() {
+  for name in server proxy; do
+    running "$name" && kill "$(cat "$PIDS/$name")" && say "stopped $name"
+    rm -f "$PIDS/$name"
+  done
+}
+
+status() {
+  [ -f "$PORTS" ] && . "$PORTS"
+  for name in server proxy; do
+    if running "$name"; then say "$name: running (pid $(cat "$PIDS/$name"))"; else say "$name: stopped"; fi
+  done
+  say "ports: server ${SERVER_PORT:-none}, proxy ${PROXY_PORT:-none}; state: $HOME_DIR"
+  PATH="$HOME_DIR/bin:$PATH" claude auth status 2>/dev/null || say "claude: not signed in"
+}
+
+COMMAND=start
+ALLOW_OWNER=no
+for argument in "$@"; do
+  case $argument in
+    start | stop | status | ssh) COMMAND=$argument ;;
+    --allow-owner) ALLOW_OWNER=yes ;;
+    *) die "unknown argument $argument" ;;
+  esac
+done
+[ "$(id -un)" != "$OWNER" ] || [ "$ALLOW_OWNER" = yes ] \
+  || die "$OWNER runs the shared systemd service; pass --allow-owner for a separate server"
+
+case $COMMAND in
+  start) start ;;
+  stop) stop ;;
+  status) status ;;
+  ssh) [ -f "$PORTS" ] || die "not started"; tunnel ;;
+esac

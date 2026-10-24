@@ -134,6 +134,17 @@ Results
 
 ## Issues
 
+- **Temporary access, to be closed.** For per-user servers
+  (`scripts/user/aiprover-server`), other accounts read the checkout and its
+  toolchain from `/home/loganluna` (`o+x` on the home directory, `o+rX` on
+  the code and toolchain). This is open for development only; revert it
+  (`chmod o-x /home/loganluna`) once a read-only deployment exists at
+  `/opt/aiprover_orchestration`.
+- Per-user servers have not yet run under a second account: whether
+  `lake` and `elan` work on the owner's read-only `.lake/packages` and
+  `~/.elan`, and whether the AIProver harness needs the owner's `~/.vibe`,
+  remains to be verified.
+
 - The DGX server (vLLM 0.31.0) runs without a tool-call parser; every
   client must reach it through a reasoning proxy (the skill starts one
   locally). Restarting it with `--enable-auto-tool-choice --tool-call-parser
@@ -339,6 +350,12 @@ Results
   HttpOnly cookie, which also authorizes the event stream and result links.
 
 ## Done
+
+- Per-user server (2026-10-24): `scripts/user/aiprover-server` runs a query
+  server and DGX reasoning proxy under the user's own account and Claude
+  login, with state in `AIPROVER_ORCHESTRATION_HOME` (`paths.HOME_DIR`,
+  `paths.locate`); the shared server's user page rejects Claude roles
+  (`QUERY_SERVER_PER_USER`). Tests in `tests/test_per_user.py`.
 
 - Query server (2026-10-22): a hand-back role on the run form sets the
   Claude model of the captain's `handback` phase (for example Sonnet for
