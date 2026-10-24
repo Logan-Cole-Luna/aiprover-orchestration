@@ -9,8 +9,13 @@ from aiprover_orchestration.lean.text import (
     strip_comments,
 )
 from aiprover_orchestration.orchestrator.extraction import (
+    extract_lemma_proof,
     prefixed_helpers,
     scope,
+)
+from aiprover_orchestration.orchestrator.reports.informal import (
+    refutation_parts,
+    summary_rows,
 )
 from aiprover_orchestration.orchestrator.reports.report import (
     ReportText,
@@ -45,6 +50,15 @@ class CommentsTest(unittest.TestCase):
             [("theorem", "a", 1), ("def", "s", 4), ("theorem", "b", 5)],
         )
         self.assertEqual(declaration_names(SOURCE), ["a", "s", "b"])
+
+    def test_named_argument_in_statement(self):
+        answer = (
+            "theorem t (x : Fin 1 → ℕ) (y : ℕ)\n"
+            "    (h : (Fin.snoc (α := fun _ => ℕ) x y) 0 = 0) : True := by\n"
+            "  trivial\n"
+        )
+        _, proof = extract_lemma_proof(answer, "t", set())
+        self.assertEqual(proof.strip(), "trivial")
 
 
 class StatementKeyTest(unittest.TestCase):
@@ -111,6 +125,23 @@ class ErrorLocationTest(unittest.TestCase):
         error = "/tmp/x.lean:5:9: error: unexpected token ')'"
         result = CheckResult(ok=False, output="", errors=[error])
         self.assertEqual(result.error_report(), error)
+
+
+class RefutationInformalTest(unittest.TestCase):
+
+    def test_negation_and_helper_lemmas(self):
+        source = (
+            "theorem setting_fact : True := trivial\n\n"
+            "theorem solution : False := by sorry\n\n"
+            "theorem solution_ne : True := trivial\n\n"
+            "theorem solution_refuted : ¬ False := id\n"
+        )
+        self.assertEqual(
+            refutation_parts(source),
+            ("solution_refuted", [("solution_ne", True)]),
+        )
+        rows = dict(summary_rows({"uuid": "u"}, "run", [], False, "w", True))
+        self.assertTrue(rows["Status"].startswith("claim disproved"))
 
 
 class HelperRenamingTest(unittest.TestCase):

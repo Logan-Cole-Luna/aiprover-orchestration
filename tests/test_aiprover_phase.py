@@ -168,7 +168,7 @@ class DirectionTest(TemporaryDirectoryTest):
         self.assertNotIn("source's proof", proof)
         cited = named_lemmas(earlier, proof)
         self.assertEqual([other.name for other in cited], ["lem_a"])
-        stubs, context = run._job_context(phase, cited)
+        stubs, context = run._job_context(phase, cited, lemma)
         self.assertIn("theorem lem_a", context)
         self.assertNotIn("lem_c", context)
 

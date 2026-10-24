@@ -691,10 +691,10 @@ class AIProverStage:
             logger.warning(f"{lemma.name}: no direction: {error}")
             return None
 
-    def _job_context(self, phase: Phase, earlier: list[Lemma]):
-        """The stubs of `earlier` and the fixed context of a job that
-        receives them."""
-        stubs = stub_listing(earlier)
+    def _job_context(self, phase: Phase, earlier: list[Lemma], lemma: Lemma):
+        """The stubs of `earlier` and the fixed context of a job on `lemma`
+        that receives them."""
+        stubs = stub_listing(earlier, before=lemma)
         if stubs and self.config.aiprover_cite_lemmas:
             stubs = prompts.EARLIER_LEMMAS_HEADER + stubs
         return stubs, self._standalone(phase.form, stubs).rstrip() + "\n"
@@ -747,23 +747,25 @@ class AIProverStage:
             known = {other.name for other in lemmas}
             mathlib = phase.mathlib.text(known | phase.run_names)
         key = (lemma.name, normalize(lemma.statement))
+        statement = f"{lemma.statement} := by\n  sorry\n"
         # A job of this statement cut off by a lost server or an
         # interruption continues its sessions instead of starting new ones.
         with phase.lock:
             resume_job = self.state.resumable_jobs.pop(key, None)
-        stubs, context = self._job_context(phase, earlier)
+        stubs, context = self._job_context(phase, earlier, lemma)
         # The captain writes a direction from the whole context.
         proof_text = self._directed_proof(phase, lemma, context, key)
         with phase.lock:
             directed = bool(phase.directions.get(key))
-        # A resumed job keeps the context its sessions started with.
-        if (
-            directed
-            and self.config.aiprover_condensed_prompt
-            and not resume_job
-        ):
-            earlier = named_lemmas(earlier, proof_text)
-            stubs, context = self._job_context(phase, earlier)
+        if directed and self.config.aiprover_condensed_prompt:
+            named = named_lemmas(earlier, proof_text)
+            condensed = self._job_context(phase, named, lemma)
+            # A resumed job keeps the context its sessions started with,
+            # condensed or not.
+            if not resume_job or solver.job_matches(
+                resume_job, condensed[1], statement
+            ):
+                earlier, (stubs, context) = named, condensed
         fixed_names = {name for _, name, _ in split_declarations(context)}
         logger.info(
             f"AIProver job on {lemma.name}: "
@@ -802,7 +804,7 @@ class AIProverStage:
             ),
             proof_text=proof_text,
             context=context,
-            statement=f"{lemma.statement} := by\n  sorry\n",
+            statement=statement,
             samples=samples,
             work_dir=self.temp_dir / "aiprover",
             resume_job=resume_job,

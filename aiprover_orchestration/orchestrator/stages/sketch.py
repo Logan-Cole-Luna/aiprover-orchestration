@@ -42,12 +42,15 @@ from .. import prompts
 from ..config import MAIN_NAME
 from ..structures import (
     Formalization,
+    Lemma,
     Sketch,
+    carry_definitions,
     dependency_order,
     extract_tag,
     extract_tactics,
     failed_lemma_text,
     missing_lemmas,
+    new_definitions,
     parse_lemmas,
     statement_key,
     statements,
@@ -171,11 +174,13 @@ class SketchStage:
         form: Formalization,
         replan_feedback: str = "",
         excluded: dict[str, str] | None = None,
+        earlier: list[Lemma] = (),
     ) -> Sketch:
         """A compiled sketch, or a compiled refutation of the theorem.
         `excluded` maps statements a sketch may not state again
         (`statement_key`: refuted, or with the attempt budget spent) to the
-        reason. If the budget ends without an accepted sketch, the last
+        reason. Lemmas may use the split definitions of the `earlier`
+        sketch's lemmas. If the budget ends without an accepted sketch, the last
         compiled one is accepted."""
         feedback = replan_feedback
         compiled = None
@@ -221,6 +226,7 @@ class SketchStage:
             lemma_block = drop_imports(extract_tag(reply, "lemmas"))
             main_proof = extract_tactics(reply, "main_proof")
             lemmas = parse_lemmas(lemma_block)
+            carry_definitions(lemmas, earlier)
             names = [lemma.name for lemma in lemmas]
             problems = [
                 f"lemma `{name}` must be stated with `:= by sorry`"
@@ -373,13 +379,15 @@ class SketchStage:
         lemmas = (
             dependency_order(sketch.lemmas) if use_proofs else sketch.lemmas
         )
+        shown: set[str] = set()
         for lemma in lemmas:
+            parts += new_definitions(lemma, shown)
             if use_proofs and lemma.proved:
                 if lemma.helpers:
                     parts.append(lemma.helpers)
                 parts.append(f"{lemma.statement} := by\n{indent(lemma.proof)}")
             else:
-                parts.append(stub_listing([lemma]))
+                parts.append(f"{lemma.statement} := by sorry")
         parts.append(
             f"theorem {MAIN_NAME}{form.signature}:= by\n"
             f"{indent(sketch.main_proof)}"
@@ -423,7 +431,7 @@ class SketchStage:
             refuted=sorted(refuted),
             spent=[lemma.name for lemma in spent],
         )
-        new_sketch = self.sketch(form, feedback, excluded)
+        new_sketch = self.sketch(form, feedback, excluded, sketch.lemmas)
         proofs = {normalize(lemma.statement): lemma for lemma in proved}
         kept = unchanged_names(
             statements(sketch.lemmas), statements(new_sketch.lemmas)

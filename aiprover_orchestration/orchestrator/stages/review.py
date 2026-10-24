@@ -162,6 +162,8 @@ class ReviewStage:
                 continue
             if proved.get("worker") == "captain":
                 text = "proved by the captain after a hand-back"
+            elif proved.get("worker") == "manual":
+                text = "proved from its parts by a proof written by hand"
             else:
                 jobs = [
                     step
@@ -272,23 +274,32 @@ class ReviewStage:
         return record
 
     def informalize(
-        self, form: Formalization, sketch: Sketch, standalone: str | None
+        self,
+        form: Formalization,
+        sketch: Sketch,
+        standalone: str | None,
+        refutation: str | None = None,
     ) -> dict:
         """The result and every lemma in natural language (LaTeX and PDF in
         results/<run_id>/informal), written by the writer from the verified
-        file, or from the sketch when lemmas remain unproved. The document
-        is optional: a failure is recorded, not raised."""
+        file, from the sketch when lemmas remain unproved, or from the
+        `refutation` file of a disproved claim. The document is optional: a
+        failure is recorded, not raised."""
         verified_file = standalone is not None
-        lean_source = (
-            standalone
-            if verified_file
-            else informal.sketch_source(
+        theorem_name = form.theorem_name
+        lemmas = [(lemma.name, lemma.proved) for lemma in sketch.lemmas]
+        if refutation is not None:
+            lean_source = refutation
+            theorem_name, lemmas = informal.refutation_parts(refutation)
+        elif verified_file:
+            lean_source = standalone
+        else:
+            lean_source = informal.sketch_source(
                 form.definitions,
                 form.statement,
                 sketch.lemmas,
                 sketch.main_proof,
             )
-        )
         earlier = self._earlier_document("informal", lean_source)
         if earlier:
             logger.info("informalization restored")
@@ -298,12 +309,11 @@ class ReviewStage:
                 self.agents.max_claude_calls,
                 self.agents.claude_calls + self.config.informal_claude_calls,
             )
-        lemmas = [(lemma.name, lemma.proved) for lemma in sketch.lemmas]
         builder = informal.InformalBuilder(
             self.result_dir / "informal",
             self.slug,
             self.row,
-            form.theorem_name,
+            theorem_name,
             lean_source,
             lemmas,
             informal.summary_rows(
@@ -312,7 +322,9 @@ class ReviewStage:
                 lemmas,
                 verified_file,
                 self.agents.agents["writer"].model,
+                refutation is not None,
             ),
+            refutation is not None,
         )
         try:
             record = builder.build(self._writer_or_reviewer)

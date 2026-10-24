@@ -9,6 +9,7 @@ from ..lean.text import (
     MODIFIERS,
     file_scoped,
     normalize,
+    split_declarations,
     strip_leading_by,
 )
 
@@ -52,6 +53,10 @@ class Lemma:
     knowledge: str = ""  # notes carried to the next jobs (knowledge.py)
     refutation: str = ""  # compiled Lean proof of the statement's negation
     parent: str = ""  # the lemma this one was split from (cdcl.py)
+    # Lean definitions its statement may use, introduced by splits above it,
+    # outermost first; each block is placed once, before the first lemma
+    # that needs it (`stub_listing`).
+    definitions: tuple[str, ...] = ()
 
 
 @dataclass
@@ -220,13 +225,49 @@ def dependency_order(lemmas: list[Lemma]) -> list[Lemma]:
     return ordered
 
 
-def stub_listing(lemmas: list[Lemma], note=None) -> str:
-    """The lemmas as statements left unproved (`:= by sorry`), a block each;
-    `note(lemma)` is appended to a lemma's statement (a comment)."""
-    return "\n\n".join(
-        f"{lemma.statement} := by sorry" + (note(lemma) if note else "")
-        for lemma in lemmas
+def stub_listing(
+    lemmas: list[Lemma], note=None, before: Lemma | None = None
+) -> str:
+    """The lemmas as statements left unproved (`:= by sorry`), a block each,
+    with the definitions they use; `note(lemma)` is appended to a lemma's
+    statement (a comment). `before` is the lemma the listing precedes, whose
+    definitions are added if no listed lemma brought them."""
+    shown: set[str] = set()
+    blocks = []
+    for lemma in lemmas:
+        blocks += new_definitions(lemma, shown)
+        blocks.append(
+            f"{lemma.statement} := by sorry" + (note(lemma) if note else "")
+        )
+    if before is not None:
+        blocks += new_definitions(before, shown)
+    return "\n\n".join(blocks)
+
+
+def declared_names(lean_text: str) -> set[str]:
+    return {name for _, name, _ in split_declarations(lean_text) if name}
+
+
+def new_definitions(lemma: Lemma, shown: set[str]) -> list[str]:
+    """The definition blocks of `lemma` not in `shown`, which is updated."""
+    blocks = [block for block in lemma.definitions if block not in shown]
+    shown.update(blocks)
+    return blocks
+
+
+def carry_definitions(lemmas: list[Lemma], earlier: list[Lemma]) -> None:
+    """Give each of `lemmas` (a new sketch) the definition blocks of the
+    `earlier` sketch that its statement uses, with the blocks they use."""
+    blocks = list(
+        dict.fromkeys(block for other in earlier for block in other.definitions)
     )
+    for lemma in lemmas:
+        used, text = [], lemma.statement
+        for block in reversed(blocks):
+            if any(refers_to(text, name) for name in declared_names(block)):
+                used.insert(0, block)
+                text += "\n" + block
+        lemma.definitions = tuple(used)
 
 
 def failed_lemma_text(lemma: Lemma) -> str:

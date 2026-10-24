@@ -9,9 +9,11 @@ sketch, and summarize failed answers for the captain.
 import re
 
 from ..agents.aiprover import AIProverSample
+from .structures import declared_names
 from ..lean.text import (
     heartbeat_option,
     open_commands,
+    proof_body,
     split_declarations,
     strip_comments,
 )
@@ -63,7 +65,7 @@ def wrapped_lemma_proof(
         ),
         None,
     )
-    if target is None or ":=" not in target:
+    if target is None or proof_body(target) is None:
         return None
     renamed = re.sub(
         rf"((?:theorem|lemma)\s+){re.escape(lemma_name)}(?![\w'.])",
@@ -99,9 +101,9 @@ def extract_lemma_proof(
         ),
         None,
     )
-    if target is None or ":=" not in target:
+    body = None if target is None else proof_body(target)
+    if body is None:
         return None
-    body = target.split(":=", 1)[1]
     by_match = re.match(r"\s*by\b", body)
     if by_match:
         proof = body[by_match.end() :].strip("\n")
@@ -113,7 +115,7 @@ def extract_lemma_proof(
 
 
 def helper_names(helpers: str) -> set[str]:
-    return {name for _, name, _ in split_declarations(helpers) if name}
+    return declared_names(helpers)
 
 
 def proved_helper_names(lemmas, exclude=None) -> set[str]:
@@ -169,7 +171,7 @@ def failed_attempt(
         if name in fixed_names and name != lemma_name:
             continue
         if name != lemma_name or re.sub(
-            r"\s+", " ", text.split(":=", 1)[-1]
+            r"\s+", " ", proof_body(text) or ""
         ).strip() not in ("by sorry", "sorry"):
             bare = False
         first = code_only.count("\n", 0, code_only.find(text)) + 1
