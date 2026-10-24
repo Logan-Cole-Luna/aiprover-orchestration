@@ -41,6 +41,7 @@ from pydantic import BaseModel
 
 from ..library import api as library_api
 from ..orchestrator import libraries
+from ..orchestrator.config import FILE_HEADER
 from ..orchestrator.reports.informal import RESULT_ROW_SUFFIX
 from ..paths import (
     CONFIG_DIR,
@@ -394,10 +395,12 @@ class Submission(BaseModel):
     reviewer: Selection | None = None
     writer: Selection | None = None
     subagent: Selection | None = None
+    handback: Selection | None = None
     gpu_group: str = vista.DEFAULT_GROUP
     library: str = ""  # a file in libraries/
     library_text: str = ""  # or an uploaded library
     extend_library: bool = False
+    new_library: str = ""  # or a library this run starts, in libraries/
     after: str = ""  # a run that must end first
     page: str = DEFAULT_PAGE  # the page submitting (PAGES)
 
@@ -451,7 +454,7 @@ def submit(body: Submission, user: str = Depends(current_user)) -> dict:
             page.defaults
             | {
                 role: getattr(body, role).model_dump()
-                for role in models.ROLES
+                for role in models.SELECTABLE_ROLES
                 if getattr(body, role)
             }
         )
@@ -539,9 +542,9 @@ def submit(body: Submission, user: str = Depends(current_user)) -> dict:
 def library_options(body: Submission, run_id: str) -> dict:
     """Run options for a submission's library and dependency."""
     options = {}
-    if body.library and body.library_text:
+    if sum(map(bool, (body.library, body.library_text, body.new_library))) > 1:
         raise HTTPException(
-            400, "give a library name or a library file, not both"
+            400, "give one of a library name, a library file or a new library"
         )
     if body.library:
         if (
@@ -557,6 +560,17 @@ def library_options(body: Submission, run_id: str) -> dict:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(body.library_text)
         options["library"] = str(path.relative_to(ROOT))
+    elif body.new_library:
+        # A new library starts empty; the run extends it with its result.
+        name = body.new_library.removesuffix(".lean") + ".lean"
+        path = LIBRARY_DIR / name
+        if not LIBRARY_NAME.match(name):
+            raise HTTPException(400, f"invalid library name {name}")
+        if path.exists():
+            raise HTTPException(400, f"library {name} exists; select it")
+        if not body.extend_library:
+            raise HTTPException(400, "a new library requires extend_library")
+        options["library"] = f"libraries/{name}"
     if body.extend_library:
         if "library" not in options:
             raise HTTPException(400, "extend_library requires a library")
@@ -565,6 +579,9 @@ def library_options(body: Submission, run_id: str) -> dict:
         if store.get(body.after) is None:
             raise HTTPException(400, f"unknown run {body.after}")
         options["after"] = body.after
+    if body.new_library:
+        # Written once the submission is valid.
+        (ROOT / options["library"]).write_text(FILE_HEADER)
     return options
 
 

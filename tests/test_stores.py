@@ -8,7 +8,8 @@ import unittest
 
 from aiprover_orchestration.library.store import Store
 from aiprover_orchestration.orchestrator.trace import Trace
-from aiprover_orchestration.server.jobs import JobStore, Worker
+from aiprover_orchestration.server import models
+from aiprover_orchestration.server.jobs import CONFIG, JobStore, Worker
 from tests.support import TemporaryDirectoryTest
 
 
@@ -134,3 +135,22 @@ class TraceTest(TemporaryDirectoryTest):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class HandbackRoleTest(unittest.TestCase):
+
+    def test_handback_model_sets_the_captain_phase(self):
+        selection = models.validate({
+            "subagent": {"provider": "aiprover", "model": "dgx"},
+            "handback": {"provider": "claude", "model": "claude-sonnet-5-5",
+                         "effort": "", "tools": True},
+        })
+        captain = models.build_config(CONFIG, selection)["agents"]["captain"]
+        self.assertEqual(captain["model"], "claude-opus-5-5")
+        self.assertEqual(captain["phases"]["handback"],
+                         {"model": "claude-sonnet-5-5", "tools": True})
+        self.assertIn("judge", captain["phases"])
+
+    def test_handback_requires_claude(self):
+        with self.assertRaises(ValueError):
+            models.validate({"handback": {"provider": "aiprover", "model": "dgx"}})

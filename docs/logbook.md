@@ -340,6 +340,15 @@ Results
 
 ## Done
 
+- Query server (2026-10-22): a hand-back role on the run form sets the
+  Claude model of the captain's `handback` phase (for example Sonnet for
+  hand-backs under an Opus captain); and a run can start a new library
+  (`new_library`) that it extends with its result. Tests in
+  `tests/test_stores.py`; server restarted, running runs adopted.
+
+- 004 stopped (2026-10-22 19:15) to free the DGX for other runs; it
+  resumes from its trace with all 62 open lemmas unchanged.
+
 - Replay colours (2026-10-22): a lemma proved by the captain (hand-back or
   conflict analysis), and the hand-back that proved or split it, are drawn
   in the captain's blue instead of the green of solver proofs.
@@ -354,6 +363,17 @@ Results
   `:=` outside brackets (`lean.text.proof_body`), so a named argument in
   the statement, such as `Fin.snoc (α := fun _ => BStr)`, stays in the
   header. Test `test_named_argument_in_statement`; 75 tests pass.
+- Jiatu 000000 and 000001 (2026-10-22) ended with status failed when their
+  first replan found the served Claude call budget (`max_claude_calls` 10)
+  spent: 5 setup calls and one lemma direction per lemma. With
+  `aiprover_attempts_per_lemma` 1 below `aiprover_handback_after` 2, no
+  failed lemma reached a hand-back. 000000 proved 7 of 9 lemmas, 000001
+  3 of 5.
+- Served defaults (2026-10-23, `configs/orchestrator/aiprover_vista_served.json`):
+  `max_claude_calls` 60, `aiprover_attempts_per_lemma` 5, `max_replans` 2,
+  the settings of the G-Simple runs. Jiatu 000000 and 000001 resumed from
+  their traces under them.
+
 - Manual additions in the replay (2026-10-22): a split decision may name
   the lemmas added by hand (`manual_lemmas`) and a proof written by hand
   is recorded with worker `manual`. The replay draws such lemmas from

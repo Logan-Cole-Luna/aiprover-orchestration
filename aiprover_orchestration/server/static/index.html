@@ -170,6 +170,8 @@ summary .note { color: var(--muted); font-weight: 400; font-size: 0.85rem; margi
           <select id="library"><option value="">none</option></select>
           <input type="file" id="library-file" accept=".lean" aria-label="Upload a library file">
         </div>
+        <label for="new-library">Or start a new library from this run</label>
+        <input id="new-library" placeholder="new library name, e.g. my_book" pattern="[A-Za-z0-9_.-]+">
         <label class="check"><input type="checkbox" id="extend-library"> Add the result to the library once proved and reviewed</label>
         <small class="models-note">A library is a Lean file that compiles on its own, without <code>sorry</code>. The run uses its definitions and may cite its theorems instead of proving them again.</small>
       </details>
@@ -285,7 +287,9 @@ function buildPickers() {
     <p class="role-note">${escapeHtml(r.description)}</p><div class="pick" id="pick-${r.role}"></div></div>`).join("");
   for (const role of ROLES) {
     const box = $("pick-" + role);
-    box.innerHTML = `<select aria-label="${role} model" data-field="provider">${providerOptions()}</select>
+    // A phase of the captain (the hand-back) runs on Claude only.
+    const providers = catalog.phase_roles?.includes(role) ? `<option value="claude">Claude</option>` : providerOptions();
+    box.innerHTML = `<select aria-label="${role} model" data-field="provider">${providers}</select>
       <select aria-label="${role} Claude model" data-field="model">${catalog.claude.map(m =>
         `<option value="${m.model}">${escapeHtml(m.label)}</option>`).join("")}</select>
       <input aria-label="${role} model id" data-field="model-id" placeholder="model id">
@@ -372,7 +376,8 @@ function modelsHTML(agents) {
 
 function summarizeSettings() {
   const upload = $("library-file").files[0];
-  $("library-summary").textContent = upload ? upload.name : $("library").value || "none";
+  $("library-summary").textContent = upload ? upload.name : $("library").value
+    || ($("new-library").value.trim() ? `new: ${$("new-library").value.trim()}` : "none");
   if (!catalog) return;
   const models = ROLES.map(role => `${role}: ${modelLabel(selection(role))}`);
   $("models-summary").textContent = [...models, `GPU group: ${$("gpu-group").value}`].join(" · ");
@@ -623,6 +628,7 @@ $("submit").onclick = async () => {
     const upload = $("library-file").files[0];
     if (upload) body.library_text = await upload.text();
     else if ($("library").value) body.library = $("library").value;
+    else if ($("new-library").value.trim()) body.new_library = $("new-library").value.trim();
     body.extend_library = $("extend-library").checked;
     const result = await api("/api/runs", {method: "POST", body: JSON.stringify(body)});
     showNewRun(false);

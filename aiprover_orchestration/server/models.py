@@ -65,6 +65,12 @@ DEFAULT_SELECTION = {
         "effort": "high",
     },
     "subagent": {"provider": "aiprover", "model": "trained", "effort": ""},
+    "handback": {
+        "provider": "claude",
+        "model": "claude-opus-5-5",
+        "effort": "high",
+        "tools": True,
+    },
 }
 ROLES = {
     "orchestrator": "captain",
@@ -73,12 +79,18 @@ ROLES = {
     "writer": "writer",
     "subagent": "solver",
 }
+# Roles served by a phase of the captain (Claude only), by the phase-label
+# prefix they set the model of.
+PHASE_ROLES = {"handback": "handback"}
+SELECTABLE_ROLES = (*ROLES, *PHASE_ROLES)
+ROLE_LABELS = {"handback": "Hand-back"}
 ROLE_DESCRIPTIONS = {
     "orchestrator": "Formalizes, sketches the proof and repairs",
     "auditor": "Judges the formalization against the statement",
     "reviewer": "Independently judges the finished proof",
     "writer": "Writes the LaTeX report",
     "subagent": "Proves the lemmas",
+    "handback": "Answers hand-backs: proves, splits, restates or retries stuck lemmas",
 }
 
 # Chat roles reach AIProver through the reasoning proxy, as the
@@ -114,11 +126,12 @@ def catalog() -> dict:
         "roles": [
             {
                 "role": role,
-                "label": role.capitalize(),
+                "label": ROLE_LABELS.get(role, role.capitalize()),
                 "description": ROLE_DESCRIPTIONS[role],
             }
-            for role in ROLES
+            for role in SELECTABLE_ROLES
         ],
+        "phase_roles": list(PHASE_ROLES),
         "default": DEFAULT_SELECTION,
     }
 
@@ -126,11 +139,13 @@ def catalog() -> dict:
 def validate(selection: dict) -> dict:
     """The normalized selection of both roles; ValueError names the problem."""
     normalized = {}
-    for role in ROLES:
+    for role in SELECTABLE_ROLES:
         choice = selection.get(role) or DEFAULT_SELECTION[role]
         provider, model, effort = (
             choice.get(key) or "" for key in ("provider", "model", "effort")
         )
+        if role in PHASE_ROLES and provider != "claude":
+            raise ValueError(f"{role}: a phase of the captain uses Claude")
         if provider == "claude":
             if model not in CLAUDE_MODELS:
                 raise ValueError(f"{role}: unknown Claude model {model!r}")
@@ -212,6 +227,8 @@ def build_config(base_config: Path, selection: dict) -> dict:
     config = json.loads(base_config.read_text())
     agents = config["agents"]
     for role, choice in selection.items():
+        if role in PHASE_ROLES:
+            continue
         # The pipeline gives a reviewer or writer absent from the config the
         # captain's specification.
         spec = agents.get(ROLES[role]) or agents["captain"]
@@ -264,6 +281,17 @@ def build_config(base_config: Path, selection: dict) -> dict:
                 }
             continue
         agents[ROLES[role]] = spec
+    captain = agents["captain"]
+    for role, prefix in PHASE_ROLES.items():
+        choice = selection.get(role)
+        if choice and captain.get("backend") == "claude":
+            # The phase keeps its other options (limits) from the run's
+            # captain phases; an empty effort keeps the captain's.
+            override = {"model": choice["model"], "tools": choice["tools"]}
+            if choice["effort"]:
+                override["effort"] = choice["effort"]
+            phases = captain.setdefault("phases", {})
+            phases[prefix] = {**phases.get(prefix, {}), **override}
     for version in checkpoint_names(selection):
         config |= VERSION_SETTINGS.get(version, {})
     if selection.get("subagent", {}).get("provider") == "claude":
