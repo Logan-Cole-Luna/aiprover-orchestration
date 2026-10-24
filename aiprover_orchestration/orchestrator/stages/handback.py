@@ -124,7 +124,7 @@ class HandbackStage:
                 return  # retracted by a backjump
             lemma.handed_back = True
             listing = marked_listing(sketch.lemmas, lemma, "this lemma")
-            stubs = stub_listing(sketch.lemmas[: sketch.lemmas.index(lemma)])
+            earlier = sketch.lemmas[: sketch.lemmas.index(lemma)]
             names = {other.name for other in sketch.lemmas}
             other_helpers = proved_helper_names(sketch.lemmas, lemma)
         retries = self._retries_spent(phase, lemma)
@@ -223,15 +223,23 @@ class HandbackStage:
             return []
 
         def prove(
-            diagnosis: str, helpers: str, proof: str, split_block: str
+            diagnosis: str,
+            helpers: str,
+            proof: str,
+            split_block: str,
+            definitions: str,
         ) -> list[str]:
-            """The captain's proof, from new lemmas if it splits."""
+            """The captain's proof, from new lemmas if it splits, which may
+            state facts about the split's new `definitions`."""
             if not split_block and not direct_proof:
                 return [
                     f"proving `{lemma.name}` directly is not available; "
                     f"split, restate, retry or refute it"
                 ]
+            if definitions and not split_block:
+                return ["definitions are added only with a split"]
             new_lemmas = parse_lemmas(split_block) if split_block else []
+            cdcl.adopt(lemma, new_lemmas, definitions)
             problems = [
                 f"new lemma `{other.name}` reuses an existing name"
                 for other in new_lemmas
@@ -245,6 +253,14 @@ class HandbackStage:
                     & (names | other_helpers | helper_names(split_block))
                 )
             ]
+            problems += [
+                f"definition `{name}` must be named `{lemma.name}_...` and "
+                f"differ from the names of lemmas and helpers"
+                for name in sorted(helper_names(definitions))
+                if not name.startswith(lemma.name + "_")
+                or name in names | other_helpers | helper_names(helpers)
+            ]
+            problems += forbidden_problems(definitions, "definitions")
             problems += forbidden_problems(helpers + "\n" + proof)
             problems += forbidden_problems(
                 split_block, "new lemmas", statements=True
@@ -253,7 +269,7 @@ class HandbackStage:
                 return problems
             result, problem = self._check_proof(
                 form,
-                "\n\n".join(filter(None, [stubs, stub_listing(new_lemmas)])),
+                stub_listing(earlier + new_lemmas, before=lemma),
                 lemma,
                 helpers,
                 proof,
@@ -273,7 +289,9 @@ class HandbackStage:
                     return []  # retracted meanwhile
                 for other in new_lemmas:
                     self.state.load_attempts(other)
-                cdcl.insert_split(sketch.lemmas, lemma, new_lemmas)
+                cdcl.insert_split(
+                    sketch.lemmas, lemma, new_lemmas, definitions
+                )
                 lemma.helpers, lemma.proof = helpers, proof
                 lemma.proved = True
             action = "split" if new_lemmas else "proof"
@@ -286,6 +304,7 @@ class HandbackStage:
                 action,
                 diagnosis,
                 new_lemmas=[other.statement for other in new_lemmas],
+                **({"new_definitions": definitions} if definitions else {}),
             )
             self._record_proof(lemma, "captain")
             for other in new_lemmas:
@@ -307,7 +326,12 @@ class HandbackStage:
                 return refute(diagnosis, helpers, refutation)
             if proof := extract_tactics(reply, "proof"):
                 split_block = drop_imports(extract_tag(reply, "split"))
-                return prove(diagnosis, helpers, proof, split_block)
+                definitions = drop_imports(
+                    extract_tag(reply, "split_definitions")
+                )
+                return prove(
+                    diagnosis, helpers, proof, split_block, definitions
+                )
             if "<retry" in reply and retries:
                 return [f"retry is not available after {retries} retries"]
             if "<retry" in reply:
@@ -504,7 +528,7 @@ class HandbackStage:
             proof = strip_leading_by(proof)
             with phase.lock:
                 lemmas = phase.sketch.lemmas
-                stubs = stub_listing(lemmas[: lemmas.index(leaf)])
+                stubs = stub_listing(lemmas[: lemmas.index(leaf)], before=leaf)
                 taken = {other.name for other in lemmas} | proved_helper_names(
                     lemmas, leaf
                 )

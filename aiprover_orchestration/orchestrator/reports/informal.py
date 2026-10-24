@@ -1,8 +1,9 @@
 """Informalization of a run: the result and every lemma of its formal proof,
 stated and proved in natural mathematical language, as LaTeX and PDF.
 
-The writer model turns the Lean source (the verified file, or for a run with
-unproved lemmas the sketch with the proofs found) into a self-contained text:
+The writer model turns the Lean source (the verified file, for a run with
+unproved lemmas the sketch with the proofs found, or for a disproved run the
+refutation file) into a self-contained text:
 the setting, the theorem, each lemma with its proof, and the proof of the
 theorem from the lemmas. The text contains no Lean; a correspondence table
 from lemma numbers to Lean declarations and their verification status is
@@ -33,7 +34,8 @@ from dataclasses import asdict
 from pathlib import Path
 
 from ...agents import AgentPool, build_agent, role_spec
-from ...lean.text import indent
+from ...lean.text import declaration_names, indent
+from ..config import MAIN_NAME
 from ...paths import LOGS_DIR
 from .. import prompts
 from ..resume import restore_state
@@ -57,7 +59,8 @@ class InformalBuilder(LatexBuilder):
     """Writes, checks and compiles the informalization of one run.
 
     `lemmas` lists the lemmas of the formal proof in order, as (Lean name,
-    machine-verified)."""
+    machine-verified). With `refuted`, the Lean source is a refutation and
+    `theorem_name` its negation of the claim."""
 
     phase = "informal"
 
@@ -70,6 +73,7 @@ class InformalBuilder(LatexBuilder):
         lean_source: str,
         lemmas: list[tuple[str, bool]],
         summary_rows: list[tuple[str, str]],
+        refuted: bool = False,
     ):
         self.out_dir = Path(out_dir)
         self.slug = slug
@@ -78,6 +82,7 @@ class InformalBuilder(LatexBuilder):
         self.lean_source = lean_source
         self.lemmas = [tuple(lemma) for lemma in lemmas]
         self.summary_rows = [tuple(row) for row in summary_rows]
+        self.refuted = refuted
         self.name = f"{slug}_informal"
 
     def lemma_list(self) -> str:
@@ -154,7 +159,12 @@ class InformalBuilder(LatexBuilder):
         return [self.document(text)]
 
     def write_prompt(self) -> str:
-        return prompts.INFORMAL_TEMPLATE.format(
+        template = (
+            prompts.INFORMAL_REFUTATION_TEMPLATE
+            if self.refuted
+            else prompts.INFORMAL_TEMPLATE
+        )
+        return template.format(
             informal_statement=self.row["informal_statement"],
             informal_proof=self.row["informal_proof"],
             lean_source=self.lean_source,
@@ -179,6 +189,7 @@ class InformalBuilder(LatexBuilder):
                     "lean_source",
                     "lemmas",
                     "summary_rows",
+                    "refuted",
                 )
             },
             "text": asdict(text),
@@ -241,10 +252,13 @@ def summary_rows(
     lemmas: list[tuple[str, bool]],
     verified_file: bool,
     writer: str,
+    refuted: bool = False,
 ) -> list[tuple[str, str]]:
     proved = sum(verified for _, verified in lemmas)
     status = (
-        "proof machine-verified (Lean 4, Mathlib)"
+        "claim disproved; the disproof is machine-verified (Lean 4, Mathlib)"
+        if refuted
+        else "proof machine-verified (Lean 4, Mathlib)"
         if verified_file
         else f"{proved} of {len(lemmas)} lemmas machine-verified"
     )
@@ -265,6 +279,19 @@ def summary_rows(
     ]
 
 
+def refutation_parts(lean_source: str) -> tuple[str, list[tuple[str, bool]]]:
+    """The negation's name in a refutation file and its helper lemmas, all
+    verified: the theorems other than the claim and its negation."""
+    negation = f"{MAIN_NAME}_refuted"
+    lemmas = [
+        (name, True)
+        for name in declaration_names(lean_source, ("theorem", "lemma"))
+        if name not in (MAIN_NAME, negation)
+        and not name.startswith("setting_")
+    ]
+    return negation, lemmas
+
+
 def informalize_run(result_dir: Path, reuse_draft: bool = False) -> dict:
     """Informalize a finished run from its trace, with the writer and reviewer
     the trace records; calls are appended to logs/<run_id>/calls.jsonl. With
@@ -281,17 +308,22 @@ def informalize_run(result_dir: Path, reuse_draft: bool = False) -> dict:
     )
     slug = summary.get("slug") or form.theorem_name
     standalone = sorted(result_dir.glob("*_standalone.lean"))
+    refutation = sorted(result_dir.glob("*_refutation.lean"))
+    refuted = bool(sketch.refutation and refutation)
     verified_file = bool(standalone) and all(
         lemma.proved for lemma in sketch.lemmas
     )
-    lean_source = (
-        standalone[0].read_text()
-        if verified_file
-        else sketch_source(
+    theorem_name = form.theorem_name
+    lemmas = [(lemma.name, lemma.proved) for lemma in sketch.lemmas]
+    if refuted:
+        lean_source = refutation[0].read_text()
+        theorem_name, lemmas = refutation_parts(lean_source)
+    elif verified_file:
+        lean_source = standalone[0].read_text()
+    else:
+        lean_source = sketch_source(
             form.definitions, form.statement, sketch.lemmas, sketch.main_proof
         )
-    )
-    lemmas = [(lemma.name, lemma.proved) for lemma in sketch.lemmas]
     specs = trace["agents"]
     captain = {
         key: value for key, value in specs["captain"].items() if key != "tools"
@@ -325,7 +357,7 @@ def informalize_run(result_dir: Path, reuse_draft: bool = False) -> dict:
         result_dir / "informal",
         slug,
         trace["problem"],
-        form.theorem_name,
+        theorem_name,
         lean_source,
         lemmas,
         summary_rows(
@@ -334,7 +366,9 @@ def informalize_run(result_dir: Path, reuse_draft: bool = False) -> dict:
             lemmas,
             verified_file,
             roles["writer"].model,
+            refuted,
         ),
+        refuted,
     )
     return builder.build(complete)
 

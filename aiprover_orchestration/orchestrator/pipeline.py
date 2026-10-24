@@ -425,13 +425,18 @@ class Orchestration(
                 if sketch.refutation:
                     summary["status"] = "disproved"
                     summary["refutation"] = sketch.refutation
-                    (self.result_dir / f"{self.slug}_refutation.lean").write_text(
-                        self._standalone(
-                            form,
-                            f"theorem {MAIN_NAME}{form.signature}:= by sorry"
-                            f"\n\n{sketch.refutation}",
-                        )
+                    refutation = self._standalone(
+                        form,
+                        f"theorem {MAIN_NAME}{form.signature}:= by sorry"
+                        f"\n\n{sketch.refutation}",
                     )
+                    (self.result_dir / f"{self.slug}_refutation.lean").write_text(
+                        refutation
+                    )
+                    with self._timed("informal"):
+                        summary["informal"] = self.informalize(
+                            form, sketch, None, refutation
+                        )
                     return summary
                 with self._timed("prove"):
                     self.prove(form, sketch)

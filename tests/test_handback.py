@@ -15,6 +15,7 @@ from aiprover_orchestration.orchestrator.structures import (
     Lemma,
     Sketch,
     statement_key,
+    stub_listing,
 )
 from tests.support import (
     ScriptedPool,
@@ -54,6 +55,45 @@ class HandbackTest(TemporaryDirectoryTest):
         )
         self.assertEqual([lemma.name for lemma in submitted], ["goal_part"])
         self.assertIn(("lemma_handback", "split"), self.decisions(run))
+
+    def test_split_with_definitions_and_replay(self):
+        goal = Lemma("goal", GOAL)
+        sketch = Sketch([goal], "trivial")
+        split = (
+            "<split_definitions>def {name} : Nat := 4</split_definitions>"
+            "<split>theorem goal_part : (2 : Nat) + 2 = {name} := by sorry"
+            "</split><proof>exact goal_part</proof>"
+        )
+        run, submitted = self.handback(
+            [split.format(name="four"), split.format(name="goal_four")],
+            goal,
+            sketch,
+        )
+        self.assertEqual(run.agents.phases, ["handback/goal"] * 2)
+        self.assertTrue(goal.proved)
+        part = sketch.lemmas[0]
+        self.assertEqual(part.definitions, ("def goal_four : Nat := 4",))
+        self.assertEqual(submitted, [part])
+        # The definitions precede the first lemma that uses them, once.
+        listing = stub_listing([part, goal], before=part)
+        self.assertEqual(listing.count("def goal_four"), 1)
+        self.assertLess(
+            listing.index("def goal_four"), listing.index("goal_part")
+        )
+        run.trace.document["steps"].insert(
+            0,
+            {
+                "kind": "decision",
+                "event": "sketch_accepted",
+                "lemmas": [GOAL],
+                "main_proof": "trivial",
+            },
+        )
+        state = restore_state(run.trace.document)
+        self.assertEqual(
+            [lemma.definitions for lemma in state.sketch.lemmas],
+            [part.definitions, ()],
+        )
 
     def test_proof_with_stop_is_rejected(self):
         goal = Lemma("goal", GOAL)

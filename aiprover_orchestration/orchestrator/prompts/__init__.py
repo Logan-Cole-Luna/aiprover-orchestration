@@ -144,6 +144,7 @@ REPORT_REPAIR_TEMPLATE = template("report_repair")
 REPORT_CHECK_TEMPLATE = template("report_check")
 REPORT_REVISE_TEMPLATE = template("report_revise")
 INFORMAL_TEMPLATE = template("informal")
+INFORMAL_REFUTATION_TEMPLATE = template("informal_refutation")
 INFORMAL_CHECK_TEMPLATE = template("informal_check")
 
 TEMPLATES = {

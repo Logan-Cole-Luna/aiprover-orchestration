@@ -14,6 +14,7 @@ from .structures import (
     Formalization,
     Lemma,
     Sketch,
+    carry_definitions,
     missing_lemmas,
     parse_statement,
     recorded_lemmas,
@@ -209,6 +210,8 @@ def restore_state(document: dict) -> ResumeState:
             state.replan_pending = False
         elif event == "sketch_accepted":
             lemmas = recorded_lemmas(step["lemmas"])
+            if state.sketch is not None:
+                carry_definitions(lemmas, state.sketch.lemmas)
             state.sketch = Sketch(lemmas, step["main_proof"])
             statement_of = {lemma.name: lemma.statement for lemma in lemmas}
             names_seen |= set(statement_of)
@@ -270,7 +273,12 @@ def restore_state(document: dict) -> ResumeState:
                 state.refutations[key] = step["refutation"]
             if step["action"] == "split":
                 children = recorded_lemmas(step.get("new_lemmas") or [])
-                cdcl.insert_split(state.sketch.lemmas, target, children)
+                cdcl.insert_split(
+                    state.sketch.lemmas,
+                    target,
+                    children,
+                    step.get("new_definitions", ""),
+                )
                 for lemma in children:
                     statement_of[lemma.name] = lemma.statement
                     names_seen.add(lemma.name)

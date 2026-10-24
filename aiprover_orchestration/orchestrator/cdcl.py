@@ -304,14 +304,27 @@ def conflict_key(ancestor: Lemma, stuck_leaves: list[Lemma]) -> tuple:
 
 
 def insert_split(
-    lemmas: list[Lemma], parent: Lemma, children: list[Lemma]
+    lemmas: list[Lemma],
+    parent: Lemma,
+    children: list[Lemma],
+    definitions: str = "",
 ) -> None:
     """Place the lemmas a split of `parent` introduced, in order, before it
-    (in place), as its children."""
+    (in place), as its children, with the split's `definitions` added to
+    those of `parent`."""
+    adopt(parent, children, definitions)
     position = lemmas.index(parent)
     for offset, child in enumerate(children):
-        child.parent = parent.name
         lemmas.insert(position + offset, child)
+
+
+def adopt(parent: Lemma, children: list[Lemma], definitions: str) -> None:
+    """Make `children` the split of `parent`: they use its definitions and
+    the split's new `definitions`."""
+    blocks = parent.definitions + ((definitions,) if definitions else ())
+    for child in children:
+        child.parent = parent.name
+        child.definitions = blocks
 
 
 def retract(ancestor: Lemma, lemmas: list[Lemma]) -> list[Lemma]:

@@ -60,7 +60,9 @@ class ProveStage:
         result_lock = threading.Lock()
 
         def chain(k: int, lemma: Lemma, worker: int) -> None:
-            available = stub_listing(sketch.lemmas[:k]) or "(none)"
+            available = (
+                stub_listing(sketch.lemmas[:k], before=lemma) or "(none)"
+            )
             feedback = ""
             for repair in range(self.config.max_repairs + 1):
                 if solved[lemma.name].is_set():
@@ -95,7 +97,7 @@ class ProveStage:
                 if not problems:
                     _, problem = self._check_proof(
                         form,
-                        stub_listing(sketch.lemmas[:k]),
+                        stub_listing(sketch.lemmas[:k], before=lemma),
                         lemma,
                         helpers,
                         proof,

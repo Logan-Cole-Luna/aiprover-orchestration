@@ -149,6 +149,7 @@ const captainCheck = step => step.kind === "lean_check" && (step.worker === "cap
 // Who proved a lemma, for the lemma_proved decision `win`.
 function winnerText(win) {
   if (win.worker === "captain") return "the captain, after a hand-back";
+  if (win.worker === "manual") return "a proof from its parts, written by hand";
   const job = jobOf(win);
   return job ? `AIProver job ${jobNumber(job)}, sample ${win.worker}`
     : `solver ${win.worker}, round ${win.round}`;
@@ -446,6 +447,11 @@ const EVENT_TEXT = {
   report: "LaTeX report",
 };
 
+// A split whose new lemmas were all added by hand, not by the captain
+// (`manual_lemmas` names the lemmas added by hand).
+const manualSplit = step => (step.new_lemmas || []).length > 0
+  && (step.manual_lemmas || []).length === step.new_lemmas.length;
+
 function stepTitle(step) {
   if (step.kind === "model_call") {
     if (isJob(step)) return `AIProver job ${jobNumber(step)} · ${step.lemma}`;
@@ -453,6 +459,7 @@ function stepTitle(step) {
     return `${step.role} · ${step.label}`;
   }
   if (step.kind === "lean_check") return `Lean check · ${step.file}`;
+  if (step.event === "lemma_handback" && manualSplit(step)) return "Lemma split by hand";
   return EVENT_TEXT[step.event] || step.event;
 }
 
@@ -476,7 +483,10 @@ function stepResult(step) {
       : `<span class="pill ok">compiles</span>`;
   }
   if (step.event === "audit_verdict") {
-    return `<span class="pill ${step.verdict === "FAITHFUL" ? "ok" : "fail"}">${escapeHTML(step.verdict)}</span>`;
+    return `<span class="pill ${step.verdict === "FAITHFUL" ? "ok" : "warn"}">${escapeHTML(step.verdict)}</span>`;
+  }
+  if (step.event === "sketch_judged") {
+    return `<span class="pill ${/^ACCEPT/.test(step.verdict) ? "ok" : "warn"}">${escapeHTML(step.verdict)}</span>`;
   }
   if (step.event === "final_verification") {
     return `<span class="pill ${step.checks?.verified ? "ok" : "fail"}">${step.checks?.verified ? "verified" : "not verified"}</span>`;
