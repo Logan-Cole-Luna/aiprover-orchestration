@@ -55,7 +55,7 @@ SYSTEM_EXECUTE = (
     "/usr/lib/git-core",
 )
 DEVICES = "/dev"
-ELAN_HOME = Path.home() / ".elan"
+ELAN_HOME = Path(os.environ.get("ELAN_HOME") or Path.home() / ".elan")
 
 
 class RulesetAttr(ctypes.Structure):

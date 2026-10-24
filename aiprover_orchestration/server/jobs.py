@@ -262,9 +262,13 @@ def process_alive(pid: int | None, run_id: str) -> bool:
 
 
 def run_process_alive(run_id: str) -> bool:
-    """True if any live orchestrator process belongs to run `run_id`."""
+    """True if a live orchestrator process of this account belongs to run
+    `run_id`; servers of other users on the host may use the same run id."""
+    uid = os.getuid()
     return any(
-        process_alive(process.pid, run_id) for process in psutil.process_iter()
+        process_alive(process.pid, run_id)
+        for process in psutil.process_iter(["uids"])
+        if process.info["uids"] and process.info["uids"].real == uid
     )
 
 
