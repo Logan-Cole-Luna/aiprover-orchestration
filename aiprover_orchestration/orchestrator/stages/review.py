@@ -162,6 +162,8 @@ class ReviewStage:
                 continue
             if proved.get("worker") == "captain":
                 text = "proved by the captain after a hand-back"
+            elif proved.get("worker") == "manual":
+                text = "proved from its parts by a proof written by hand"
             else:
                 jobs = [
                     step

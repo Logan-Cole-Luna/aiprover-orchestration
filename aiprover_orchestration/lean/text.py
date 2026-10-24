@@ -113,6 +113,25 @@ def split_declarations(lean_text: str) -> list[tuple[str, str, str]]:
     return blocks
 
 
+_OPENERS, _CLOSERS = "([{⦃⟨", ")]}⦄⟩"
+
+
+def proof_body(declaration: str) -> str | None:
+    """The text after the `:=` that ends a declaration's header, or None.
+
+    A `:=` inside brackets, as in a named argument `(α := T)` of the
+    statement, belongs to the header."""
+    depth = 0
+    for i, char in enumerate(declaration):
+        if char in _OPENERS:
+            depth += 1
+        elif char in _CLOSERS:
+            depth -= 1
+        elif not depth and declaration.startswith(":=", i):
+            return declaration[i + 2 :]
+    return None
+
+
 def declarations(lean_text: str) -> list[tuple[str, str, int]]:
     """Top-level declarations as (kind, name, line); `name` is empty for an
     anonymous instance or an example."""

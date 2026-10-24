@@ -340,11 +340,74 @@ Results
 
 ## Done
 
+- Replay colours (2026-10-22): a lemma proved by the captain (hand-back or
+  conflict analysis), and the hand-back that proved or split it, are drawn
+  in the captain's blue instead of the green of solver proofs.
+
+- Verdict colours (2026-10-22): a REVISE verdict, of the faithfulness
+  judge or of the sketch judge, is drawn in amber with a dashed border and
+  the stage it returns to; an acceptance stays green and a failure red.
+  The sketch judge has its own node title ("Sketch verdict") in the Sketch
+  band, its own event text, and a pill in the walkthrough.
+
+- Proof extraction (2026-10-23): a lemma's proof is read after the first
+  `:=` outside brackets (`lean.text.proof_body`), so a named argument in
+  the statement, such as `Fin.snoc (α := fun _ => BStr)`, stays in the
+  header. Test `test_named_argument_in_statement`; 75 tests pass.
+- Manual additions in the replay (2026-10-22): a split decision may name
+  the lemmas added by hand (`manual_lemmas`) and a proof written by hand
+  is recorded with worker `manual`. The replay draws such lemmas from
+  their parent lemma with an "added by hand" edge, titles a split made
+  entirely by hand as such, and the report credits list the proof as
+  written by hand. Applied to the two manual additions in 004.
+
+- 004 `_rep_block` decomposition (2026-10-22): `_rep_block` split by hand
+  into definitions and 23 lemmas, with a proof of `_rep_block` from them
+  that Lean accepts (no `sorry` of its own). Definitions: the constraint
+  family `crepB` (seven test kinds over the even variables, built from the
+  code library), the witness-slot layout, the Skolem data of a block and
+  the slot values `psi` chosen from it, and the hypotheses and conclusion
+  of `_rep_block` per block. Lemmas: computability of `crepB`, locality of
+  `psi`, existence of Skolem data, slot agreement, completeness of each
+  test kind over the integers (7) and soundness of each conclusion part in
+  the germ ring (12). Recorded as a split with `manual_additions` and the
+  parent proof; trace backup in temp/rewind_004_repblock/.
+  Revised the same day, before any child had a job: shared lemmas for the
+  truncated logarithm with cleared denominators (`lam_value`) and for
+  nonzero germs (`germ_ne_zero`), and the completeness of the clause tests
+  split into one lemma per clause (`complete6_c0` to `complete6_c6`); 31
+  children.
+
+- 004 code library (2026-10-22): a generic library of polynomial codes and
+  systems added by hand to the branch of `_rep`, before `_rep_block`:
+  definitions of code operations (variable, constant, sum, negation,
+  product, power, variable doubling), systems of equations and
+  inequations with conjunction, disjunction and doubling, and elements of
+  Q(sqrt 2) as code pairs; 25 lemmas on their meaning in every commutative
+  ring and in the germ ring, their primitive recursiveness, and the
+  description of a generated subring by code values. Recorded in the
+  trace on the `_rep` split as `new_definitions` and extra `new_lemmas`,
+  marked `manual_additions`. The statements compile with the `_rep_block`
+  context; trace backup in temp/rewind_004_library/. Purpose: a later
+  hand-back of `_rep_block` defines its constraint family from these
+  operations instead of encoding it at the level of slots and codes.
+
+- Definitions in hand-back splits (2026-10-22): a split may define the
+  object a lemma asks for and state its properties as separate lemmas
+  (`<split_definitions>`, `Lemma.definitions`, `cdcl.adopt`,
+  `stub_listing(before=...)`, `carry_definitions`). Motivated by 004's two
+  open lemmas (`_point_design`, `_rep`), each of which existentially
+  quantifies a computable constraint family with all its soundness
+  properties; the captain's clause asked to fix the family as a `def`,
+  which a split could not express. Test
+  `test_split_with_definitions_and_replay`; 72 tests pass. 004 restarted at
+  13:19 to load it; its running job resumed.
+
 - Resumed jobs under condensed prompts (2026-10-22): a job interrupted by a
   restart resumes with whichever context it started with, condensed or full
   (`AIProverAgent.job_matches`). Before, a resumed job always received the
   full context, so a job started with the condensed one was resubmitted
-  from scratch on resume (two jobs of a G-Simple run at its 07:26 restart).
+  from scratch on resume.
 
 - Informalization of disproved runs (2026-10-21): a run whose claim is
   refuted now also writes the informal document, from its refutation file

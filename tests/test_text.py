@@ -9,6 +9,7 @@ from aiprover_orchestration.lean.text import (
     strip_comments,
 )
 from aiprover_orchestration.orchestrator.extraction import (
+    extract_lemma_proof,
     prefixed_helpers,
     scope,
 )
@@ -49,6 +50,15 @@ class CommentsTest(unittest.TestCase):
             [("theorem", "a", 1), ("def", "s", 4), ("theorem", "b", 5)],
         )
         self.assertEqual(declaration_names(SOURCE), ["a", "s", "b"])
+
+    def test_named_argument_in_statement(self):
+        answer = (
+            "theorem t (x : Fin 1 → ℕ) (y : ℕ)\n"
+            "    (h : (Fin.snoc (α := fun _ => ℕ) x y) 0 = 0) : True := by\n"
+            "  trivial\n"
+        )
+        _, proof = extract_lemma_proof(answer, "t", set())
+        self.assertEqual(proof.strip(), "trivial")
 
 
 class StatementKeyTest(unittest.TestCase):
