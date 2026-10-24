@@ -141,6 +141,11 @@ datasets, and lists the proved OpenAI problems and the runs submitted from
 it with their Lean files, reports and traces. A cancelled or unproved run
 has a Resume button that continues it from its trace.
 
+Runs with Claude roles use the submitting user's own Claude login: each
+user starts a server under their own account with
+`scripts/user/aiprover-server`, which signs in once and prints the tunnel
+command (`docs/server.md`, "Per-user server").
+
 ## 4. Layout
 
 ```mermaid

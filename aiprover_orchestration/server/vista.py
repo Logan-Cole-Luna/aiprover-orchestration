@@ -85,9 +85,14 @@ class GpuGroup:
 
 def dgx_configs() -> tuple[Path, str, int]:
     """Harness configuration (path, repository-relative name) and reasoning
-    proxy port of the persistent DGX server. configs/aiprover/dgx.toml serves
-    the deployment whose work_root it names; another checkout set up by
-    ./setup uses its own device configuration and proxy."""
+    proxy port of the persistent DGX server. A per-user server
+    (scripts/user/aiprover-server) names its own in AIPROVER_DGX_CONFIG and
+    AIPROVER_DGX_PROXY_PORT. Otherwise configs/aiprover/dgx.toml serves the
+    deployment whose work_root it names; another checkout set up by ./setup
+    uses its own device configuration and proxy."""
+    if os.environ.get("AIPROVER_DGX_CONFIG"):
+        config = Path(os.environ["AIPROVER_DGX_CONFIG"])
+        return config, str(config), int(os.environ["AIPROVER_DGX_PROXY_PORT"])
     deployed = AIPROVER_CONFIGS / "dgx.toml"
     with open(deployed, "rb") as config_file:
         work_root = tomllib.load(config_file)["runtime"]["work_root"]
