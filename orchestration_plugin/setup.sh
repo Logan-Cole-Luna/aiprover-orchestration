@@ -6,9 +6,11 @@
 # step is idempotent and can be rerun on its own.
 #
 #   ./setup.sh lean     elan + Lean 4.23.0, the Mathlib project (+ REPL, cslib) at
-#                       [paths].lean_project (AIProver/AIProver_plugin/setup.sh lean);
+#                       [paths].lean_project (<harness>/AIProver_plugin/setup.sh lean);
 #                       orchestration_workspace/.lake/packages linked to its packages
 #   ./setup.sh claude   link the config and the repository; (re)install the Claude Code plugin
+#   ./setup.sh link     link the config and the repository only (when another marketplace,
+#                       such as the central AIProver repository's skill/, installs the plugin)
 #   ./setup.sh connect  open the SSH master of an ssh-mode endpoint (asks for the host's
 #                       credentials once); rerun when it has closed
 #   ./setup.sh endpoint connect, open the SSH tunnel, start the local reasoning proxy (on macOS
@@ -21,6 +23,9 @@
 #
 # Rerun `claude` after editing the skill: an installed plugin runs from a cached copy that is
 # refreshed only on reinstallation.
+#
+# The harness is the AIProver/ submodule, or the checkout named by $AIPROVER_HARNESS or by the
+# aiprover/harness link (./setup --harness PATH; the central AIProver repository sets it).
 # =============================================================================
 set -euo pipefail
 HERE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
@@ -30,7 +35,10 @@ PLUGIN=aiprover-orchestration@aiprover-orchestration-local
 MARKETPLACE=aiprover-orchestration-local
 export AIPROVER_CONFIG="$HERE/aiprover.toml"
 ENDPOINT_CONFIG="$HERE/endpoint.toml"
-AIP="$ROOT/AIProver/AIProver_plugin/bin/aiprover"
+if [ -n "${AIPROVER_HARNESS:-}" ]; then HARNESS="$AIPROVER_HARNESS"
+elif [ -e "$ROOT/aiprover/harness" ]; then HARNESS="$(readlink -f "$ROOT/aiprover/harness")"
+else HARNESS="$ROOT/AIProver"; fi
+AIP="$HARNESS/AIProver_plugin/bin/aiprover"
 [ -d "$ROOT/aiprover/nix/tools/bin" ] && export PATH="$ROOT/aiprover/nix/tools/bin:$PATH"
 
 say()  { printf '\n== %s\n' "$*"; }
@@ -43,8 +51,8 @@ ok()   { printf '   ok: %s\n' "$*"; }
 die()  { printf '   FAILED: %s\n' "$*" >&2; exit 1; }
 
 step_lean() {
-  say "Lean (AIProver/AIProver_plugin/setup.sh lean, config $AIPROVER_CONFIG)"
-  "$ROOT/AIProver/AIProver_plugin/setup.sh" lean
+  say "Lean ($HARNESS/AIProver_plugin/setup.sh lean, config $AIPROVER_CONFIG)"
+  "$HARNESS/AIProver_plugin/setup.sh" lean
   # orchestration_workspace/ pins the same Mathlib and cslib; the module statement check
   # builds against the packages already built in the AIProver Lean project.
   local packages
@@ -82,7 +90,7 @@ step_claude() {
   claude plugin list 2>/dev/null | grep -q "$PLUGIN" || die "plugin install failed"
   ok "installed; restart open Claude Code sessions to load it"
   claude plugin list 2>/dev/null | grep -q 'aiprover@aiprover-local' \
-    || echo "   note: the lean-lsp MCP tools come with the AIProver plugin (AIProver/AIProver_plugin/setup.sh claude)"
+    || echo "   note: the lean-lsp MCP tools come with the AIProver plugin ($HARNESS/AIProver_plugin/setup.sh claude)"
 }
 
 # Opens the SSH master of an ssh-mode endpoint, once per login session. It asks for what the
@@ -402,11 +410,12 @@ for step in "$@"; do
   case "$step" in
     lean)   step_lean ;;
     claude) step_claude ;;
+    link)   say "Config links"; link_config ;;
     connect) step_connect ;;
     endpoint) step_endpoint ;;
     stop) step_stop ;;
     doctor) step_doctor ;;
     full)   step_doctor --full ;;
-    *) die "unknown step '$step' (lean|claude|connect|endpoint|stop|doctor|full)" ;;
+    *) die "unknown step '$step' (lean|claude|link|connect|endpoint|stop|doctor|full)" ;;
   esac
 done

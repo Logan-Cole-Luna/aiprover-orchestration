@@ -25,7 +25,7 @@ from functools import cached_property
 from pathlib import Path
 from typing import Callable
 
-from ..paths import ROOT
+from ..paths import AIPROVER_CLI, DEFAULT_AIPROVER_CLI, ROOT
 from .base import STOPPING, Agent, Terminated, raise_if_stopping
 
 logger = logging.getLogger(__name__)
@@ -188,7 +188,8 @@ class AIProverAgent(Agent):
     """Solver backed by AIProver jobs.
 
     Options: `config` (path of the aiprover.toml, relative to the
-    orchestration root), `cli` (path of the plugin's `bin/aiprover`),
+    orchestration root), `cli` (path of the plugin's `bin/aiprover`;
+    default: the harness of paths.HARNESS_DIR),
     `timeout` (per-rollout seconds), `max_turns`, `poll_seconds`, and `env`
     (extra environment for the harness, e.g. `AGENT_THINKING`).
     """
@@ -199,7 +200,7 @@ class AIProverAgent(Agent):
         self,
         model: str,
         config: str,
-        cli: str,
+        cli: str | None = None,
         timeout: int = 1800,
         max_turns: int = 100,
         poll_seconds: int = 60,
@@ -217,7 +218,11 @@ class AIProverAgent(Agent):
             **options,
         )
         self.config_path = (ROOT / config).resolve()
-        self.cli = (ROOT / cli).resolve()
+        self.cli = (
+            AIPROVER_CLI
+            if cli in (None, DEFAULT_AIPROVER_CLI)
+            else (ROOT / cli).resolve()
+        )
         with open(self.config_path, "rb") as config_file:
             harness = tomllib.load(config_file)
         self.work_root = Path(harness["runtime"]["work_root"]).expanduser()
