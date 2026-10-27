@@ -29,7 +29,6 @@
       "backend": "aiprover",
       "model": "aiprover",
       "config": "configs/aiprover/vista_logged.toml",
-      "cli": "AIProver/AIProver_plugin/bin/aiprover",
       "timeout": 3600,
       "max_turns": 200
     }

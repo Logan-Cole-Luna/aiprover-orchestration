@@ -11,7 +11,12 @@ ROOT=$(cd ~/.config/aiprover_orchestration/root && pwd -P)
 # The AIProver configuration (model endpoint, paths): $AIPROVER_CONFIG when set,
 # else the plugin's aiprover.toml as linked by setup.sh.
 export AIPROVER_CONFIG=${AIPROVER_CONFIG:-$(readlink -f ~/.config/aiprover_orchestration/aiprover.toml)}
-AIP=$ROOT/AIProver/AIProver_plugin/bin/aiprover
+# The harness: $AIPROVER_HARNESS, else the aiprover/harness link of ./setup --harness, else the
+# AIProver/ submodule.
+if [ -n "${AIPROVER_HARNESS:-}" ]; then HARNESS=$AIPROVER_HARNESS
+elif [ -e "$ROOT/aiprover/harness" ]; then HARNESS=$(cd "$ROOT/aiprover/harness" && pwd -P)
+else HARNESS=$ROOT/AIProver; fi
+AIP=$HARNESS/AIProver_plugin/bin/aiprover
 WS=$ROOT/orchestration_workspace
 JOBS=$("$AIP" config --shell | sed -n 's/^AIP_WORK_ROOT=//p')/jobs
 # The lemma solver: AIProver jobs, or Claude subagents when ./setup configured no model server

@@ -17,7 +17,6 @@
       "backend": "aiprover",
       "model": "qwen3-4b-instruct",
       "config": "configs/aiprover/local.toml",
-      "cli": "AIProver/AIProver_plugin/bin/aiprover",
       "timeout": 1200,
       "max_turns": 100,
       "env": {

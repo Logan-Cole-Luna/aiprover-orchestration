@@ -15,6 +15,11 @@
 #   --max-turns N        turn budget of one AIProver session (default 200)
 #   Shortcuts for this project's servers: --endpoint dgx, --endpoint vista.
 #   --lean-project PATH  use an existing Lean project (default: aiprover/lean_project)
+#   --harness PATH       use the AIProver harness checkout at PATH instead of the AIProver/
+#                        submodule (linked as aiprover/harness; the central AIProver repository
+#                        passes its harness/); kept on later runs until --harness is given again
+#   --no-plugin          link the config but install no Claude Code plugin (another
+#                        marketplace, such as the central repository's skill/, installs it)
 #   --yes                accept every default (the Nix installer still shows what it runs)
 #   --dry-run            print what would happen; change nothing
 #   --no-lean            skip the Lean build and the plugin installation (to change the endpoint)
@@ -22,8 +27,9 @@
 #
 # Steps: check the platform; fetch the submodules; find Nix, or offer to install it; build the
 # tools and the AIProver virtualenvs into aiprover/nix/; write orchestration_plugin/aiprover.toml;
-# then orchestration_plugin/setup.sh lean claude endpoint doctor. Every Nix command passes
-# `--extra-experimental-features 'nix-command flakes'`, so flakes need not be enabled.
+# then orchestration_plugin/setup.sh lean claude endpoint doctor (link in place of claude with
+# --no-plugin). Every Nix command passes `--extra-experimental-features 'nix-command flakes'`,
+# so flakes need not be enabled.
 #
 # POSIX sh on purpose: it runs before anything else is installed.
 set -eu
@@ -49,6 +55,8 @@ HANDOFF=""
 TIMEOUT=""
 TURNS=""
 LEAN_PROJECT=""
+HARNESS=""
+PLUGIN=yes
 
 say() { printf '%s\n' "$*"; }
 step() { printf '\n==> %s\n' "$*"; }
@@ -58,7 +66,7 @@ die() {
   exit 1
 }
 
-usage() { sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; }
 
 # ask QUESTION DEFAULT(y|n): yes or no from the terminal; --yes answers y.
 ask() {
@@ -102,6 +110,17 @@ check_platform() {
 }
 
 fetch_submodules() {
+  if [ -n "$HARNESS" ]; then
+    [ -x "$HARNESS/AIProver_plugin/bin/aiprover" ] || die "no AIProver harness at $HARNESS"
+    step "Harness: $HARNESS (linked as aiprover/harness; the AIProver/ submodule is not used)"
+    run mkdir -p aiprover
+    run ln -sfn "$HARNESS" aiprover/harness
+    return
+  fi
+  if [ -e aiprover/harness ]; then
+    step "Harness: keeping aiprover/harness -> $(readlink aiprover/harness) (pass --harness to replace it)"
+    return
+  fi
   step "Submodules: AIProver/"
   run git submodule update --init --recursive
 }
@@ -343,8 +362,9 @@ finish() {
     run bash orchestration_plugin/setup.sh endpoint doctor
     return
   fi
+  if [ "$PLUGIN" = yes ]; then plugin="claude"; else plugin="link"; fi
   step "Lean, Claude Code plugin, endpoint, doctor (the first Lean setup downloads Mathlib's cache, ~5 GB)"
-  run bash orchestration_plugin/setup.sh lean claude endpoint doctor
+  run bash orchestration_plugin/setup.sh lean "$plugin" endpoint doctor
 }
 
 next_steps() {
@@ -370,6 +390,8 @@ main() {
     --timeout) TIMEOUT="${2:?--timeout needs seconds}"; shift ;;
     --max-turns) TURNS="${2:?--max-turns needs a number}"; shift ;;
     --lean-project) LEAN_PROJECT="${2:?--lean-project needs a path}"; shift ;;
+    --harness) HARNESS=$(cd "${2:?--harness needs a path}" && pwd -P) || die "no directory $2"; shift ;;
+    --no-plugin) PLUGIN=no ;;
     --installer) INSTALLER="${2:?--installer needs a name}"; shift ;;
     --yes | -y) YES=yes ;;
     --dry-run) DRY=yes ;;
