@@ -212,9 +212,11 @@ HARNESS_CONFIGS = {"dgx": GPU_GROUPS["dgx"].solver_config}
 # Session time limits (seconds) of versions slower than the Vista servers; the
 # DGX completes a median 11 turns per hour against 76 on Vista.
 SOLVER_TIMEOUTS = {"dgx": 10800}
-# Sessions per run on the DGX: 32 concurrent requests, the load its owners
-# asked to test, within a per-user server's share of the machine's rollouts.
-DGX_SLOTS = min(32, int(os.environ.get("AIPROVER_MAX_PARALLEL") or 32))
+# Sessions per run on the DGX. Its generation rate saturates near 60 tokens/s
+# from about 16 running requests, and subagents raise requests to about 1.5
+# per session; therefore 12 sessions keep the server near saturation while
+# each session generates about twice as fast as at 32.
+DGX_SLOTS = min(32, int(os.environ.get("AIPROVER_MAX_PARALLEL") or 12))
 VERSION_SETTINGS = {"dgx": {"aiprover_session_slots": DGX_SLOTS}}
 
 

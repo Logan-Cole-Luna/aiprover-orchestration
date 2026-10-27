@@ -182,6 +182,9 @@ class SketchChangesTest(unittest.TestCase):
         self.assertEqual([lemma.name for lemma in lemmas], ["c", "a", "b"])
         self.assertEqual([(lemma.name, before) for lemma, before in added],
                          [("a", "b")])
+        a.refutation = "intro h; exact absurd h id"
+        lemmas = [Lemma("b", b.statement)]
+        self.assertEqual(reinstated([a, b], lemmas), [])  # `a` is false
         steps = [
             SKETCH,
             decision("lemma_proved", lemma="b", helpers="", proof="exact a 0"),
@@ -204,6 +207,10 @@ class SketchChangesTest(unittest.TestCase):
         self.assertEqual(list(restored), ["c", "a", "b"])
         self.assertTrue(restored["b"].proved)
         self.assertEqual(restored["a"].reviewed_at, 5)
+        # The trace records no reuse of `b`'s proof in the new sketch.
+        self.assertEqual(state.unrecorded_proofs, ["b"])
+        steps.append(decision("lemma_reused", lemma="b"))
+        self.assertEqual(restore_state({"steps": steps}).unrecorded_proofs, [])
 
     def test_interrupted_job_is_resumable(self):
         steps = [
