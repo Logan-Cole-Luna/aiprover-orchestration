@@ -10,9 +10,9 @@ directory.
 Elaboration runs code: `#eval` and its relatives execute with the rights of
 the process. Every check and build therefore passes two layers. Text with a
 construct that runs code (`EXECUTION_PATTERNS`) is rejected unelaborated, and
-Lean runs under the Landlock sandbox of `sandbox.py`: it may write only in
-the workspace, read only the toolchain, the packages and the checked file's
-directory, and open no TCP connection.
+Lean runs under the sandbox of `sandbox.py` (Landlock on Linux, Seatbelt on
+macOS): it may write only in the workspace, read only the toolchain, the
+packages and the checked file's directory, and open no TCP connection.
 """
 
 import fcntl

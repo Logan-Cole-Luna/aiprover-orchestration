@@ -389,9 +389,26 @@ else:
 PYEOF
 }
 
+# The orchestration's Lean checks run under lean/sandbox.py (Landlock on
+# Linux, Seatbelt on macOS); one elaboration there shows that they can run.
+check_sandbox() {
+  dir=$(mktemp -d)
+  cp "$ROOT/orchestration_workspace/lean-toolchain" "$dir/"
+  printf 'theorem t : 1 + 1 = 2 := rfl\n' >"$dir/A.lean"
+  if (cd "$dir" && python3 -I "$ROOT/aiprover_orchestration/lean/sandbox.py" \
+      --write "$dir" -- lean A.lean) >"$dir/out" 2>&1; then
+    echo "  PASS  Lean sandbox                     lean elaborates under lean/sandbox.py"
+  else
+    echo "  FAIL  Lean sandbox                     lean/sandbox.py:"
+    sed 's/^/        /' "$dir/out"
+  fi
+  rm -rf "$dir"
+}
+
 # Not --agents: that check asks the agents through `claude -p`, which the skill avoids.
 step_doctor() {
   say "doctor $*"
+  check_sandbox
   if [ "$(endpoint_mode)" = none ]; then
     "$AIP" doctor "$@" \
       || echo "   some rows failed: without a model server, the model rows are expected to fail"

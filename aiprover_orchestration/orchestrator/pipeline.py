@@ -379,6 +379,8 @@ class Orchestration(
                 f"{state.describe()}"
             )
             self._decision("resumed", **state.describe())
+            for name in state.unrecorded_proofs:
+                self._decision("lemma_reused", lemma=name)
         try:
             if self.library_path:
                 summary["library"] = {

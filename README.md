@@ -34,7 +34,7 @@ virtualenvs into `aiprover/nix/`, builds the Lean project and connects the
 model server (`--dry-run` prints the steps):
 
 ```bash
-git clone --recurse-submodules <repository-url> aiprover_orchestration
+git clone --recurse-submodules https://github.com/Logan-Cole-Luna/aiprover-orchestration aiprover_orchestration
 cd aiprover_orchestration
 ./setup --endpoint http://<host>:<port>   # the AIProver model server; none: Claude only
 nix develop                               # a shell with the tools on PATH
@@ -55,7 +55,7 @@ With `ANTHROPIC_API_KEY` unset, every Claude role runs through the logged-in
 Check the login and the models:
 
 ```bash
-python3 -m aiprover_orchestration.agents.claude_cli --probe claude-opus-5-5
+aiprover/nix/tools/bin/python3 -m aiprover_orchestration.agents.claude_cli --probe claude-opus-5-5
 ```
 
 When the subscription's usage limit is reached, the call waits for the reset
@@ -65,7 +65,7 @@ and retries; the run continues.
 stops it; choose another `--port` when 8443 is in use):
 
 ```bash
-python3 -m uvicorn aiprover_orchestration.server.app:app --host 127.0.0.1 --port 8443 --workers 1
+aiprover/nix/tools/bin/python3 -m uvicorn aiprover_orchestration.server.app:app --host 127.0.0.1 --port 8443 --workers 1
 ```
 
 To keep it running, install the systemd user unit in `scripts/systemd/`;
@@ -76,24 +76,26 @@ runs in progress continue.
 
 ```bash
 # One orchestration run, and its resumption
-python3 -m aiprover_orchestration.orchestrator.run \
+aiprover/nix/tools/bin/python3 -m aiprover_orchestration.orchestrator.run \
     --config configs/orchestrator/claude.json \
     --dataset data/openai_math.jsonl \
     --problem-uuid OpenAIMath_164_HindmanDistinctExpressions
-python3 -m aiprover_orchestration.orchestrator.run --run-id <run_id> --resume
+aiprover/nix/tools/bin/python3 -m aiprover_orchestration.orchestrator.run --run-id <run_id> --resume
 
 # Theorem library
-python3 -m aiprover_orchestration.library verify NAME FILE [--disprove]
+aiprover/nix/tools/bin/python3 -m aiprover_orchestration.library verify NAME FILE [--disprove]
 
 # Trace pages of a run
-python3 -m aiprover_orchestration.orchestrator.trace_view results/<run_id>/trace.json
+aiprover/nix/tools/bin/python3 -m aiprover_orchestration.orchestrator.trace_view results/<run_id>/trace.json
 
 # Tests (about 2 min; those that need Lean are skipped without it)
-python3 -m unittest discover -s tests -t .
+aiprover/nix/tools/bin/python3 -m unittest discover -s tests -t .
 ```
 
-Outside `nix develop`, use `aiprover/nix/tools/bin/python3` (another
-Python, such as conda's, lacks the packages). Without Nix, the requirements
+The commands use the interpreter that `./setup` builds,
+`aiprover/nix/tools/bin/python3`; within `nix develop`, `python3` is the same
+interpreter. Another Python, such as conda's, lacks the packages
+(`ModuleNotFoundError: No module named 'anthropic'`). Without Nix, the requirements
 are elan with Lean v4.23.0, the Mathlib project linked by
 `orchestration_workspace/`, Python 3.12 with `fastapi`, `uvicorn`,
 `aiohttp`, `pygments`, `anthropic` and `psutil`, and `pdflatex`.
