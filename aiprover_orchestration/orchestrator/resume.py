@@ -18,6 +18,7 @@ from .structures import (
     missing_lemmas,
     parse_statement,
     recorded_lemmas,
+    reinstated,
     statement_key,
     statements,
     unchanged_names,
@@ -124,6 +125,43 @@ class ResumeState:
         }
 
 
+def with_reinstated(document: dict) -> dict:
+    """`document` with the lemmas its last replan dropped although kept
+    proofs use them returned to the sketch (`reinstated`), as the replan
+    now does: for traces whose replan predates it."""
+    steps = document.get("steps", [])
+    replans = [
+        index
+        for index, step in enumerate(steps)
+        if step["kind"] == "decision" and step["event"] == "replan"
+    ]
+    if not replans:
+        return document
+    earlier = restore_state({"steps": steps[: replans[-1]]}).sketch
+    current = restore_state(document)
+    if earlier is None or current.sketch is None:
+        return document
+    added = []
+    for lemma, before in reinstated(earlier.lemmas, current.sketch.lemmas):
+        added.append(
+            {
+                "index": len(steps) + len(added),
+                "kind": "decision",
+                "stage": "prove",
+                "elapsed_seconds": steps[-1]["elapsed_seconds"],
+                "event": "lemma_reinstated",
+                "lemma": lemma.name,
+                "statement": lemma.statement,
+                "definitions": list(lemma.definitions),
+                "before": before,
+                "attempts": current.attempts.get(
+                    statement_key(lemma.statement), 0
+                ),
+            }
+        )
+    return {**document, "steps": steps + added}
+
+
 def restore_state(document: dict) -> ResumeState:
     """Replay the decision steps of a trace document into a ResumeState."""
     state = ResumeState(
@@ -217,6 +255,20 @@ def restore_state(document: dict) -> ResumeState:
             names_seen |= set(statement_of)
             state.failures = {}
             state.replan_pending = False
+        elif event == "lemma_reinstated" and state.sketch is not None:
+            # A replan's dropped lemma returned for a kept proof (sketch.py).
+            lemma = Lemma(
+                step["lemma"],
+                step["statement"],
+                definitions=tuple(step.get("definitions") or ()),
+            )
+            names = [other.name for other in state.sketch.lemmas]
+            state.sketch.lemmas.insert(names.index(step["before"]), lemma)
+            statement_of[lemma.name] = lemma.statement
+            names_seen.add(lemma.name)
+            state.reviewed_at[statement_key(lemma.statement)] = step[
+                "attempts"
+            ]
         elif event == "lemma_proved" and step["lemma"] in statement_of:
             state.proofs[normalize(statement_of[step["lemma"]])] = (
                 step["helpers"],

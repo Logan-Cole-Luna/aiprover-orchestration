@@ -178,6 +178,46 @@ def missing_lemmas(
     )
 
 
+def reinstated(
+    earlier: list[Lemma], lemmas: list[Lemma]
+) -> list[tuple[Lemma, str]]:
+    """Lemmas of the `earlier` sketch that a replan's `lemmas` drop although
+    the proof of a proved lemma it keeps (same statement) uses them, with
+    the lemma each is inserted before; `lemmas` is updated. A proved lemma
+    is thereby kept with the lemmas it was proved from rather than lost
+    with them. Dependencies of reinstated proved lemmas return as well; a
+    lemma whose name the new sketch gives another statement cannot."""
+    by_name = {lemma.name: lemma for lemma in earlier}
+    kept = {normalize(lemma.statement) for lemma in lemmas}
+    pending = [
+        lemma
+        for lemma in earlier
+        if lemma.proved and normalize(lemma.statement) in kept
+    ]
+    added = []
+    while pending:
+        user = pending.pop()
+        present = {lemma.name for lemma in lemmas}
+        for name in missing_lemmas(user, set(by_name), present):
+            # Before the lemma that states `user`'s proposition, which
+            # the new sketch may have renamed.
+            position, before = next(
+                (index, lemma.name)
+                for index, lemma in enumerate(lemmas)
+                if normalize(lemma.statement) == normalize(user.statement)
+            )
+            dependency = by_name[name]
+            lemma = Lemma(
+                name, dependency.statement, definitions=dependency.definitions
+            )
+            lemmas.insert(position, lemma)
+            present.add(name)
+            added.append((lemma, before))
+            if dependency.proved:
+                pending.append(dependency)
+    return added
+
+
 def statement_key(statement: str) -> str:
     """The proposition a lemma states, without its name: the key under which
     attempts and refutations are counted, so that a renamed lemma is the

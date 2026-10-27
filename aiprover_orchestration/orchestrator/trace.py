@@ -328,6 +328,12 @@ def main() -> None:
         metavar="JOB",
         help="drop AIProver jobs that failed on the infrastructure",
     )
+    parser.add_argument(
+        "--reinstate",
+        action="store_true",
+        help="return lemmas the last replan dropped although kept proofs "
+        "use them",
+    )
     args = parser.parse_args()
     for directory in args.directories:
         path = directory / "trace.json"
@@ -342,9 +348,13 @@ def main() -> None:
             repaired = without_refused_handbacks(repaired)
         if args.drop_jobs:
             repaired = without_jobs(repaired, set(args.drop_jobs))
-        removed = len(document["steps"]) - len(repaired["steps"])
+        if args.reinstate:
+            from .resume import with_reinstated
+
+            repaired = with_reinstated(repaired)
+        change = len(repaired["steps"]) - len(document["steps"])
         write_atomic(path, json.dumps(repaired, indent=1, ensure_ascii=False))
-        print(f"{directory}: {removed} steps removed")
+        print(f"{directory}: {change:+d} steps")
 
 
 if __name__ == "__main__":
