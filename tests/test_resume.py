@@ -5,6 +5,7 @@ import unittest
 from aiprover_orchestration.orchestrator.resume import restore_state
 from aiprover_orchestration.orchestrator.structures import (
     Lemma,
+    reinstated,
     statement_key,
 )
 from aiprover_orchestration.orchestrator.trace import Trace
@@ -172,6 +173,37 @@ class SketchChangesTest(unittest.TestCase):
         ]
         b = restore_state({"steps": steps}).sketch.lemmas[0]
         self.assertFalse(b.proved)  # its proof used `a`, which is gone
+
+    def test_dropped_lemma_reinstated_for_a_kept_proof(self):
+        a = Lemma("a", "theorem a (n : Nat) : n = n")
+        b = Lemma("b", "theorem b : True", proof="exact a 0", proved=True)
+        lemmas = [Lemma("c", "theorem c : 1 = 1"), Lemma("b", b.statement)]
+        added = reinstated([a, b], lemmas)
+        self.assertEqual([lemma.name for lemma in lemmas], ["c", "a", "b"])
+        self.assertEqual([(lemma.name, before) for lemma, before in added],
+                         [("a", "b")])
+        steps = [
+            SKETCH,
+            decision("lemma_proved", lemma="b", helpers="", proof="exact a 0"),
+            decision("replan"),
+            decision(
+                "sketch_accepted",
+                lemmas=["theorem c : 1 = 1", "theorem b : True"],
+                main_proof="trivial",
+            ),
+            decision(
+                "lemma_reinstated",
+                lemma="a",
+                statement=a.statement,
+                before="b",
+                attempts=5,
+            ),
+        ]
+        state = restore_state({"steps": steps})
+        restored = {lemma.name: lemma for lemma in state.sketch.lemmas}
+        self.assertEqual(list(restored), ["c", "a", "b"])
+        self.assertTrue(restored["b"].proved)
+        self.assertEqual(restored["a"].reviewed_at, 5)
 
     def test_interrupted_job_is_resumable(self):
         steps = [

@@ -24,9 +24,22 @@ STATE_DIR = HOME_DIR / "state"  # databases of server and library
 
 LIBRARY_DATABASE = STATE_DIR / "library.db"
 
-# AIProver: the plugin (submodule) and its runtime (venvs, ripgrep, jobs).
-AIPROVER_CLI = ROOT / "AIProver" / "AIProver_plugin" / "bin" / "aiprover"
+# AIProver: the harness (the AIProver/ submodule, or the checkout named by
+# AIPROVER_HARNESS or by the aiprover/harness link that ./setup --harness
+# writes, e.g. the harness/ of the central AIProver repository) and its
+# runtime (venvs, ripgrep, jobs).
 AIPROVER_RUNTIME = ROOT / "aiprover"
+HARNESS_DIR = Path(
+    os.environ.get("AIPROVER_HARNESS")
+    or (
+        AIPROVER_RUNTIME / "harness"
+        if (AIPROVER_RUNTIME / "harness").exists()
+        else ROOT / "AIProver"
+    )
+).resolve()
+AIPROVER_CLI = HARNESS_DIR / "AIProver_plugin" / "bin" / "aiprover"
+# The CLI path run configurations name for the AIProver/ submodule.
+DEFAULT_AIPROVER_CLI = "AIProver/AIProver_plugin/bin/aiprover"
 AIPROVER_JOBS = HOME_DIR / "aiprover" / "work" / "jobs"
 
 # Top-level directories of HOME_DIR: relative paths into them (such as a

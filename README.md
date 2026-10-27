@@ -40,6 +40,14 @@ cd aiprover_orchestration
 nix develop                               # a shell with the tools on PATH
 ```
 
+**Within the central repository.** The orchestration is a submodule of
+[AIProver](https://github.com/Logan-Cole-Luna/AIProver), which pins it together
+with the harness and sets up both (`nix run .#setup-orchestration`). There,
+`./setup --harness PATH` uses the harness checkout at `PATH` in place of the
+`AIProver/` submodule; the choice is kept as the link `aiprover/harness`, and
+`$AIPROVER_HARNESS` overrides it for one process. `--no-plugin` leaves the
+plugin installation to the central repository's marketplace.
+
 **Claude on a subscription.** Install [Claude Code](https://claude.com/claude-code),
 run `claude` once and log in with `/login` using a Pro or Max account.
 With `ANTHROPIC_API_KEY` unset, every Claude role runs through the logged-in
@@ -171,7 +179,7 @@ flowchart LR
 ├── setup, flake.nix, nix/      # one-command setup (Nix)
 ├── configs/                    # run, harness and server configurations
 ├── orchestration_workspace/    # Lake project of library and run modules
-├── AIProver/                   # AIProver harness and prover (submodule)
+├── AIProver/                   # AIProver harness and prover (submodule; see --harness)
 ├── data/                       # problem datasets (openai_math.jsonl in git)
 ├── results/                    # run records (Lean, report, informalization)
 └── docs/                       # slides and figures

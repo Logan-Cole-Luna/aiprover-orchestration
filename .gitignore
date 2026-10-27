@@ -23,6 +23,7 @@ aiprover/work_*/
 aiprover/venv_*/
 aiprover/lean_project/
 aiprover/nix/
+aiprover/harness
 
 # Written by ./setup for each device
 orchestration_plugin/aiprover.toml

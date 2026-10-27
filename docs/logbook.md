@@ -221,6 +221,30 @@ Results
 
 ## Decisions
 
+- A replan reinstates a dropped lemma that the proof of a kept lemma uses,
+  with `aiprover_handback_after` further attempts (`structures.reinstated`,
+  decision `lemma_reinstated`). On JiatuBook 000003 the replan at 17.4 h
+  dropped `evalTerms_vars` and `evalTerm_subst` (budgets spent), which
+  discarded the proofs of `sound_congr`, `sound_ax_comp`, `sound_ax_lrn_s`,
+  `sound_ind_eps_val`, and `lrn_bound`; the trace was repaired with
+  `trace --reinstate`, restoring all five (35 of 37 lemmas proved).
+- The central repository [AIProver](https://github.com/Logan-Cole-Luna/AIProver)
+  pins the harness and the orchestration as submodules and sets them up with
+  Nix. The orchestration keeps its `AIProver/` submodule for standalone use;
+  within the central repository, `./setup --harness PATH` points it at the
+  central `harness/` through the link `aiprover/harness`, which lies inside
+  the checkout, so that several checkouts may use different harnesses.
+  `nix/packages.nix` defines the Nix packages once for both flakes.
+- DGX runs take 12 session slots (`DGX_SLOTS`; `AIPROVER_MAX_PARALLEL`
+  overrides it). Over eight DGX runs, generation saturates near 60 tokens/s
+  from about 16 running requests (54 tokens/s at 16 to 19, 62 at 32 to 35),
+  and each session issues about 1.5 requests with its subagents.
+  Consequently, at 32 slots a session generated about 1.5 tokens/s and
+  completed about 7 turns per hour; on JiatuBook 000003, 66 of 94 failed
+  sessions reached the 3-hour limit without an answer.
+- `aiprover_condensed_prompt` is on by default: a directed job receives
+  the direction and the lemmas it names in place of the source's proof,
+  which reduces prompts of about 45k tokens per request on the DGX.
 - The captain's hand-back output limit
   (`configs/orchestrator/captain_phases.json`) is 64000 tokens: a
   hand-back on a lemma of 10k characters (004,
@@ -388,8 +412,11 @@ Results
   3 of 5.
 - Served defaults (2026-10-23, `configs/orchestrator/aiprover_vista_served.json`):
   `max_claude_calls` 60, `aiprover_attempts_per_lemma` 5, `max_replans` 2,
-  the settings of the G-Simple runs. Jiatu 000000 and 000001 resumed from
+  the settings of the recent group-theory runs. Jiatu 000000 and 000001 resumed from
   their traces under them.
+- Informalization of a finished run with another writer model
+  (2026-10-24): `reports.informal <run> --writer <model>` replaces the
+  recorded writer's model; the reviewer is unchanged. 78 tests pass.
 
 - Manual additions in the replay (2026-10-22): a split decision may name
   the lemmas added by hand (`manual_lemmas`) and a proof written by hand

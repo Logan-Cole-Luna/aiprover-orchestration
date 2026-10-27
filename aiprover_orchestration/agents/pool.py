@@ -7,8 +7,7 @@ built from a specification in the run configuration:
     {"backend": "openai_compatible", "model": "qwen3-4b-instruct",
      "base_url": "http://localhost:8000/v1"}
     {"backend": "aiprover", "model": "aiprover",
-     "config": "configs/aiprover/local.toml",
-     "cli": "AIProver/AIProver_plugin/bin/aiprover"}
+     "config": "configs/aiprover/local.toml"}
     {"backend": "python", "class": "my_package.my_module:MyAgent", ...}
     {"backend": "claude", "model": "claude-opus-5-5",
      "phases": {"judge": {"model": "claude-sonnet-5-5"}}}

@@ -46,40 +46,12 @@
       packages = forAllSystems (
         system:
         let
-          pkgs = nixpkgs.legacyPackages.${system};
-          virtualenv = import ./nix/venvs.nix {
-            inherit
-              pkgs
-              pyproject-nix
-              uv2nix
-              pyproject-build-systems
-              ;
+          packages = import ./nix/packages.nix {
+            pkgs = nixpkgs.legacyPackages.${system};
+            inherit pyproject-nix uv2nix pyproject-build-systems;
           };
-          mcpPatch = name: ./nix/python/mcp/patches/${name}.patch;
         in
-        rec {
-          tools = import ./nix/tools.nix { inherit pkgs; };
-          venv-vibe = virtualenv {
-            name = "vibe";
-            project = ./nix/python/vibe;
-          };
-          # The three lean-lsp-mcp fixes of AIProver/AIProver_plugin/setup.sh (step_venvs).
-          venv-mcp = virtualenv {
-            name = "mcp";
-            project = ./nix/python/mcp;
-            patches = {
-              leanclient = [
-                (mcpPatch "leanclient-min-lean-version")
-                (mcpPatch "leanclient-scratch-warm-text")
-              ];
-              lean-lsp-mcp = [
-                (mcpPatch "lean-lsp-mcp-scratch-warm-text")
-                (mcpPatch "lean-lsp-mcp-search-follow")
-              ];
-            };
-          };
-          default = tools;
-        }
+        packages // { default = packages.tools; }
       );
 
       # `nix develop`, or `direnv allow` once: the same tools for interactive work.

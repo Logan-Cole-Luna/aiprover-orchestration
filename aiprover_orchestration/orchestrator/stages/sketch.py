@@ -52,6 +52,7 @@ from ..structures import (
     missing_lemmas,
     new_definitions,
     parse_lemmas,
+    reinstated,
     statement_key,
     statements,
     stub_listing,
@@ -432,6 +433,20 @@ class SketchStage:
             spent=[lemma.name for lemma in spent],
         )
         new_sketch = self.sketch(form, feedback, excluded, sketch.lemmas)
+        for lemma, before in reinstated(sketch.lemmas, new_sketch.lemmas):
+            # A dropped lemma that a kept proof uses returns with
+            # `aiprover_handback_after` more attempts, as after a retry.
+            self.state.load_attempts(lemma)
+            self.state.record_review(lemma)
+            logger.info(f"{lemma.name}: reinstated; {before} is proved from it")
+            self._decision(
+                "lemma_reinstated",
+                lemma=lemma.name,
+                statement=lemma.statement,
+                definitions=list(lemma.definitions),
+                before=before,
+                attempts=lemma.attempts,
+            )
         proofs = {normalize(lemma.statement): lemma for lemma in proved}
         kept = unchanged_names(
             statements(sketch.lemmas), statements(new_sketch.lemmas)
