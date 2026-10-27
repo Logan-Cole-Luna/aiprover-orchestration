@@ -134,6 +134,11 @@ Results
 
 ## Issues
 
+- The Seatbelt profile of `lean/sandbox.py` permits all Mach lookups; a
+  list restricted to the services the Lean runtime uses would narrow it.
+  The macOS path awaits its first run on a Mac (`tests/test_sandbox.py`,
+  doctor row "Lean sandbox").
+
 - **Temporary access, to be closed.** For per-user servers
   (`scripts/user/aiprover-server`), other accounts read the checkout and its
   toolchain from `/home/loganluna` (`o+x` on the home directory, `o+rX` on
@@ -221,6 +226,17 @@ Results
 
 ## Decisions
 
+- Projects (`orchestrator/project.py`, §7.1 of docs/orchestration.md):
+  groups of runs sharing a library, launched in dependency order through
+  the query server and written up as one paper from their informalizations
+  (writer Sonnet, reviewer Opus by default). Project files live in
+  `data/projects/`, outside the repository.
+- A resumed run records `lemma_reused` for each restored proof of the
+  current sketch that its trace does not record since the sketch was
+  accepted (`ResumeState.unrecorded_proofs`), so the replay page marks
+  kept lemmas after a rewind. A replan never reinstates a refuted lemma:
+  a proof that uses it is discarded instead (JiatuBook 000003,
+  `evalTerm_subst`, refuted at 31 h).
 - A replan reinstates a dropped lemma that the proof of a kept lemma uses,
   with `aiprover_handback_after` further attempts (`structures.reinstated`,
   decision `lemma_reinstated`). On JiatuBook 000003 the replan at 17.4 h
@@ -374,6 +390,11 @@ Results
   HttpOnly cookie, which also authorizes the event stream and result links.
 
 ## Done
+
+- Lean sandbox on macOS (2026-10-27): `lean/sandbox.py` confines Lean with
+  Seatbelt (`sandbox-exec`) under the same file and execution rules as
+  Landlock on Linux; the doctor of `orchestration_plugin/setup.sh` elaborates
+  one file under the sandbox. Tests in `tests/test_sandbox.py`.
 
 - Per-user server (2026-10-24): `scripts/user/aiprover-server` runs a query
   server and DGX reasoning proxy under the user's own account and Claude

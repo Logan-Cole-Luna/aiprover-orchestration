@@ -4,7 +4,7 @@ tools (agents/claude_cli.py).
 Each FILE must be a `.lean` file inside the working directory, a scratch Lake
 project. Every Lean file of the project is checked for constructs that run
 code; if none is found, the files are elaborated with `lake env lean` under
-the Landlock sandbox, which may write only in the project.
+the sandbox of `sandbox.py`, which may write only in the project.
 
 Run with `python3 -I`, so that nothing in the project or the environment is
 imported in place of the orchestration's modules.
