@@ -1,4 +1,5 @@
-"""Run a command under a Landlock sandbox (Linux 6.7 or later, no root).
+"""Run a command under a Landlock sandbox (Linux 6.7 or later, no root) or,
+on macOS, under Seatbelt (`sandbox-exec`).
 
     python3 -I sandbox.py [--read DIR]... [--write DIR]... [--cpu-seconds N]
         -- command [argument]...
@@ -9,13 +10,16 @@ toolchain (`~/.elan`) and the `--read` and `--write` trees, write only in the
 Lake runs to check package sources), and open no TCP connection (Landlock
 ABI 4, Linux 6.7). The environment is replaced by a minimal one, so no
 credential of the caller reaches the command. The script uses the standard
-library only and fails closed: without Landlock ABI 4 it does not run the
-command.
+library only and fails closed: without Landlock ABI 4, or on macOS without
+`sandbox-exec`, it does not run the command.
 
 Not covered by Landlock on this kernel: UDP and Unix-domain sockets, and
 signals to other processes of the user; the minimal environment names no
 socket, and the executable set contains no client for one (`git` has no
-shell to start, and its network transports need TCP).
+shell to start, and its network transports need TCP). Seatbelt applies the
+same file and execution rules, denies every socket, and signals only
+processes of the same sandbox; it permits Mach lookups of system services,
+which the toolchain's runtime uses.
 """
 
 import ctypes
@@ -56,6 +60,27 @@ SYSTEM_EXECUTE = (
 )
 DEVICES = "/dev"
 ELAN_HOME = Path(os.environ.get("ELAN_HOME") or Path.home() / ".elan")
+
+# macOS: the system trees (the dyld cache lies under /System), and the git
+# of the developer tools, which /usr/bin/git starts through xcrun.
+SANDBOX_EXEC = "/usr/bin/sandbox-exec"
+DARWIN_READ = (
+    "/System",
+    "/usr",
+    "/bin",
+    "/private/etc",
+    "/private/var/db/dyld",
+    "/private/var/db/xcode_select_link",
+    "/private/var/select",
+    "/Library/Developer/CommandLineTools",
+    "/Applications/Xcode.app",
+)
+DARWIN_EXECUTE = (
+    "/usr/bin/git",
+    "/usr/bin/xcrun",
+    "/Library/Developer/CommandLineTools/usr",
+    "/Applications/Xcode.app/Contents/Developer",
+)
 
 
 class RulesetAttr(ctypes.Structure):
@@ -126,6 +151,41 @@ def restrict(
     os.close(ruleset)
 
 
+def seatbelt_arguments(
+    read: list[str], write: list[str], execute: list[str]
+) -> list[str]:
+    """`sandbox-exec` arguments that confine the command to the given trees
+    under a deny-by-default profile; the trees are passed as parameters, so
+    no path is quoted into the profile."""
+    parameters = []
+    rules = {}
+    grants = (
+        ("file-read*", [*read, *execute, *write]),
+        ("file-write*", write),
+        ("process-exec", execute),
+    )
+    for operation, paths in grants:
+        for path in filter(os.path.exists, paths):
+            name = f"P{len(parameters) // 2}"
+            parameters += ["-D", f"{name}={path}"]
+            kind = "subpath" if os.path.isdir(path) else "literal"
+            rules.setdefault(operation, []).append(f'({kind} (param "{name}"))')
+    profile = [
+        "(version 1)",
+        "(deny default)",
+        # Apple's base profile of system processes: what dyld and libSystem
+        # read and look up at startup, without user files or the network.
+        '(import "bsd.sb")',
+        "(allow process-fork sysctl-read mach-lookup ipc-posix-shm"
+        " file-read-metadata)",
+        "(allow process-info* (target self))",
+        "(allow signal (target same-sandbox))",
+        f'(allow file-read* file-write* file-ioctl (subpath "{DEVICES}"))',
+        *(f"(allow {op} {' '.join(paths)})" for op, paths in rules.items()),
+    ]
+    return [SANDBOX_EXEC, "-p", "\n".join(profile), *parameters]
+
+
 def minimal_environment(home: str) -> dict[str, str]:
     """The environment of the command: tool paths and nothing else."""
     return {
@@ -154,20 +214,32 @@ def main(arguments: list[str]) -> None:
             sys.exit(f"sandbox.py: unknown option {flag}")
     if not command or not write:
         sys.exit("sandbox.py: a command and a --write tree are required")
-    abi = abi_version()
-    if abi < 4:
-        sys.exit(f"sandbox.py: Landlock ABI {abi} < 4; refusing to run")
     if cpu_seconds:
         resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds))
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
-    restrict(
-        read=[*SYSTEM_READ, *read],
-        write=write,
-        execute=[*SYSTEM_EXECUTE, str(ELAN_HOME)],
-        abi=abi,
-    )
-    environment = minimal_environment(write[0])
-    os.execvpe(command[0], command, environment)
+    elan_home = os.path.realpath(ELAN_HOME)
+    if sys.platform == "darwin":
+        if not os.access(SANDBOX_EXEC, os.X_OK):
+            sys.exit(f"sandbox.py: {SANDBOX_EXEC} not found; refusing to run")
+        command = [
+            *seatbelt_arguments(
+                read=[*DARWIN_READ, *read],
+                write=write,
+                execute=[*DARWIN_EXECUTE, elan_home],
+            ),
+            *command,
+        ]
+    else:
+        abi = abi_version()
+        if abi < 4:
+            sys.exit(f"sandbox.py: Landlock ABI {abi} < 4; refusing to run")
+        restrict(
+            read=[*SYSTEM_READ, *read],
+            write=write,
+            execute=[*SYSTEM_EXECUTE, elan_home],
+            abi=abi,
+        )
+    os.execvpe(command[0], command, minimal_environment(write[0]))
 
 
 if __name__ == "__main__":

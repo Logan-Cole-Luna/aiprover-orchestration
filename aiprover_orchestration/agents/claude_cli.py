@@ -12,7 +12,7 @@ tools, a call runs in a working directory outside the workspace. With Lean
 tools (`tools=True`), it runs in a scratch Lake project of its own, where the
 model may read and write files, search the Mathlib sources and check files
 with `lean-check` (lean/tool_check.py: code-running constructs rejected,
-elaboration under the Landlock sandbox); other commands and files outside the
+elaboration under lean/sandbox.py); other commands and files outside the
 project are denied.
 """
 

@@ -98,7 +98,10 @@ class DirectionTest(TemporaryDirectoryTest):
     def test_direction_once_per_statement(self):
         lemma = Lemma("lem_a", "theorem lem_a (n : Nat) : n + 0 = n")
         sketch = Sketch([lemma], "trivial")
-        run = self.orchestration(ScriptedPool(["1. Apply `add_zero`."]))
+        run = self.orchestration(
+            ScriptedPool(["1. Apply `add_zero`."]),
+            Config(aiprover_condensed_prompt=False),
+        )
         phase = aiprover_phase(run, sketch)
         key = (lemma.name, normalize(lemma.statement))
         proof = run._directed_proof(phase, lemma, "context", key)

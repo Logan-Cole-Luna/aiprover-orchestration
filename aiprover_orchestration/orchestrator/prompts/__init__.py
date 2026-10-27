@@ -146,6 +146,8 @@ REPORT_REVISE_TEMPLATE = template("report_revise")
 INFORMAL_TEMPLATE = template("informal")
 INFORMAL_REFUTATION_TEMPLATE = template("informal_refutation")
 INFORMAL_CHECK_TEMPLATE = template("informal_check")
+PAPER_TEMPLATE = template("paper")
+PAPER_CHECK_TEMPLATE = template("paper_check")
 
 TEMPLATES = {
     name: value

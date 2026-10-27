@@ -64,6 +64,10 @@ class ResumeState:
     # complete (lost model server, interrupted run): its sessions are resumed
     # rather than restarted.
     resumable_jobs: dict[tuple[str, str], str] = field(default_factory=dict)
+    # Proved lemmas of the current sketch whose proof the trace does not
+    # record since the sketch was accepted (a proof kept by a replan after
+    # a rewind); a resumed run records them as reused.
+    unrecorded_proofs: list[str] = field(default_factory=list)
 
     def count_attempt(self, lemma: Lemma) -> None:
         """Count a failed attempt on `lemma`'s statement."""
@@ -170,6 +174,7 @@ def restore_state(document: dict) -> ResumeState:
     )
     statement_of: dict[str, str] = {}  # lemma name -> statement, current sketch
     names_seen: set[str] = set()  # lemma names of every sketch and split
+    recorded: set[str] = set()  # lemmas proved or reused in the sketch
     last_job: dict[str, dict] = {}  # lemma name -> its latest AIProver job
     for step in document.get("steps", []):
         if step["kind"] == "model_call" and step.get("backend") == "aiprover":
@@ -252,6 +257,7 @@ def restore_state(document: dict) -> ResumeState:
                 carry_definitions(lemmas, state.sketch.lemmas)
             state.sketch = Sketch(lemmas, step["main_proof"])
             statement_of = {lemma.name: lemma.statement for lemma in lemmas}
+            recorded = set()
             names_seen |= set(statement_of)
             state.failures = {}
             state.replan_pending = False
@@ -269,7 +275,10 @@ def restore_state(document: dict) -> ResumeState:
             state.reviewed_at[statement_key(lemma.statement)] = step[
                 "attempts"
             ]
+        elif event == "lemma_reused":
+            recorded.add(step["lemma"])
         elif event == "lemma_proved" and step["lemma"] in statement_of:
+            recorded.add(step["lemma"])
             state.proofs[normalize(statement_of[step["lemma"]])] = (
                 step["helpers"],
                 step["proof"],
@@ -377,6 +386,8 @@ def restore_state(document: dict) -> ResumeState:
                 )
                 if not lemma.proved:
                     lemma.helpers = lemma.proof = ""
+                elif lemma.name not in recorded:
+                    state.unrecorded_proofs.append(lemma.name)
             elif lemma.name in state.failures:
                 lemma.last_errors, lemma.last_attempts = state.failures[
                     lemma.name

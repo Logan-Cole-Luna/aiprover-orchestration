@@ -22,6 +22,10 @@ Each informalization also writes results/<run_id>/<slug>_result.jsonl: the run
 as a row of the problem datasets (data/*.jsonl), with the informalization's
 statement and proof and the Lean source.
 
+Write with another model than the recorded writer (`--writer`):
+    python3 -m aiprover_orchestration.orchestrator.reports.informal \\
+        results/<run_id> --writer claude-sonnet-5-5
+
 Recompile a saved informalization and rewrite the row without model calls:
     python3 -m aiprover_orchestration.orchestrator.reports.informal \\
         results/<run_id> --rebuild
@@ -292,10 +296,13 @@ def refutation_parts(lean_source: str) -> tuple[str, list[tuple[str, bool]]]:
     return negation, lemmas
 
 
-def informalize_run(result_dir: Path, reuse_draft: bool = False) -> dict:
+def informalize_run(
+    result_dir: Path, reuse_draft: bool = False, writer_model: str = ""
+) -> dict:
     """Informalize a finished run from its trace, with the writer and reviewer
     the trace records; calls are appended to logs/<run_id>/calls.jsonl. With
-    `reuse_draft`, the writer's last draft in the trace replaces a new one."""
+    `reuse_draft`, the writer's last draft in the trace replaces a new one;
+    `writer_model` replaces the writer's model."""
     trace = json.loads((result_dir / "trace.json").read_text())
     run_id = trace["run_id"]
     state = restore_state(trace)
@@ -328,6 +335,10 @@ def informalize_run(result_dir: Path, reuse_draft: bool = False) -> dict:
     captain = {
         key: value for key, value in specs["captain"].items() if key != "tools"
     }
+    if writer_model:
+        specs = specs | {
+            "writer": (specs.get("writer") or captain) | {"model": writer_model}
+        }
     roles = {
         role: build_agent(role_spec(role, specs.get(role) or captain))
         for role in ("writer", "reviewer")
@@ -394,9 +405,14 @@ if __name__ == "__main__":
         action="store_true",
         help="use the writer's last draft in the trace instead of a new one",
     )
+    parser.add_argument(
+        "--writer", default="", help="writer model in place of the recorded one"
+    )
     arguments = parser.parse_args()
     if arguments.rebuild:
         rebuild(arguments.result_dir / "informal")
     else:
-        record = informalize_run(arguments.result_dir, arguments.reuse_draft)
+        record = informalize_run(
+            arguments.result_dir, arguments.reuse_draft, arguments.writer
+        )
         print(json.dumps(record, indent=1))

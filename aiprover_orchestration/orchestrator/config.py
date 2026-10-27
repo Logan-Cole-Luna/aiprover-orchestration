@@ -180,7 +180,7 @@ class Config:
     # Condense the prompt of a job with a direction: its fixed context keeps
     # only the earlier lemmas the direction names, and the source's proof,
     # from which the captain wrote the direction, is left out.
-    aiprover_condensed_prompt: bool = False
+    aiprover_condensed_prompt: bool = True
     # Seconds between Lean gates of the working files of a job's running
     # sessions; 0 gates a session's answer only when the session ends.
     aiprover_probe_seconds: int = 600

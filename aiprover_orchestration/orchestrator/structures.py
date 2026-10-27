@@ -186,7 +186,8 @@ def reinstated(
     the lemma each is inserted before; `lemmas` is updated. A proved lemma
     is thereby kept with the lemmas it was proved from rather than lost
     with them. Dependencies of reinstated proved lemmas return as well; a
-    lemma whose name the new sketch gives another statement cannot."""
+    refuted lemma cannot, since a proof that uses it is unsound, nor can a
+    lemma whose name the new sketch gives another statement."""
     by_name = {lemma.name: lemma for lemma in earlier}
     kept = {normalize(lemma.statement) for lemma in lemmas}
     pending = [
@@ -199,6 +200,8 @@ def reinstated(
         user = pending.pop()
         present = {lemma.name for lemma in lemmas}
         for name in missing_lemmas(user, set(by_name), present):
+            if by_name[name].refutation:
+                continue
             # Before the lemma that states `user`'s proposition, which
             # the new sketch may have renamed.
             position, before = next(
