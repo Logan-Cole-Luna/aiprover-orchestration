@@ -10,19 +10,7 @@ from aiprover_orchestration.library.store import Store
 from aiprover_orchestration.orchestrator.trace import Trace
 from aiprover_orchestration.server import models
 from aiprover_orchestration.server.jobs import CONFIG, JobStore, Worker
-from tests.support import TemporaryDirectoryTest
-
-
-def job(run_id: str, state: str) -> dict:
-    return {
-        "run_id": run_id,
-        "owner": "tester",
-        "uuid": "u",
-        "title": "t",
-        "dataset": "d",
-        "state": state,
-        "submitted": time.time(),
-    }
+from tests.support import TemporaryDirectoryTest, job
 
 
 class JobStoreTest(TemporaryDirectoryTest):

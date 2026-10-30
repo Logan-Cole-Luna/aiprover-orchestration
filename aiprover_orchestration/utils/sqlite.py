@@ -13,14 +13,28 @@ class SqliteStore:
 
     json_columns: tuple[str, ...] = ()
 
-    def __init__(self, path: Path, schema: str, migrations: list[str] = ()):
+    def __init__(
+        self,
+        path: Path,
+        schema: str,
+        migrations: list[str] = (),
+        readonly: bool = False,
+    ):
         """Open the database at `path` and create its `schema`; each of
-        `migrations` adds a column to a database created before it."""
+        `migrations` adds a column to a database created before it. A
+        read-only store opens an existing database as it is."""
         path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        self._connection = sqlite3.connect(path, check_same_thread=False)
-        self._connection.row_factory = sqlite3.Row
         self._lock = threading.Lock()
+        if not readonly:
+            path.parent.mkdir(parents=True, exist_ok=True)
+        self._connection = sqlite3.connect(
+            f"file:{path}?mode=ro" if readonly else path,
+            uri=readonly,
+            check_same_thread=False,
+        )
+        self._connection.row_factory = sqlite3.Row
+        if readonly:
+            return
         with self._lock:
             self._connection.executescript(schema)
             for statement in migrations:

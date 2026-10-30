@@ -3,29 +3,16 @@ AIPROVER_ORCHESTRATION_HOME, the DGX group of the user's own proxy, run
 processes of the own account only, and Claude roles on the user page only
 on a per-user server."""
 
-import json
 import os
-import subprocess
-import sys
 import unittest
 from unittest import mock
 
 from aiprover_orchestration import paths
 from aiprover_orchestration.server import jobs
-from tests.support import TemporaryDirectoryTest
+from aiprover_orchestration.server.jobs import JobStore
+from tests.support import ServerProcessTest, job
 
-# Submits a problem from the user page of a server whose state lies in the
-# directory given as argument, and prints the response status and body.
-SUBMIT = """
-import json, sys
-from fastapi.testclient import TestClient
-from aiprover_orchestration.server.app import app
-response = TestClient(app).post(
-    "/api/runs",
-    json={"statement": "theorem t : 1 = 1", "proof": "rfl", "gpu_group": "dgx"},
-)
-print(json.dumps([response.status_code, response.json()]))
-"""
+PROBLEM = {"statement": "theorem t : 1 = 1", "proof": "rfl", "gpu_group": "dgx"}
 
 # Prints the module paths and DGX group of a fresh interpreter.
 LOCATIONS = """
@@ -44,26 +31,16 @@ print(json.dumps({
 }))
 """
 
+# Prints what /api/me reports.
+ME = """
+import json
+from fastapi.testclient import TestClient
+from aiprover_orchestration.server.app import app
+print(json.dumps(TestClient(app).get("/api/me").json()))
+"""
 
-class PerUserTest(TemporaryDirectoryTest):
 
-    def run_python(self, code: str, **environment) -> object:
-        env = {
-            key: value
-            for key, value in os.environ.items()
-            if not key.startswith(("AIPROVER_", "QUERY_SERVER_"))
-        }
-        env |= {"AIPROVER_ORCHESTRATION_HOME": str(self.directory)}
-        env |= environment
-        process = subprocess.run(
-            [sys.executable, "-c", code],
-            cwd=paths.ROOT,
-            env=env,
-            capture_output=True,
-            text=True,
-            check=True,
-        )
-        return json.loads(process.stdout.splitlines()[-1])
+class PerUserTest(ServerProcessTest):
 
     def test_state_and_dgx_group_follow_the_environment(self):
         config = self.directory / "dgx.toml"
@@ -84,11 +61,57 @@ class PerUserTest(TemporaryDirectoryTest):
         self.assertEqual(located["slots"], 12)
 
     def test_user_page_takes_claude_roles_only_on_a_per_user_server(self):
-        status, body = self.run_python(SUBMIT)
+        status, body = self.submit(PROBLEM)
         self.assertEqual(status, 400)
         self.assertIn("own Claude login", body["detail"])
-        status, body = self.run_python(SUBMIT, QUERY_SERVER_PER_USER="on")
+        status, body = self.submit(PROBLEM, QUERY_SERVER_PER_USER="on")
         self.assertEqual(status, 201, body)
+
+
+    def test_only_a_per_user_server_shows_its_claude_account(self):
+        me = self.run_python(ME)
+        self.assertEqual((me["per_user"], me["claude_account"]), (False, None))
+
+
+# Lists the development page's runs and tries one read and one action on
+# the user's run given as argument.
+USER_RUN = """
+import json, sys
+from fastapi.testclient import TestClient
+from aiprover_orchestration.server.app import app
+client = TestClient(app)
+run = sys.argv[1]
+print(json.dumps({
+    "dev": [r["run_id"] for r in client.get("/api/runs?page=dev").json()],
+    "user": [r["run_id"] for r in client.get("/api/runs?page=user").json()],
+    "trace": client.get(f"/api/runs/{run}/files/trace.html").text,
+    "cancel": client.delete(f"/api/runs/{run}").status_code,
+}))
+"""
+
+
+class UserRunsTest(ServerProcessTest):
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.home = self.directory / "users" / "alice"
+        JobStore(self.home / "state" / "jobs.db").add(job("r1", "running"))
+        self.trace = self.home / "results" / "r1" / "trace.html"
+        self.trace.parent.mkdir(parents=True)
+
+    def test_development_page_lists_user_runs_read_only(self):
+        self.trace.write_text("alice's trace")
+        listed = self.run_python(USER_RUN, "alice:r1")
+        self.assertEqual(listed["dev"], ["alice:r1"])
+        self.assertEqual(listed["user"], [])
+        self.assertEqual(listed["trace"], "alice's trace")
+        self.assertEqual(listed["cancel"], 403)
+
+    def test_links_out_of_a_user_state_are_not_served(self):
+        (self.directory / "secret").write_text("the owner's secret")
+        self.trace.symlink_to(self.directory / "secret")
+        listed = self.run_python(USER_RUN, "alice:r1")
+        self.assertNotIn("secret", listed["trace"])
 
 
 class RunProcessTest(unittest.TestCase):

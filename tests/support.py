@@ -1,9 +1,14 @@
 """Fixtures shared by the tests: an orchestration without model servers,
 scripted agents, and a stand-in for the AIProver CLI."""
 
+import json
+import os
 import shutil
+import subprocess
+import sys
 import tempfile
 import threading
+import time
 import unittest
 from concurrent.futures import Future
 from pathlib import Path
@@ -164,3 +169,54 @@ class TemporaryDirectoryTest(unittest.TestCase):
             for step in run.trace.document["steps"]
             if step["kind"] == "decision"
         ]
+
+
+# Submits a run from a page of the query server (the body as argument) and
+# prints the response status and body.
+def job(run_id: str, state: str) -> dict:
+    """A job record of the query server's store."""
+    return {
+        "run_id": run_id,
+        "owner": "tester",
+        "uuid": "u",
+        "title": "t",
+        "dataset": "d",
+        "state": state,
+        "submitted": time.time(),
+    }
+
+
+SUBMIT = """
+import json, sys
+from fastapi.testclient import TestClient
+from aiprover_orchestration.server.app import app
+response = TestClient(app).post("/api/runs", json=json.loads(sys.argv[1]))
+print(json.dumps([response.status_code, response.json()]))
+"""
+
+
+class ServerProcessTest(TemporaryDirectoryTest):
+    """Code run in a fresh interpreter whose server state lies in this
+    test's directory: the server reads its settings when it is imported."""
+
+    def run_python(self, code: str, *arguments, **environment) -> object:
+        """The JSON the code prints last."""
+        env = {
+            key: value
+            for key, value in os.environ.items()
+            if not key.startswith(("AIPROVER_", "QUERY_SERVER_"))
+        }
+        env |= {"AIPROVER_ORCHESTRATION_HOME": str(self.directory)}
+        env |= environment
+        process = subprocess.run(
+            [sys.executable, "-c", code, *arguments],
+            cwd=ROOT,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        return json.loads(process.stdout.splitlines()[-1])
+
+    def submit(self, body: dict, **environment) -> tuple[int, dict]:
+        return self.run_python(SUBMIT, json.dumps(body), **environment)

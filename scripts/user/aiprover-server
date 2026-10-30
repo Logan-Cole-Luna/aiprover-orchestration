@@ -1,16 +1,25 @@
 #!/bin/sh
 # aiprover-server: a query server of your own account, whose runs use your
-# own Claude login (`claude auth login`, once).
+# own Claude login (`claude auth login`, once, through Anthropic's own flow).
 #
+# From your own machine, one command signs in on first use, starts the server and holds the tunnel
+# to its page (`aiprover-server ssh` prints it with your port):
+#   ssh -t -L PORT:127.0.0.1:PORT USER@VM /home/loganluna/workspace/aiprover_orchestration/scripts/user/aiprover-server serve
+#
+#   scripts/user/aiprover-server serve     as start, then wait until the connection closes (the server keeps running)
 #   scripts/user/aiprover-server [start]   sign in if needed; start the server and its reasoning proxy
 #   scripts/user/aiprover-server stop      stop both (runs in progress continue and are adopted on start)
 #   scripts/user/aiprover-server status
-#   scripts/user/aiprover-server ssh       the tunnel command for your own machine
+#   scripts/user/aiprover-server ssh       the command for your own machine
+#
+# Ports: the server listens on 20000 + 2 * (uid mod 5000), the proxy on the next port, so a user's
+# command does not change; AIPROVER_SERVER_PORT and AIPROVER_PROXY_PORT override them.
 #
 #   --allow-owner   run as the owner of the checkout (who otherwise runs the systemd service)
 #
 # Environment:
-#   AIPROVER_ORCHESTRATION_HOME  runtime state (default ~/.local/share/aiprover_orchestration)
+#   AIPROVER_ORCHESTRATION_HOME  runtime state (default users/<account> of the checkout, where the
+#                                owner has created it, else ~/.local/share/aiprover_orchestration)
 #   AIPROVER_MAX_PARALLEL        this server's AIProver rollouts on the DGX (default 12 of 48)
 #   AIPROVER_PYTHON              interpreter (default the owner's lean_env)
 #
@@ -22,7 +31,11 @@ set -eu
 ROOT=$(cd "$(dirname "$0")/../.." && pwd -P)
 OWNER=$(stat -c %U "$ROOT")
 OWNER_HOME=$(getent passwd "$OWNER" | cut -d: -f6)
-HOME_DIR=${AIPROVER_ORCHESTRATION_HOME:-${XDG_DATA_HOME:-$HOME/.local/share}/aiprover_orchestration}
+# State kept in the checkout (users/<account>, with an ACL for the account)
+# is readable by its owner; otherwise it is private to the account.
+SHARED_HOME=$ROOT/users/$(id -un)
+[ -d "$SHARED_HOME" ] || SHARED_HOME=${XDG_DATA_HOME:-$HOME/.local/share}/aiprover_orchestration
+HOME_DIR=${AIPROVER_ORCHESTRATION_HOME:-$SHARED_HOME}
 PYTHON=${AIPROVER_PYTHON:-$OWNER_HOME/lean_env/bin/python3}
 MAX_PARALLEL=${AIPROVER_MAX_PARALLEL:-12}
 ELAN_HOME=$OWNER_HOME/.elan
@@ -31,7 +44,9 @@ DGX_MODEL="aip-leanstral"
 VM_ADDRESS="129.114.35.157"
 STATE=$HOME_DIR/state
 PIDS=$STATE/pids
-PORTS=$STATE/ports
+PORT_BASE=$((20000 + 2 * ($(id -u) % 5000)))
+SERVER_PORT=${AIPROVER_SERVER_PORT:-$PORT_BASE}
+PROXY_PORT=${AIPROVER_PROXY_PORT:-$((PORT_BASE + 1))}
 
 say() { printf '%s\n' "$*"; }
 die() {
@@ -45,22 +60,32 @@ port_free() {
   "$PYTHON" -c 'import socket, sys; socket.socket().bind(("127.0.0.1", int(sys.argv[1])))' "$1" 2>/dev/null
 }
 
-free_port() {
-  "$PYTHON" -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])'
+# The user's fixed ports, unless another process holds one.
+check_ports() {
+  running server || port_free "$SERVER_PORT" \
+    || die "port $SERVER_PORT is in use; choose another with AIPROVER_SERVER_PORT (and in ssh -L)"
+  running proxy || port_free "$PROXY_PORT" \
+    || die "port $PROXY_PORT is in use; choose another with AIPROVER_PROXY_PORT"
 }
 
-# Ports of the last start, kept while free; new ones otherwise.
-choose_ports() {
-  SERVER_PORT="" PROXY_PORT=""
-  [ -f "$PORTS" ] && . "$PORTS"
-  running server || { [ -n "$SERVER_PORT" ] && port_free "$SERVER_PORT"; } || SERVER_PORT=$(free_port)
-  running proxy || { [ -n "$PROXY_PORT" ] && port_free "$PROXY_PORT"; } || PROXY_PORT=$(free_port)
-  printf 'SERVER_PORT=%s\nPROXY_PORT=%s\n' "$SERVER_PORT" "$PROXY_PORT" >"$PORTS"
+# `claude auth status` reads the stored login without checking it, so an
+# expired session passes it; one short request checks the login itself.
+# Returns 0 if it is answered, 1 if Claude rejects the login, and 2 for any
+# other failure (network, rate limit), which keeps the stored login.
+check_login() {
+  reply=$(cd / && claude -p --tools "" --no-session-persistence --setting-sources "" \
+    --strict-mcp-config "Reply with OK." </dev/null 2>&1) && return 0
+  case $(printf '%s' "$reply" | tr '[:upper:]' '[:lower:]') in
+    *login* | *log\ in* | *authenticat* | *expired* | *401* | *oauth* | *"api key"*) return 1 ;;
+  esac
+  say "claude did not answer; keeping the stored login: $(printf '%s' "$reply" | tail -n 1)"
+  return 2
 }
 
-logged_in() {
-  claude auth status --json 2>/dev/null \
-    | "$PYTHON" -c 'import json, sys; sys.exit(not json.load(sys.stdin).get("loggedIn"))'
+login_rejected() {
+  state=0
+  check_login || state=$?
+  [ "$state" = 1 ]
 }
 
 # The unmodified `claude` binary, signed in to the user's own account. Without
@@ -72,16 +97,18 @@ sign_in() {
     export DISABLE_AUTOUPDATER=1
     say "Using the shared claude binary; to install your own: curl -fsSL https://claude.ai/install.sh | bash"
   fi
-  logged_in && return
-  say "Sign in to Claude with your own account (once; the login is kept in ~/.claude)."
+  login_rejected || return 0
+  [ -t 0 ] || die "not signed in to Claude; sign in from a terminal (ssh -t)"
+  say "Sign in to Claude with your own account (the login is kept in ~/.claude)."
+  claude auth logout >/dev/null 2>&1 || true
   claude auth login
-  logged_in || die "not signed in to Claude"
+  ! login_rejected || die "not signed in to Claude"
 }
 
 # Runtime state: a Lake project on the shared Mathlib packages, an empty
 # library folder, and the DGX harness configuration of this server's proxy.
 prepare() {
-  mkdir -p "$HOME_DIR" && chmod 700 "$HOME_DIR"
+  [ -d "$HOME_DIR" ] || { mkdir -p "$HOME_DIR" && chmod 700 "$HOME_DIR"; }
   mkdir -p "$PIDS" "$HOME_DIR/bin" "$HOME_DIR/results" "$HOME_DIR/logs" \
     "$HOME_DIR/temp" "$HOME_DIR/libraries" "$HOME_DIR/aiprover/work"
   workspace=$HOME_DIR/orchestration_workspace
@@ -100,27 +127,45 @@ prepare() {
     "$ROOT/configs/aiprover/dgx.toml" >"$STATE/aiprover_dgx.toml"
 }
 
+# A process started before the last change of its code is restarted, so a
+# start always serves the current code; runs in progress continue. The
+# proxy, which carries the model requests of running sessions, restarts
+# only for a change of its own module. A process that has not exited after
+# STOP_SECONDS (open page streams delay the server's shutdown) is killed.
+STOP_SECONDS=15
 launch() {
   name=$1
   shift
-  running "$name" && return
+  code=$ROOT/aiprover_orchestration
+  [ "$name" = proxy ] && code=$code/server/reasoning_proxy.py
+  if running "$name"; then
+    [ -z "$(find "$code" -name '*.py' -newer "$PIDS/$name" | head -n 1)" ] && return
+    say "restarting the $name: the code changed since it started"
+    pid=$(cat "$PIDS/$name")
+    kill "$pid"
+    waited=0
+    while running "$name" && [ "$waited" -lt "$STOP_SECONDS" ]; do
+      sleep 1
+      waited=$((waited + 1))
+    done
+    ! running "$name" || kill -9 "$pid" 2>/dev/null || true
+  fi
   setsid nohup "$@" >>"$HOME_DIR/logs/$name.log" 2>&1 </dev/null &
   echo $! >"$PIDS/$name"
 }
 
 tunnel() {
-  . "$PORTS"
-  say "On your own machine:"
-  say "  ssh -N -L $SERVER_PORT:127.0.0.1:$SERVER_PORT $(id -un)@$VM_ADDRESS"
+  say "On your own machine (signs in on first use, starts the server and holds the tunnel):"
+  say "  ssh -t -L $SERVER_PORT:127.0.0.1:$SERVER_PORT $(id -un)@$VM_ADDRESS $ROOT/scripts/user/aiprover-server serve"
   say "then open http://localhost:$SERVER_PORT/user"
 }
 
 start() {
   mkdir -p "$HOME_DIR/bin" "$PIDS"
-  export PATH="$HOME_DIR/bin:$(dirname "$PYTHON"):$ELAN_HOME/bin:$PATH"
+  export PATH="$HOME_DIR/bin:$HOME/.local/bin:$(dirname "$PYTHON"):$ELAN_HOME/bin:$PATH"
   unset ANTHROPIC_API_KEY
   sign_in
-  choose_ports
+  check_ports
   prepare
   export AIPROVER_ORCHESTRATION_HOME="$HOME_DIR" \
     AIPROVER_DGX_CONFIG="$STATE/aiprover_dgx.toml" \
@@ -143,7 +188,16 @@ start() {
     sleep 1
   done
   say "Server on 127.0.0.1:$SERVER_PORT, reasoning proxy on 127.0.0.1:$PROXY_PORT; state in $HOME_DIR"
-  tunnel
+}
+
+# Started from `ssh -t -L ...`: the connection holds the tunnel until Ctrl+C;
+# the server and its runs continue after it closes.
+serve() {
+  start
+  say "Open http://localhost:$SERVER_PORT/user (Ctrl+C closes the tunnel; the server keeps running)."
+  trap 'exit 0' INT TERM HUP
+  while running server; do sleep 5; done
+  die "the server stopped; see $HOME_DIR/logs/server.log"
 }
 
 stop() {
@@ -154,11 +208,10 @@ stop() {
 }
 
 status() {
-  [ -f "$PORTS" ] && . "$PORTS"
   for name in server proxy; do
     if running "$name"; then say "$name: running (pid $(cat "$PIDS/$name"))"; else say "$name: stopped"; fi
   done
-  say "ports: server ${SERVER_PORT:-none}, proxy ${PROXY_PORT:-none}; state: $HOME_DIR"
+  say "ports: server $SERVER_PORT, proxy $PROXY_PORT; state: $HOME_DIR"
   PATH="$HOME_DIR/bin:$PATH" claude auth status 2>/dev/null || say "claude: not signed in"
 }
 
@@ -166,7 +219,7 @@ COMMAND=start
 ALLOW_OWNER=no
 for argument in "$@"; do
   case $argument in
-    start | stop | status | ssh) COMMAND=$argument ;;
+    serve | start | stop | status | ssh) COMMAND=$argument ;;
     --allow-owner) ALLOW_OWNER=yes ;;
     *) die "unknown argument $argument" ;;
   esac
@@ -175,8 +228,9 @@ done
   || die "$OWNER runs the shared systemd service; pass --allow-owner for a separate server"
 
 case $COMMAND in
-  start) start ;;
+  serve) serve ;;
+  start) start; tunnel ;;
   stop) stop ;;
   status) status ;;
-  ssh) [ -f "$PORTS" ] || die "not started"; tunnel ;;
+  ssh) tunnel ;;
 esac

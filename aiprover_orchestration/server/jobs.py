@@ -311,8 +311,8 @@ def progress_count(run_id: str) -> int:
 class JobStore(SqliteStore):
     """SQLite-backed job records; safe to share between threads."""
 
-    def __init__(self, path: Path = DATABASE):
-        super().__init__(path, SCHEMA, MIGRATIONS)
+    def __init__(self, path: Path = DATABASE, readonly: bool = False):
+        super().__init__(path, SCHEMA, MIGRATIONS, readonly)
 
     def add(self, job: dict) -> None:
         self._insert("jobs", job)

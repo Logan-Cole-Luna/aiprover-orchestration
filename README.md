@@ -136,25 +136,33 @@ written to `results/<slug>_skill_<date>/`.
 
 ## 3. Using a running server
 
-A query server already running on a host (section 1) can be used without
-any setup. With an account on that host, forward its port:
+A query server on a host (section 1) can be used without any setup. Its
+runs use the submitting user's own Claude subscription; therefore each user
+runs a server of their own on the host, under their own account. With an
+account on the host, one command from the user's own machine signs in to
+Claude on first use, starts the server, and forwards its page:
 
 ```bash
-ssh -N -L 8443:localhost:8443 <user>@<server-host>
+ssh -t -L PORT:127.0.0.1:PORT <user>@<host> \
+    /home/loganluna/workspace/aiprover_orchestration/scripts/user/aiprover-server serve
 ```
 
-Then open http://localhost:8443 (it leads to `/user`); `ssh` holds the
-connection until Ctrl+C. When 8443 is in use locally, forward another port
-(`-L 8450:localhost:8443`, then http://localhost:8450). The page submits an
-informal statement and proof, or a problem of the open and OpenAI math
-datasets, and lists the proved OpenAI problems and the runs submitted from
-it with their Lean files, reports and traces. A cancelled or unproved run
-has a Resume button that continues it from its trace.
+`PORT` is fixed per account (20000 + 2 × (uid mod 5000)); on the host,
+`aiprover-server ssh` prints the complete command. On first use the command
+runs `claude auth login`, which prints Anthropic's sign-in link; the sign-in
+completes in the browser on Anthropic's site, and the login is kept in the
+user's `~/.claude` on the host. No Claude credential passes through the
+page or the server. Then open `http://localhost:PORT/user`; Ctrl+C closes the
+connection, while the server and its runs continue (`aiprover-server stop`
+ends the server). Pro and Max limits assume individual use, which long runs
+exhaust quickly.
 
-Runs with Claude roles use the submitting user's own Claude login: each
-user starts a server under their own account with
-`scripts/user/aiprover-server`, which signs in once and prints the tunnel
-command (`docs/server.md`, "Per-user server").
+The page submits an informal statement and proof, or a problem of the open
+and OpenAI math datasets, and lists the proved OpenAI problems and the runs
+submitted from it with their Lean files, reports, and traces. A cancelled or
+unproved run has a Resume button that continues it from its trace. The
+form's "Orchestrator settings" set a run's hand-backs, retries, attempts, and
+Claude budget, among others.
 
 ## 4. Layout
 
