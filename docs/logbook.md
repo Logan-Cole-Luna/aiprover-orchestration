@@ -392,6 +392,39 @@ Results
 
 ## Done
 
+- Machine limits (2026-10-30): `limits.py` holds `flock` slots in a directory
+  shared by all runs and users, with limits derived from the machine's memory
+  and processors and replaced by environment variables (`AIPROVER_MAX_HOSTED`,
+  `AIPROVER_MAX_LEAN`, `AIPROVER_MAX_SESSIONS`, `AIPROVER_LEAN_MB`). Hosted
+  model calls, Lean processes (including `lean-check`), and AIProver jobs draw
+  on them. Lean runs with `-M`. A lemma waits for a free session slot instead
+  of starting a job beyond the run's slots, so `aiprover_lemma_concurrency`
+  stays 0. The call budget reserves a call before it starts. A stopped Claude
+  call ends its process group, and a failed chat chain ends its phase. Tests
+  in `tests/test_limits.py`.
+
+- Exact sketch assumptions (2026-10-30): an Open theorem's module states it
+  as an axiom, so a proof's axioms name exactly the children it assumes.
+  Modules published with `sorry` must be published again before a sketch can
+  use them. A resumed run keeps its earlier summary as
+  `summary.previous.json`, so that summary is not read as its outcome.
+
+- Library and filter soundness (2026-10-30): a published theorem is the last
+  declaration of its module, which holds no other `sorry`; names that map to
+  one module are rejected. The comment stripper
+  recognizes identifiers in guillemets, and the filters see attributes before
+  declarations and the `attribute` command. Tests in `tests/test_stores.py`
+  and `tests/test_text.py`.
+
+- Run recovery (2026-10-30): an AIProver job without samples and a CLI timeout
+  are infrastructure failures, which spend no attempt and resume the run. Library
+  extension precedes the report and the informalization. The final budget
+  step no longer lowers `max_claude_calls`.
+
+- Run form and sharing (2026-10-30): the Lean tool choices of the form reach
+  the run. Shared copies redact dictionary keys and file and run names, and
+  omit binary files of runs whose trace holds a redacted string.
+
 - Development page lists per-user runs (2026-10-29): runs of the servers
   with state in `users/<account>` appear on `/dev` of the shared server as
   `<account>:<run_id>`, read-only (`JobStore(readonly=True)`); their actions

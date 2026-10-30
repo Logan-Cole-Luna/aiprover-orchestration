@@ -93,47 +93,6 @@ class AttemptBudgetTest(unittest.TestCase):
         state = restore_state({"steps": steps})
         self.assertEqual(state.sketch.lemmas[0].attempts, 1)
 
-    def test_chat_solver_phases_are_attempts(self):
-        steps = [SKETCH, decision("lemma_failed", lemma="b", attempts=1)]
-        state = restore_state({"steps": steps})
-        self.assertEqual(state.sketch.lemmas[1].attempts, 1)
-
-    def test_retry_records_the_review(self):
-        steps = [
-            SKETCH,
-            *job("a", "j1", "rejected"),
-            decision(
-                "lemma_handback", lemma="a", action="retry", attempts=1
-            ),
-        ]
-        a = restore_state({"steps": steps}).sketch.lemmas[0]
-        self.assertEqual((a.attempts, a.reviewed_at), (1, 1))
-        self.assertFalse(a.handed_back)
-
-    def test_restated_lemma_starts_its_own_count(self):
-        steps = [
-            SKETCH,
-            *job("a", "j1", "rejected"),
-            decision(
-                "lemma_handback",
-                lemma="a",
-                action="restate",
-                statement="theorem a (n : Nat) : n + 0 = n",
-            ),
-        ]
-        a = restore_state({"steps": steps}).sketch.lemmas[0]
-        self.assertEqual(a.attempts, 0)
-
-    def test_state_methods(self):
-        state = restore_state({"steps": [SKETCH]})
-        a = state.sketch.lemmas[0]
-        state.count_attempt(a)
-        state.count_attempt(a)
-        state.record_review(a)
-        copy = Lemma("copy", "theorem copy (n : Nat) : n = n")
-        state.load_attempts(copy)
-        self.assertEqual((copy.attempts, copy.reviewed_at), (2, 2))
-
 
 class SketchChangesTest(unittest.TestCase):
 

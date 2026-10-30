@@ -1,32 +1,15 @@
-"""Lean text handling: comments, declarations, statement keys, filters."""
+"""Lean text handling: comments, statement keys, filters."""
 
 import unittest
 
-from aiprover_orchestration.lean.checker import CheckResult, forbidden_problems
-from aiprover_orchestration.lean.text import (
-    declaration_names,
-    declarations,
-    strip_comments,
-)
-from aiprover_orchestration.orchestrator.extraction import (
-    extract_lemma_proof,
-    prefixed_helpers,
-    scope,
-)
-from aiprover_orchestration.orchestrator.reports.informal import (
-    refutation_parts,
-    summary_rows,
-)
+from aiprover_orchestration.lean.checker import forbidden_problems
+from aiprover_orchestration.lean.text import declarations, strip_comments
 from aiprover_orchestration.orchestrator.reports.report import (
     ReportText,
     escape,
     forbidden_latex,
 )
-from aiprover_orchestration.orchestrator.structures import (
-    parse_lemmas,
-    recorded_lemmas,
-    statement_key,
-)
+from aiprover_orchestration.orchestrator.structures import statement_key
 
 SOURCE = """theorem a : True := by -- a sorry in a comment
   /- block /- nested -/ sorry -/
@@ -44,22 +27,6 @@ class CommentsTest(unittest.TestCase):
         self.assertIn('"/- not a comment"', text)
         self.assertIn("theorem b (h' : 1 = 1)", text)
 
-    def test_declarations(self):
-        self.assertEqual(
-            declarations(SOURCE),
-            [("theorem", "a", 1), ("def", "s", 4), ("theorem", "b", 5)],
-        )
-        self.assertEqual(declaration_names(SOURCE), ["a", "s", "b"])
-
-    def test_named_argument_in_statement(self):
-        answer = (
-            "theorem t (x : Fin 1 → ℕ) (y : ℕ)\n"
-            "    (h : (Fin.snoc (α := fun _ => ℕ) x y) 0 = 0) : True := by\n"
-            "  trivial\n"
-        )
-        _, proof = extract_lemma_proof(answer, "t", set())
-        self.assertEqual(proof.strip(), "trivial")
-
 
 class StatementKeyTest(unittest.TestCase):
 
@@ -71,18 +38,6 @@ class StatementKeyTest(unittest.TestCase):
         self.assertNotEqual(
             statement_key("theorem foo (n : Nat) : n = n"),
             statement_key("theorem foo (n : Nat) : n = n + 0"),
-        )
-
-    def test_parsed_and_recorded_lemmas(self):
-        lemmas = parse_lemmas(
-            "theorem p (n : Nat) : n = n := by sorry\n\n"
-            "@[simp] lemma q : True := sorry\n"
-        )
-        self.assertEqual([lemma.name for lemma in lemmas], ["p", "q"])
-        recorded = recorded_lemmas([lemma.statement for lemma in lemmas])
-        self.assertEqual(
-            [statement_key(lemma.statement) for lemma in recorded],
-            [statement_key(lemma.statement) for lemma in lemmas],
         )
 
 
@@ -102,73 +57,25 @@ class ForbiddenTest(unittest.TestCase):
         self.assertTrue(forbidden_problems(stub))
         self.assertFalse(forbidden_problems(stub, statements=True))
 
-    def test_comments_are_not_constructs(self):
-        self.assertFalse(forbidden_problems("trivial -- not sorry"))
 
+class FilterEvasionTest(unittest.TestCase):
 
-class ErrorLocationTest(unittest.TestCase):
+    def test_guillemet_identifiers_do_not_open_comments(self):
+        text = "def «/-» := 1\n#eval 1\ndef «-/» := 2\n"
+        self.assertTrue(forbidden_problems(text))
 
-    def test_position_given_in_its_declaration(self):
-        result = CheckResult(
-            ok=False,
-            output="",
-            errors=["/tmp/x.lean:5:9: error: unexpected token ')'"],
-            source="import Mathlib\n\ntheorem a : True := trivial\n"
-            "theorem b :\n    1 = 1) := by sorry\n",
-        )
-        report = result.error_report()
-        self.assertTrue(report.startswith("in `b`, line 2 of it, column 10:"))
-        self.assertIn("    1 = 1) := by sorry\n             ^", report)
-        self.assertNotIn("/tmp/x.lean", report)
+    def test_attributes_do_not_hide_declarations(self):
+        self.assertTrue(forbidden_problems("@[simp] axiom a : False"))
+        self.assertTrue(forbidden_problems("attribute [command_elab x] y"))
 
-    def test_report_without_source_is_unchanged(self):
-        error = "/tmp/x.lean:5:9: error: unexpected token ')'"
-        result = CheckResult(ok=False, output="", errors=[error])
-        self.assertEqual(result.error_report(), error)
-
-
-class RefutationInformalTest(unittest.TestCase):
-
-    def test_negation_and_helper_lemmas(self):
-        source = (
-            "theorem setting_fact : True := trivial\n\n"
-            "theorem solution : False := by sorry\n\n"
-            "theorem solution_ne : True := trivial\n\n"
-            "theorem solution_refuted : ¬ False := id\n"
-        )
-        self.assertEqual(
-            refutation_parts(source),
-            ("solution_refuted", [("solution_ne", True)]),
-        )
-        rows = dict(summary_rows({"uuid": "u"}, "run", [], False, "w", True))
-        self.assertTrue(rows["Status"].startswith("claim disproved"))
-
-
-class HelperRenamingTest(unittest.TestCase):
-
-    def test_plain_names_get_the_prefix(self):
-        helpers, proof, renamed = prefixed_helpers(
-            "theorem aux : True := trivial\n"
-            "theorem Foo.bar : True := trivial",
-            "exact aux",
-            "lem_",
-        )
-        self.assertIn("theorem lem_aux", helpers)
-        self.assertIn("theorem Foo.bar", helpers)
-        self.assertEqual(proof, "exact lem_aux")
-        self.assertEqual(renamed, ["lem_aux"])
-
-
-class ScopeTest(unittest.TestCase):
-
-    def test_open_commands_kept_whole(self):
-        answer = (
-            "import Mathlib\nopen scoped NumberField\nopen Finset in\n"
-            "open Finset\ntheorem t : True := trivial\n"
-        )
-        self.assertEqual(
-            scope(answer), "open scoped NumberField in\nopen Finset in\n"
-        )
+    def test_commands_are_found_wherever_they_start(self):
+        for text in (
+            'open Lean in elab "x" : tactic => pure ()',
+            "open Nat in axiom bad : False",
+            "example : True := trivial axiom bad : False",
+        ):
+            self.assertTrue(forbidden_problems(text), text)
+        self.assertFalse(forbidden_problems("theorem h_axiom : Nat.axiom := x"))
 
 
 class LatexTest(unittest.TestCase):

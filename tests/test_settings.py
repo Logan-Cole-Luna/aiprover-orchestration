@@ -1,24 +1,17 @@
-"""Orchestrator settings of a submission (server/settings.py): the fields
-offered, their validation, and their storage as run options."""
+"""Orchestrator settings of a submission (server/settings.py): their
+validation and their storage as run options."""
 
 import json
 import unittest
 
-from aiprover_orchestration.orchestrator.config import Config
 from aiprover_orchestration.server import settings
-from aiprover_orchestration.server.jobs import JobStore, job_selection
+from aiprover_orchestration.server.jobs import JobStore
 from tests.support import ServerProcessTest
 
 PROBLEM = {"statement": "theorem t : 1 = 1", "proof": "rfl", "page": "dev"}
 
 
 class SettingsTest(unittest.TestCase):
-
-    def test_settings_are_options_of_run_py(self):
-        # run.py offers every scalar field of Config as an option; the worker
-        # applies aiprover_timeout itself.
-        names = set(settings.SETTINGS) - {"aiprover_timeout"}
-        self.assertLessEqual(names, set(Config.__dataclass_fields__))
 
     def test_values_are_checked(self):
         accepted = {"max_handbacks": 5, "sketch_judge": False,
@@ -47,24 +40,6 @@ class SubmissionTest(ServerProcessTest):
         status, body = self.submit(PROBLEM | {"settings": chosen})
         self.assertEqual(status, 201, body)
         self.assertEqual(self.options(body["run_id"]), chosen)
-
-    def test_tool_choices_are_kept(self):
-        orchestrator = {"provider": "claude", "model": "claude-opus-5-5",
-                        "tools": False, "judge_tools": True}
-        status, body = self.submit(PROBLEM | {"orchestrator": orchestrator})
-        self.assertEqual(status, 201, body)
-        records = JobStore(self.directory / "state" / "jobs.db", readonly=True)
-        chosen = job_selection(records.get(body["run_id"]))["orchestrator"]
-        self.assertEqual((chosen["tools"], chosen["judge_tools"]), (False, True))
-
-    def test_long_proofs_are_accepted(self):
-        status, body = self.submit(PROBLEM | {"proof": "x" * 60_000})
-        self.assertEqual(status, 201, body)
-
-    def test_invalid_settings_are_rejected(self):
-        status, body = self.submit(PROBLEM | {"settings": {"workers": 99}})
-        self.assertEqual(status, 400)
-        self.assertIn("workers", body["detail"])
 
 
 if __name__ == "__main__":

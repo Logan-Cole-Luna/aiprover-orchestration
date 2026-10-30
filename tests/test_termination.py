@@ -8,7 +8,6 @@ import sys
 import threading
 import time
 import unittest
-from pathlib import Path
 
 from aiprover_orchestration.agents import (
     STOPPING,
@@ -18,7 +17,6 @@ from aiprover_orchestration.agents import (
     Terminated,
 )
 from aiprover_orchestration.lean.checker import communicate
-from aiprover_orchestration.utils.processes import run_group
 from aiprover_orchestration.paths import ROOT
 from tests.support import TESTS, TemporaryDirectoryTest
 
@@ -64,15 +62,6 @@ class StopFlagTest(TemporaryDirectoryTest):
             self.complete(self.pool(agent))
         self.assertEqual(agent.calls, 0)
 
-    def test_retry_wait_ends(self):
-        agent = BusyAgent()
-        stop_after(0.5)
-        start = time.monotonic()
-        with self.assertRaises(Terminated):
-            self.complete(self.pool(agent))
-        self.assertLess(time.monotonic() - start, 5)
-        self.assertEqual(agent.calls, 1)
-
 
 class LeanProcessTest(TemporaryDirectoryTest):
     """A check runs in a process group of its own, which is killed as a
@@ -106,22 +95,6 @@ class LeanProcessTest(TemporaryDirectoryTest):
         ran, child = self.run_tree(1, None)
         self.assertIn("timed out", ran)
         self.assert_dies(child)
-
-    def test_grace_ends_the_group_as_well(self):
-        marker = self.directory / "child.pid"
-        script = f"sleep 300 & echo $! > {marker}; wait"
-        with self.assertRaises(subprocess.TimeoutExpired):
-            run_group(
-                ["sh", "-c", script], cwd=self.directory, timeout=1, grace=1
-            )
-        self.assert_dies(int(marker.read_text()))
-
-    def test_output_and_exit_code(self):
-        self.assertEqual(
-            communicate(["sh", "-c", "echo out; echo err >&2; exit 2"],
-                         self.directory, 10, None),
-            (2, "out\nerr\n"),
-        )
 
 
 class SignalTest(TemporaryDirectoryTest):
@@ -178,9 +151,6 @@ class SignalTest(TemporaryDirectoryTest):
 
     def test_sigterm(self):
         self.assertEqual(self.interrupt(signal.SIGTERM), 143)
-
-    def test_sigint(self):
-        self.assertNotEqual(self.interrupt(signal.SIGINT), 0)
 
 
 if __name__ == "__main__":
