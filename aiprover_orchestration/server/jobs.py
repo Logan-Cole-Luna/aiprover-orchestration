@@ -119,6 +119,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     gpu_group   TEXT,                        -- GPU group (vista.GPU_GROUPS); NULL = main
     hidden      INTEGER NOT NULL DEFAULT 0,  -- 1: left out of the page's run list
     page        TEXT,                        -- page submitting (app.PAGES); NULL = dev
+    problem_group TEXT,                      -- group named at submission; NULL = by dataset
     imported    TEXT                         -- imported run: "resume" or "view"; else NULL
 );
 -- Vista server jobs submitted by the worker (only these are cancelled when idle).
@@ -141,6 +142,7 @@ MIGRATIONS = [
     "ALTER TABLE jobs ADD COLUMN gpu_group TEXT",
     "ALTER TABLE jobs ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0",
     "ALTER TABLE jobs ADD COLUMN imported TEXT",
+    "ALTER TABLE jobs ADD COLUMN problem_group TEXT",
     "ALTER TABLE vista_jobs ADD COLUMN gpu_group TEXT",
     "ALTER TABLE jobs ADD COLUMN page TEXT",
 ]
