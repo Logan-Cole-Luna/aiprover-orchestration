@@ -157,6 +157,12 @@ connection, while the server and its runs continue (`aiprover-server stop`
 ends the server). Pro and Max limits assume individual use, which long runs
 exhaust quickly.
 
+Concurrency is bounded per machine, across runs and users: hosted model calls,
+Lean processes, and AIProver sessions wait for slots whose number follows from
+the machine's memory and processors. `AIPROVER_MAX_HOSTED`, `AIPROVER_MAX_TOOL_CALLS`, `AIPROVER_MAX_LEAN`,
+`AIPROVER_MAX_SESSIONS`, and `AIPROVER_LEAN_MB` (for checks; builds use 8192 MB)
+replace the derived limits.
+
 The page submits an informal statement and proof, or a problem of the open
 and OpenAI math datasets, and lists the proved OpenAI problems and the runs
 submitted from it with their Lean files, reports, and traces. A cancelled or

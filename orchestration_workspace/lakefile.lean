@@ -6,6 +6,9 @@ open Lake DSL
 -- links.
 package «orchestration» where
   leanOptions := #[⟨`autoImplicit, false⟩]
+  -- `limits.MAX_LEAN_MB`: the bound of builds, which AIPROVER_LEAN_MB does
+  -- not change; `lake env lean` takes `limits.lean_megabytes()`.
+  weakLeanArgs := #["-M8192"]
 
 require mathlib from git
   "https://github.com/leanprover-community/mathlib4" @ "v4.23.0"

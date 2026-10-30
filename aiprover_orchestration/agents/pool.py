@@ -41,8 +41,10 @@ import logging
 import os
 import threading
 import time
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
+from ..limits import HOSTED, TOOL_CALLS
 from ..orchestrator.trace import REFUSAL_MARKER, is_untraced
 from .base import (
     STOPPING,
@@ -170,6 +172,8 @@ class AgentPool:
         self._lock = threading.Lock()
         self.num_calls: dict[str, int] = {}
         self.claude_calls = 0
+        # Calls under way, which the budget counts before they are billed.
+        self._claude_calls_reserved = 0
         self.usage_by_model: dict[str, dict] = {}
         if self.calls_path.exists():
             self._load_history()
@@ -245,37 +249,38 @@ class AgentPool:
         once the run is terminating: no call starts and no retry waits.
         """
         agent = self.agents[role].for_phase(phase)
-        if agent.hosted and self.max_claude_calls:
-            self._check_claude_budget()
-        completion = Completion()
-        for attempt in range(agent.max_retries + 1):
-            raise_if_stopping()
-            start = time.time()
-            completion = agent.complete_once(prompt, system_prompt)
-            self._record(
-                role,
-                phase,
-                agent,
-                system_prompt,
-                prompt,
-                completion,
-                time.time() - start,
-                trace_fields,
-            )
-            if completion.error is None:
-                return completion.text
-            if not completion.retryable or attempt == agent.max_retries:
-                break
-            wait = completion.retry_after_s
-            if wait is None:
-                wait = self.BACKOFF_S[min(attempt, len(self.BACKOFF_S) - 1)]
-            logger.warning(
-                f"[{role}/{phase}] transient failure, retrying in "
-                f"{wait:.0f}s: {completion.error[:200]}"
-            )
-            # A terminated run stops waiting, so the process can exit.
-            if STOPPING.wait(max(wait, 1.0)):
-                raise Terminated
+        with self._budget_reservation(agent):
+            completion = Completion()
+            for attempt in range(agent.max_retries + 1):
+                raise_if_stopping()
+                start = time.time()
+                with self._machine_slots(agent):
+                    raise_if_stopping()
+                    completion = agent.complete_once(prompt, system_prompt)
+                self._record(
+                    role,
+                    phase,
+                    agent,
+                    system_prompt,
+                    prompt,
+                    completion,
+                    time.time() - start,
+                    trace_fields,
+                )
+                if completion.error is None:
+                    return completion.text
+                if not completion.retryable or attempt == agent.max_retries:
+                    break
+                wait = completion.retry_after_s
+                if wait is None:
+                    wait = self.BACKOFF_S[min(attempt, len(self.BACKOFF_S) - 1)]
+                logger.warning(
+                    f"[{role}/{phase}] transient failure, retrying in "
+                    f"{wait:.0f}s: {completion.error[:200]}"
+                )
+                # A terminated run stops waiting, so the process can exit.
+                if STOPPING.wait(max(wait, 1.0)):
+                    raise Terminated
         error = (
             AgentRefusal
             if completion.refused
@@ -286,23 +291,48 @@ class AgentPool:
             f"{completion.error}"
         )
 
+    @staticmethod
+    @contextmanager
+    def _machine_slots(agent: Agent):
+        """The machine's slots of a call: none unless it is hosted. A call
+        with Lean tools queues before it starts, at no cost, rather than
+        inside its time limit behind Lean."""
+        with TOOL_CALLS.slots(1, STOPPING) if agent.tools else nullcontext():
+            with HOSTED.slots(1, STOPPING) if agent.hosted else nullcontext():
+                yield
+
+    @contextmanager
+    def _budget_reservation(self, agent: Agent):
+        """Count a budgeted call from before it starts, so that concurrent
+        calls cannot pass the budget together."""
+        if not (agent.hosted and self.max_claude_calls):
+            yield
+            return
+        # Not an AgentCallError: the pipeline reports it as a budget stop,
+        # which is not restarted automatically.
+        with self._lock:
+            if self._claude_calls_used() >= self.max_claude_calls:
+                raise BudgetExhausted(
+                    f"hosted model call budget of {self.max_claude_calls} "
+                    f"exhausted"
+                )
+            self._claude_calls_reserved += 1
+        try:
+            yield
+        finally:
+            with self._lock:
+                self._claude_calls_reserved -= 1
+
+    def _claude_calls_used(self) -> int:
+        return self.claude_calls + self._claude_calls_reserved
+
     def claude_budget_left(self) -> int:
         """Billed calls to hosted models left in the run's budget (large if
         unlimited)."""
-        return (
-            self.max_claude_calls - self.claude_calls
-            if self.max_claude_calls
-            else 1 << 30
-        )
-
-    def _check_claude_budget(self) -> None:
-        # Not an AgentCallError: the pipeline reports it as a budget stop,
-        # which is not restarted automatically.
-        if self.claude_calls >= self.max_claude_calls:
-            raise BudgetExhausted(
-                f"hosted model call budget of {self.max_claude_calls} "
-                f"exhausted"
-            )
+        if not self.max_claude_calls:
+            return 1 << 30
+        with self._lock:
+            return self.max_claude_calls - self._claude_calls_used()
 
     def record(
         self,

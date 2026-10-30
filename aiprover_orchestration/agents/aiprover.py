@@ -26,7 +26,13 @@ from pathlib import Path
 from typing import Callable
 
 from ..paths import AIPROVER_CLI, DEFAULT_AIPROVER_CLI, ROOT
-from .base import STOPPING, Agent, Terminated, raise_if_stopping
+from .base import (
+    STOPPING,
+    Agent,
+    AgentCallError,
+    Terminated,
+    raise_if_stopping,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +85,8 @@ def session_ending(sample: dict) -> str:
     return "finished"
 
 
+# Longest use of a count of the model servers.
+SERVERS_SECONDS = 30
 # Diagnostics beyond this length are cut from the trace record.
 MAX_DIAGNOSTICS = 20000
 # Transcript entries are cut to these lengths in the trace record.
@@ -184,6 +192,11 @@ class AIProverJob:
     error: str | None = None
 
 
+class CliTimeout(AgentCallError):
+    """A CLI command that did not return in time, an infrastructure failure
+    that the run resumes unless its caller can go on without the answer."""
+
+
 class AIProverAgent(Agent):
     """Solver backed by AIProver jobs.
 
@@ -193,6 +206,9 @@ class AIProverAgent(Agent):
     `timeout` (per-rollout seconds), `max_turns`, `poll_seconds`, and `env`
     (extra environment for the harness, e.g. `AGENT_THINKING`).
     """
+
+    _servers = 1
+    _servers_expiry = 0.0
 
     backend = "aiprover"
 
@@ -248,44 +264,56 @@ class AIProverAgent(Agent):
     def _cli(
         self, *args: str, timeout: float | None = None
     ) -> subprocess.CompletedProcess:
-        return subprocess.run(
-            [str(self.cli), *args],
-            env=self.env,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
+        try:
+            return subprocess.run(
+                [str(self.cli), *args],
+                env=self.env,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise CliTimeout(f"AIProver CLI timed out: {args[0]}") from error
 
     def endpoint_up(self) -> bool:
         """True if the model endpoint answers (through the tunnel)."""
         try:
             return self._cli("tunnel", "status", timeout=60).returncode == 0
-        except subprocess.TimeoutExpired:
+        except CliTimeout:
             return False
 
     def servers(self) -> int:
-        """Model servers behind the endpoint that answer; 1 for an endpoint
-        that does not report them (a single server)."""
-        try:
-            with urllib.request.urlopen(
-                self.upstreams_url, timeout=10
-            ) as reply:
-                return max(1, json.load(reply)["healthy"])
-        except (OSError, ValueError, KeyError):
-            return 1
+        """Model servers behind the endpoint that answer, read at most every
+        SERVERS_SECONDS since many lemmas may ask; 1 for an endpoint that
+        does not report them (a single server)."""
+        if time.monotonic() >= self._servers_expiry:
+            self._servers_expiry = time.monotonic() + SERVERS_SECONDS
+            try:
+                with urllib.request.urlopen(
+                    self.upstreams_url, timeout=10
+                ) as reply:
+                    self._servers = max(1, json.load(reply)["healthy"])
+            except (OSError, ValueError, KeyError):
+                self._servers = 1
+        return self._servers
 
     def _cli_json(self, *args: str) -> dict:
         """The JSON a CLI command prints; empty if it fails."""
         try:
             done = self._cli(*args, timeout=60)
             return json.loads(done.stdout.strip().splitlines()[-1])
-        except (subprocess.TimeoutExpired, ValueError, IndexError):
+        except (CliTimeout, ValueError, IndexError):
             return {}
 
     def live_sessions(self, job: str) -> int:
         """Sessions of a job running or waiting for a slot."""
         state = self._cli_json("status", job, "--json")
         return int(state.get("running", 0)) + int(state.get("queued", 0))
+
+    @cached_property
+    def total_slots(self) -> int:
+        """Sessions the harness runs at once on this machine; 0 if unknown."""
+        return int(self._cli_json("slots").get("total", 0))
 
     def free_slots(self) -> int:
         """Session slots of this machine that no session holds."""
@@ -297,14 +325,14 @@ class AIProverAgent(Agent):
         try:
             done = self._cli("grow", job, "-k", str(sessions), timeout=60)
             return int(done.stdout.strip() or 0) if done.returncode == 0 else 0
-        except (subprocess.TimeoutExpired, ValueError):
+        except (CliTimeout, ValueError):
             return 0
 
     def cancel(self, job: str) -> None:
         """Stop a running job (its lemma was retracted by a backjump)."""
         try:
             self._cli("cancel", job, timeout=60)
-        except subprocess.TimeoutExpired:
+        except CliTimeout:
             pass
 
     @cached_property
@@ -312,7 +340,7 @@ class AIProverAgent(Agent):
         """True if the installed AIProver CLI provides `aiprover resume`."""
         try:
             return self._cli("resume", "--help", timeout=60).returncode == 0
-        except subprocess.TimeoutExpired:
+        except CliTimeout:
             return False
 
     def job_matches(self, job: str, context: str, statement: str) -> bool:
@@ -552,7 +580,7 @@ class AIProverAgent(Agent):
             if STOPPING.is_set():
                 raise Terminated
         except BaseException:
-            self._cli("cancel", job, timeout=60)
+            self.cancel(job)
             raise
         result = self._cli("result", job, "--json", timeout=120)
         try:
