@@ -392,6 +392,15 @@ Results
 
 ## Done
 
+- Run names and imports (2026-10-30): a submission takes an optional run name,
+  which becomes the run id. `POST /api/runs/import` and the Import run button
+  add a run from a zip of its folder or of its export. Trace pages are served
+  in a browser sandbox, since imported pages come from other people. The
+  `imported` column of `jobs` holds whether an import can resume.
+- Replay filter (2026-10-30): "Successful only" on the replay page lays out the
+  tree with the attempts behind kept proofs, and the hand-backs that proved or
+  split a lemma, alone. The page opens on the completed tree, and Play restarts
+  it from the beginning.
 - Machine limits (2026-10-30): `limits.py` holds `flock` slots in a directory
   shared by all runs and users, with limits derived from the machine's memory
   and processors and replaced by environment variables (`AIPROVER_MAX_HOSTED`,

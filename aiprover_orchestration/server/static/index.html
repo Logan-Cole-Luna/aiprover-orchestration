@@ -154,6 +154,8 @@ summary .note { color: var(--muted); font-weight: 400; font-size: 0.85rem; margi
         <h2>New run</h2>
         <button class="plain" id="close-new-run">Close</button>
       </div>
+      <label for="run-name">Run name (optional)</label>
+      <input id="run-name" maxlength="80" placeholder="e.g. hindman_with_library">
       <div class="row tabs">
         <button id="tab-text" class="on">Informal problem</button>
         <button id="tab-uuid">Dataset problem</button>
@@ -206,6 +208,8 @@ summary .note { color: var(--muted); font-weight: 400; font-size: 0.85rem; margi
         <h2>Runs</h2>
         <div class="row">
           <label class="show-hidden" style="margin:0"><input type="checkbox" id="show-hidden"> <span id="show-hidden-label">Show hidden</span></label>
+          <input type="file" id="import-file" class="hidden" accept=".zip" aria-label="Run archive to import">
+          <button class="plain" id="import-run" title="Add a run from a zip of its folder or of its export">Import run</button>
           <button id="open-new-run">New run</button>
         </div>
       </div>
@@ -680,6 +684,17 @@ function selectTab(textMode) {
   $("form-uuid").classList.toggle("hidden", textMode);
 }
 $("show-hidden").onchange = refreshRuns;
+$("import-run").onclick = () => $("import-file").click();
+$("import-file").onchange = async () => {
+  const archive = $("import-file").files[0];
+  $("import-file").value = "";
+  if (!archive) return;
+  try {
+    const result = await api("/api/runs/import" + PAGE_QUERY, {method: "POST", body: archive,
+      headers: {"Content-Type": "application/zip"}});
+    openRun(result.run_id);
+  } catch (e) { alert(e.message); }
+};
 $("open-new-run").onclick = () => showNewRun(true);
 $("close-new-run").onclick = () => showNewRun(false);
 $("close-detail").onclick = closeRun;
@@ -694,6 +709,7 @@ $("submit").onclick = async () => {
     ? {statement: $("statement").value, proof: $("proof").value}
     : {uuid: $("uuid").value};
   for (const role of ROLES) body[role] = selection(role);
+  body.name = $("run-name").value;
   body.gpu_group = $("gpu-group").value;
   body.settings = chosenSettings();
   body.page = PAGE;
