@@ -11,8 +11,10 @@ trace.html rendered from the copied trace, and the remaining result files;
 trace_replay.html is left out, being rendered from the trace. Error texts of
 failed model calls are reduced to their HTTP status, since they quote
 provider messages verbatim, and the strings of a redaction file
-(`--redactions`, if it exists) are replaced everywhere: one per line, either
-`text` (replaced by "[redacted]") or `text==>replacement`. Model calls left
+(`--redactions`, if it exists) are replaced everywhere, names included: one
+per line, either `text` (replaced by "[redacted]") or `text==>replacement`.
+Binary files, which cannot be redacted, are left out of a run whose trace
+holds such a string. Model calls left
 out of traces (`trace.without_untraced_calls`) are removed from the shared
 trace. The target's README.md indexes the copies and states how to resume
 one.
@@ -21,6 +23,7 @@ one.
 import argparse
 import gzip
 import json
+import mmap
 import os
 import re
 import shutil
@@ -121,7 +124,7 @@ def clean(value):
     if isinstance(value, dict):
         model_call = value.get("kind") == "model_call"
         return {
-            key: (
+            redact(key): (
                 clean(reduced_error(item))
                 if key in ERROR_FIELDS
                 and isinstance(item, str)
@@ -164,18 +167,44 @@ def copy_if_newer(source: Path, target: Path) -> None:
             shutil.copy2(source, target)
 
 
+def is_binary(path: Path) -> bool:
+    """True if `path` is not text; JSON files parse as text when copied."""
+    if path.suffix in (".json", ".jsonl"):
+        return False
+    try:
+        path.read_text()
+    except UnicodeDecodeError:
+        return True
+    return False
+
+
+def holds_redaction(path: Path) -> bool:
+    if not redactions:
+        return False
+    with open(path, "rb") as file, mmap.mmap(
+        file.fileno(), 0, access=mmap.ACCESS_READ
+    ) as content:
+        return any(content.find(old.encode()) >= 0 for old, _ in redactions)
+
+
 def share_run(run: Path, target: Path) -> None:
     """Bring the copy of `run` at `target` up to date."""
+    trace = run / "trace.json"
+    private = holds_redaction(trace)
     for source in run.rglob("*"):
         relative = source.relative_to(run)
+        copy = target / redact(str(relative))
         # A `.tmp` file is a trace being rewritten by a running run.
         if (
-            source.is_file()
-            and str(relative) not in EXCLUDED
-            and source.suffix != ".tmp"
+            not source.is_file()
+            or str(relative) in EXCLUDED
+            or source.suffix == ".tmp"
         ):
-            copy_if_newer(source, target / relative)
-    trace = run / "trace.json"
+            continue
+        if private and is_binary(source):
+            copy.unlink(missing_ok=True)
+        else:
+            copy_if_newer(source, copy)
     packed = target / "trace.json.gz"
     if packed.exists() and packed.stat().st_mtime >= trace.stat().st_mtime:
         return
@@ -217,9 +246,10 @@ def share(target: Path, match: str) -> None:
         place, other = (
             (COMPLETED, IN_PROGRESS) if finished else (IN_PROGRESS, COMPLETED)
         )
-        share_run(run, target / place / run.name)
-        shutil.rmtree(target / other / run.name, ignore_errors=True)
-        rows.append(index_row(run, job))
+        shared_name = redact(run.name)
+        share_run(run, target / place / shared_name)
+        shutil.rmtree(target / other / shared_name, ignore_errors=True)
+        rows.append(redact(index_row(run, job)))
     (target / "README.md").write_text(
         README.format(
             completed=COMPLETED, in_progress=IN_PROGRESS, rows="\n".join(rows)
