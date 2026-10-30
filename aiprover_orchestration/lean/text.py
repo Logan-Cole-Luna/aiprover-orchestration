@@ -36,17 +36,20 @@ _IMPORT_RE = re.compile(r"^import\s+(\S+)\s*$", re.M)
 # at a quote followed by as many `#` as opened it.
 _STRING_RE = re.compile(r'"(?:[^"\\]|\\.)*"', re.S)
 _RAW_STRING_RE = re.compile(r'r(#*)".*?"\1', re.S)
+# An identifier in guillemets may contain comment delimiters (`«/-»`).
+_GUILLEMET_RE = re.compile(r"«[^»\n]*»")
 _CHAR_RE = re.compile(
     r"'(?:\\(?:x[0-9a-fA-F]{2}|u\{?[0-9a-fA-F]+\}?|.)|[^\\'\n])'"
 )
 # Characters of an identifier: a `'` or `r` after one is part of the name,
 # not the start of a literal (`h'`, `succ_r`).
-_IDENTIFIER_CHAR = re.compile(r"[\w'!?.]")
+_IDENTIFIER_CHAR = re.compile(r"[\w'!?.»]")
 
 
 def strip_comments(lean_text: str) -> str:
     """Remove Lean line and (nested) block comments, keeping line structure
-    and the text of string and character literals."""
+    and the text of string and character literals and of identifiers in
+    guillemets."""
     out, depth, i = [], 0, 0
     while i < len(lean_text):
         two = lean_text[i : i + 2]
@@ -59,6 +62,8 @@ def strip_comments(lean_text: str) -> str:
                 literal = _RAW_STRING_RE.match(lean_text, i)
             elif lean_text[i] == "'" and not after_name:
                 literal = _CHAR_RE.match(lean_text, i)
+            elif lean_text[i] == "«":
+                literal = _GUILLEMET_RE.match(lean_text, i)
         if literal:
             out.append(literal.group(0))
             i = literal.end()
