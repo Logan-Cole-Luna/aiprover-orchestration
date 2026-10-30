@@ -133,6 +133,7 @@ class Config:
     # failed repair round, except in the last round.
     sketch_judge: bool = True
     max_audit_rounds: int = 2  # formalization revisions after REVISE
+    # Lean checks of one run; limits.LEAN bounds all runs of the machine.
     lean_parallel: int = 6
     lean_timeout: int = 300
     max_claude_calls: int = 0  # Claude calls per run; 0 = unlimited
@@ -193,8 +194,9 @@ class Config:
     # Stuck leaves under one decision that make a conflict; a refuted leaf
     # makes one alone.
     cdcl_conflict_leaves: int = 3
-    # Claude calls added to `max_claude_calls` for the final review and the
-    # report, so a run that spent its budget on proving is still reviewed.
+    # Claude calls kept for the final review and the report: the limit rises
+    # to leave this many, so a run that spent its budget on proving is still
+    # reviewed.
     final_claude_calls: int = 8
     # Claude calls added for the informalization (write, check, revise,
     # repairs).

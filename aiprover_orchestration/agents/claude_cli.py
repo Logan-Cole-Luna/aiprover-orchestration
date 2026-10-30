@@ -29,13 +29,17 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+from ..limits import LEAN_CHECK_TIMEOUT_MS
 from ..orchestrator.trace import REFUSAL_MARKER
 from ..paths import ROOT, TEMP_DIR, WORKSPACE
-from .base import RETRYABLE_STATUS, Agent, Completion
+from ..utils.processes import ProcessStopped, run_group
+from .base import RETRYABLE_STATUS, STOPPING, Agent, Completion, Terminated
 
 logger = logging.getLogger(__name__)
 
 REQUEST_TIMEOUT_S = 900
+# Time the processes of a stopped call get to end.
+STOP_GRACE_SECONDS = 5
 MAX_RETRIES = 5
 RETRY_BACKOFF_S = [30, 60, 180, 300, 600]
 # A usage limit (as opposed to a short rate limit) reports a reset time that
@@ -221,16 +225,23 @@ def invoke_once(
         env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = str(max_output_tokens)
     workdir = lean_scratch_project() if tools else CLI_WORKDIR
     workdir.mkdir(parents=True, exist_ok=True)
-    try:
-        proc = subprocess.run(
-            cmd,
-            input=prompt,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            cwd=workdir,
-            env=env,
+    if tools:
+        # `lean-check` may wait for a Lean slot of the machine.
+        env["BASH_DEFAULT_TIMEOUT_MS"] = env["BASH_MAX_TIMEOUT_MS"] = str(
+            LEAN_CHECK_TIMEOUT_MS
         )
+    try:
+        proc = run_group(
+            cmd,
+            cwd=workdir,
+            timeout=timeout,
+            stop=STOPPING,
+            stdin=prompt,
+            env=env,
+            grace=STOP_GRACE_SECONDS,
+        )
+    except ProcessStopped:
+        raise Terminated from None
     except subprocess.TimeoutExpired:
         return "", {}, f"claude CLI timed out after {timeout}s"
     except FileNotFoundError:

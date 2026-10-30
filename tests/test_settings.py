@@ -6,7 +6,7 @@ import unittest
 
 from aiprover_orchestration.orchestrator.config import Config
 from aiprover_orchestration.server import settings
-from aiprover_orchestration.server.jobs import JobStore
+from aiprover_orchestration.server.jobs import JobStore, job_selection
 from tests.support import ServerProcessTest
 
 PROBLEM = {"statement": "theorem t : 1 = 1", "proof": "rfl", "page": "dev"}
@@ -47,6 +47,15 @@ class SubmissionTest(ServerProcessTest):
         status, body = self.submit(PROBLEM | {"settings": chosen})
         self.assertEqual(status, 201, body)
         self.assertEqual(self.options(body["run_id"]), chosen)
+
+    def test_tool_choices_are_kept(self):
+        orchestrator = {"provider": "claude", "model": "claude-opus-5-5",
+                        "tools": False, "judge_tools": True}
+        status, body = self.submit(PROBLEM | {"orchestrator": orchestrator})
+        self.assertEqual(status, 201, body)
+        records = JobStore(self.directory / "state" / "jobs.db", readonly=True)
+        chosen = job_selection(records.get(body["run_id"]))["orchestrator"]
+        self.assertEqual((chosen["tools"], chosen["judge_tools"]), (False, True))
 
     def test_long_proofs_are_accepted(self):
         status, body = self.submit(PROBLEM | {"proof": "x" * 60_000})

@@ -115,6 +115,8 @@ class Agent:
     # models receive no other model's reasoning: their safeguards refuse
     # prompts that carry it, and refused calls are billed.
     hosted = False
+    # Lean tools, with which a call also elaborates Lean on this machine.
+    tools = False
     # Prometheus metrics of the model server, where the backend has one.
     metrics_url: str | None = None
 

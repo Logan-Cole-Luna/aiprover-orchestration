@@ -24,12 +24,20 @@ import math
 import re
 import threading
 from collections import Counter
+from contextlib import contextmanager
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 from ...agents.aiprover import AIProverAgent, AIProverSample, sample_record
-from ...agents.base import AgentCallError, AgentRefusal, Completion
+from ...agents.base import (
+    STOPPING,
+    AgentCallError,
+    AgentRefusal,
+    BudgetExhausted,
+    Completion,
+)
 from ...lean.checker import forbidden_problems
+from ...limits import SESSIONS
 from ...lean.text import normalize, split_declarations, strip_leading_by
 from .. import cdcl, knowledge, prompts
 from ..extraction import (
@@ -57,6 +65,8 @@ STOPPED_STATES = ("infra", "cancelled")
 REBALANCE_SECONDS = 60
 # Lemma jobs at once without a concurrency limit (threads that mostly wait).
 MAX_LEMMA_JOBS = 256
+# Longest wait of a lemma before it looks at the free slots again.
+SLOT_WAIT_SECONDS = 15
 # Failed samples' code kept for the captain and the replan: the most
 # complete ones, each cut to a length.
 MAX_ATTEMPTS_KEPT = 2
@@ -103,10 +113,16 @@ class Phase:
     # Set after a failure (lost endpoint, interruption): lemmas not yet
     # started are skipped rather than run against a dead server.
     stopped: threading.Event = field(default_factory=threading.Event)
+    # The machine's session slots of each running job.
+    machine_slots: dict = field(default_factory=dict)
     finished: threading.Event = field(default_factory=threading.Event)
     futures: list[Future] = field(default_factory=list)
     futures_lock: threading.Lock = field(default_factory=threading.Lock)
     pool: ThreadPoolExecutor | None = None
+
+    def __post_init__(self) -> None:
+        # Notified when a job ends, for the lemmas that wait for a slot.
+        self.slot_freed = threading.Condition(self.lock)
 
     def present(self, lemma: Lemma) -> bool:
         """False once a backjump has retracted `lemma` (identity, not
@@ -190,6 +206,8 @@ class AIProverStage:
         """Prove each pending lemma with AIProver jobs. A split from a
         hand-back adds new lemmas to this phase."""
         phase = self._aiprover_phase(form, sketch)
+        # Read once here, before the lemma threads ask for it together.
+        phase.solver.total_slots
         # Concurrent lemma jobs; 0 for no limit, under which a lemma added
         # by a split starts at once rather than after a running lemma.
         concurrency = self.config.aiprover_lemma_concurrency or MAX_LEMMA_JOBS
@@ -272,23 +290,61 @@ class AIProverStage:
         failures (after a resume) goes to the captain first."""
         while not lemma.proved and not phase.stopped.is_set():
             self._maybe_handback(phase, lemma)
-            if (
-                lemma.proved
-                or self._exhausted(lemma)
-                or phase.refuted.is_set()
-                or not phase.present(lemma)
-            ):
+            samples = not self._exhausted(lemma) and self._claim_sessions(
+                phase, lemma
+            )
+            if not samples:
                 break
-            servers = phase.solver.servers()
-            with phase.lock:
-                samples = self._allocate(phase, lemma, servers)
-                phase.sessions_in_flight[lemma.name] = samples
+            with self._machine_sessions(phase, lemma, samples) as held:
+                if held:
+                    self._one_job(phase, lemma, len(held))
+
+    @contextmanager
+    def _machine_sessions(self, phase: Phase, lemma: Lemma, samples: int):
+        """The machine's session slots of a job on `lemma`, up to `samples`,
+        recorded for the phase while the job runs."""
+        with SESSIONS.slots(samples, phase.stopped, STOPPING) as held:
             try:
-                self._one_job(phase, lemma, samples)
-            finally:
                 with phase.lock:
+                    phase.sessions_in_flight[lemma.name] = len(held)
+                    phase.machine_slots[lemma.name] = held
+                yield held
+            finally:
+                with phase.slot_freed:
                     phase.sessions_in_flight.pop(lemma.name, None)
                     phase.running_jobs.pop(lemma.name, None)
+                    phase.machine_slots.pop(lemma.name, None)
+                    phase.slot_freed.notify(samples)
+
+    def _claim_sessions(self, phase: Phase, lemma: Lemma) -> int:
+        """Sessions for the next job on `lemma`, recorded in flight, once a
+        slot of the run is free; 0 if the lemma no longer needs a job. Every
+        lemma keeps its place in line: no lemma limit is needed for the
+        slots to hold."""
+        while not (
+            phase.stopped.is_set()
+            or STOPPING.is_set()
+            or lemma.proved
+            or phase.refuted.is_set()
+            or not phase.present(lemma)
+        ):
+            capacity = self._capacity(phase)
+            with phase.slot_freed:
+                free = capacity - sum(phase.sessions_in_flight.values())
+                if free > 0:
+                    samples = self._allocate(phase, lemma, free)
+                    phase.sessions_in_flight[lemma.name] = samples
+                    return samples
+                phase.slot_freed.wait(SLOT_WAIT_SECONDS)
+        return 0
+
+    def _capacity(self, phase: Phase) -> int:
+        """Sessions the run may hold: `aiprover_session_slots` per model
+        server, otherwise what this machine and its harness allow."""
+        slots = self.config.aiprover_session_slots
+        if slots:
+            return slots * phase.solver.servers()
+        return min(phase.solver.total_slots or math.inf, SESSIONS.limit())
 
     def _startable(self, phase: Phase, lemma: Lemma) -> bool:
         """An unproved lemma without a job that could start one."""
@@ -300,16 +356,12 @@ class AIProverStage:
             and not phase.refuted.is_set()
         )
 
-    def _allocate(self, phase: Phase, lemma: Lemma, servers: int) -> int:
+    def _allocate(self, phase: Phase, lemma: Lemma, free: int) -> int:
         """Sessions for the next job on `lemma` (call with `phase.lock`
-        held): its weighted share of the free slots,
-        `aiprover_session_slots` per model server, against the lemmas that
-        could start alongside it."""
-        slots = self.config.aiprover_session_slots
-        if not slots:
-            return self.config.workers
+        held): its weighted share of the `free` slots against the lemmas
+        that could start alongside it, and at most `workers` without a
+        configured number of slots."""
         concurrency = self.config.aiprover_lemma_concurrency or MAX_LEMMA_JOBS
-        free = slots * servers - sum(phase.sessions_in_flight.values())
         waiting = sorted(
             (
                 other
@@ -325,7 +377,10 @@ class AIProverStage:
         share = (
             free * weight(lemma) // (weight(lemma) + sum(map(weight, rivals)))
         )
-        limit = self.config.aiprover_job_sessions or math.inf
+        limit = self.config.aiprover_job_sessions or (
+            math.inf if self.config.aiprover_session_slots
+            else self.config.workers
+        )
         return max(1, min(free, share, limit))
 
     def _rebalance(self, phase: Phase) -> None:
@@ -352,13 +407,18 @@ class AIProverStage:
                 name: solver.live_sessions(job) for name, job in jobs.items()
             }
             free = min(
-                slots * solver.servers() - sum(live.values()),
+                self._capacity(phase) - sum(live.values()),
                 solver.free_slots(),
             )
             with phase.lock:
                 for name, count in live.items():
                     if name in phase.sessions_in_flight:
                         phase.sessions_in_flight[name] = count
+                    # Sessions that ended give their machine slots back; a
+                    # failed status reports none, which says nothing.
+                    if count and name in phase.machine_slots:
+                        held = phase.machine_slots[name]
+                        held.release(len(held) - count)
                 growing = sorted(
                     (
                         lemma
@@ -379,7 +439,14 @@ class AIProverStage:
                     max(1, free * weight(lemma) // total),
                     limit - live[lemma.name],
                 )
+                with phase.lock:
+                    held = phase.machine_slots.get(lemma.name)
+                # Without slots, the job has ended.
+                if held is None or share < 1:
+                    continue
+                share = held.take(share)
                 added = share > 0 and solver.grow(job, share)
+                held.release(share - added)
                 if not added:
                     continue
                 left -= added
@@ -687,7 +754,7 @@ class AIProverStage:
             return self._captain(
                 prompt, phase=f"direction/{lemma.name}"
             ).strip()
-        except AgentCallError as error:
+        except (AgentCallError, BudgetExhausted) as error:
             logger.warning(f"{lemma.name}: no direction: {error}")
             return None
 
@@ -866,6 +933,12 @@ class AIProverStage:
         if not solver.endpoint_up():
             raise AgentCallError(
                 f"AIProver endpoint unavailable during {lemma.name}"
+            )
+        # A job that left no samples never ran (a failed submission, a
+        # result that could not be read): no proof was attempted.
+        if job.error and not job.samples:
+            raise AgentCallError(
+                f"AIProver job {job.job} on {lemma.name}: {job.error[:300]}"
             )
         # A job with sessions cut off by infrastructure (endpoint, model
         # name) or a cancellation is incomplete, not a failed attempt: the

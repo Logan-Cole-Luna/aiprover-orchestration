@@ -29,6 +29,8 @@ from aiprover_orchestration.orchestrator.trace import Trace
 from aiprover_orchestration.paths import ROOT, WORKSPACE
 
 TESTS = Path(__file__).parent
+# Tests do not contend with the runs of this machine for its slots.
+os.environ["AIPROVER_LIMITS_DIR"] = tempfile.mkdtemp(prefix="test_limits_")
 RESULTS = ROOT / "results"
 LEAN_AVAILABLE = bool(shutil.which("lake")) and (WORKSPACE / ".lake").is_dir()
 requires_lean = unittest.skipUnless(
@@ -77,6 +79,7 @@ class FakeSolver(AIProverAgent):
         self.phase_agents = {}
         self.answers = answers
         self.cancelled: list[str] = []
+        self.total_slots = 0
 
     def servers(self) -> int:
         return 1
