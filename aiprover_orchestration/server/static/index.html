@@ -61,6 +61,9 @@ button.plain:hover { border-color: var(--accent); color: var(--accent); backgrou
 .models .pick select:first-child { grid-column: 1 / -1; }
 .models h3 { margin: 10px 0 0; font-size: 0.95rem; }
 .models .role-note { color: var(--muted); font-size: 0.8rem; margin: 0 0 6px; }
+.settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 4px 24px; }
+.settings h3 { grid-column: 1 / -1; margin: 12px 0 0; font-size: 0.95rem; }
+.settings label { font-weight: 400; font-size: 0.85rem; margin: 6px 0 2px; }
 td.models-cell { font-size: 0.8rem; color: var(--muted); white-space: nowrap; }
 td.export { width: 1%; }
 a.export { display: inline-flex; padding: 4px; border-radius: 6px; color: var(--muted); }
@@ -108,6 +111,7 @@ pre#log {
 a { color: var(--accent); }
 .links a { margin-right: 12px; }
 .error { color: var(--bad); }
+.count { color: var(--muted); font-size: 0.8rem; margin-top: 2px; }
 .head { display: flex; justify-content: space-between; align-items: center;
         gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 .head h2 { margin: 0; }
@@ -138,6 +142,7 @@ summary .note { color: var(--muted); font-weight: 400; font-size: 0.85rem; margi
           <button class="plain hidden" id="approver-login">Approver sign-in</button>
           <button class="plain" id="logout">Sign out</button></div>
       </div>
+      <small class="models-note" id="claude-note"></small>
       <details>
         <summary>Model servers</summary>
         <div class="table-wrap" id="vista"></div>
@@ -156,8 +161,10 @@ summary .note { color: var(--muted); font-weight: 400; font-size: 0.85rem; margi
       <div id="form-text">
         <label for="statement">Statement</label>
         <textarea id="statement" placeholder="Setting, definitions and the claim (LaTeX allowed)"></textarea>
+        <div class="count" id="statement-count"></div>
         <label for="proof">Informal proof (optional)</label>
         <textarea id="proof"></textarea>
+        <div class="count" id="proof-count"></div>
       </div>
       <div id="form-uuid" class="hidden">
         <label for="uuid">Problem</label>
@@ -182,6 +189,11 @@ summary .note { color: var(--muted); font-weight: 400; font-size: 0.85rem; margi
         <label for="gpu-group">GPU group</label>
         <select id="gpu-group" style="max-width:240px"><option value="main">main</option></select>
         <small class="models-note" id="gpu-note">Each group has its own model server on Vista; runs of a group share it. Group <code>cpu</code> has none: every role, including the subagent, must use Claude or a hosted model.</small>
+      </details>
+      <details>
+        <summary>Orchestrator settings<span class="note" id="settings-summary">defaults</span></summary>
+        <div class="settings" id="settings"></div>
+        <small class="models-note">An empty field keeps the value shown, which runs use by default. A resumed run keeps its settings.</small>
       </details>
       <div class="row" style="margin-top:16px">
         <button id="submit">Submit</button>
@@ -246,6 +258,10 @@ async function start() {
   $("user").textContent = me.approver ? `${me.user} (approver)`
     : me.auth_required ? me.user : "open access";
   $("logout").classList.toggle("hidden", !me.approver);
+  $("claude-note").innerHTML = me.per_user
+    ? (me.claude_account ? `Claude: ${escapeHtml(me.claude_account)} (your own login)`
+      : `<span class="error">Claude: not signed in; run <code>aiprover-server serve</code> again over SSH</span>`)
+    : PAGE === "user" ? `Runs use your own Claude login on a server of your own; see <a href="https://github.com/Logan-Cole-Luna/aiprover-orchestration#3-using-a-running-server" target="_blank">Per-user server</a>.` : "";
   $("approver-login").classList.toggle("hidden", me.approver || !me.auth_required);
   $("login").classList.add("hidden");
   $("app").classList.remove("hidden");
@@ -259,7 +275,7 @@ async function start() {
   // The run list does not depend on the model choices, so it loads either way.
   if (!catalog) {
     try {
-      catalog = await api("/api/models" + PAGE_QUERY); buildPickers();
+      catalog = await api("/api/models" + PAGE_QUERY); buildPickers(); buildSettings();
       $("gpu-group").innerHTML = (catalog.gpu_groups || ["main"]).map(g =>
         `<option value="${escapeHtml(g)}">${escapeHtml(g)}</option>`).join("");
       $("gpu-group").value = catalog.default_gpu_group || "main";
@@ -374,6 +390,58 @@ function modelsHTML(agents) {
   return order.map(role => `${role}: ${escapeHtml(modelLabel(agents[role]))}`).join("<br>");
 }
 
+// Orchestrator settings, from the catalog's `settings`: a number field, or
+// a choice whose empty option keeps the default.
+function settingDefault(s) {
+  if (s.default === null) return "solver's own";
+  if (s.type === "bool") return s.default ? "yes" : "no";
+  return s.type === "str" ? (s.default || "none") : String(s.default);
+}
+
+function settingInput(s) {
+  const id = `setting-${s.name}`;
+  if (s.type === "int") {
+    return `<input type="number" id="${id}" min="${s.minimum}" max="${s.maximum}" step="1" placeholder="${escapeHtml(settingDefault(s))}">`;
+  }
+  const choices = s.type === "bool" ? [[true, "yes"], [false, "no"]]
+    : s.choices.map(c => [c, c || "none"]);
+  return `<select id="${id}"><option value="">default (${escapeHtml(settingDefault(s))})</option>`
+    + choices.map(([value, label]) => `<option value='${JSON.stringify(value)}'>${escapeHtml(label)}</option>`).join("")
+    + `</select>`;
+}
+
+function buildSettings() {
+  let group = "";
+  $("settings").innerHTML = (catalog.settings || []).map(s => {
+    const heading = s.group !== group ? `<h3>${escapeHtml(group = s.group)}</h3>` : "";
+    return `${heading}<div><label for="setting-${s.name}">${escapeHtml(s.label)}</label>${settingInput(s)}</div>`;
+  }).join("");
+}
+
+function chosenSettings() {
+  const chosen = {};
+  for (const s of (catalog && catalog.settings) || []) {
+    const value = $(`setting-${s.name}`).value;
+    if (value !== "") chosen[s.name] = s.type === "int" ? Number(value) : JSON.parse(value);
+  }
+  return chosen;
+}
+
+// Length of the statement and the proof, with an estimate of their tokens
+// (about four characters each). Both are part of most prompts of a run,
+// so a long text raises the cost of every phase.
+const LONG_TOKENS = {statement: 5000, proof: 12500};
+
+function countText(field) {
+  const characters = $(field).value.length;
+  const tokens = Math.round(characters / 4);
+  const warning = tokens > LONG_TOKENS[field]
+    ? ` · <span class="error">long: it is part of most prompts of the run, which raises the cost and usage of every phase</span>`
+    : "";
+  $(`${field}-count`).innerHTML = characters
+    ? `${characters.toLocaleString()} characters · ~${tokens.toLocaleString()} tokens${warning}` : "";
+}
+
 function summarizeSettings() {
   const upload = $("library-file").files[0];
   $("library-summary").textContent = upload ? upload.name : $("library").value
@@ -381,6 +449,8 @@ function summarizeSettings() {
   if (!catalog) return;
   const models = ROLES.map(role => `${role}: ${modelLabel(selection(role))}`);
   $("models-summary").textContent = [...models, `GPU group: ${$("gpu-group").value}`].join(" · ");
+  const changed = Object.keys(chosenSettings()).length;
+  $("settings-summary").textContent = changed ? `${changed} changed` : "defaults";
 }
 
 function escapeHtml(text) {
@@ -495,6 +565,8 @@ function stateText(run) {
 }
 
 function actions(run) {
+  // A run of another user's server is managed there.
+  if (run.external) return `<span class="sub">on ${escapeHtml(run.owner)}'s server</span>`;
   const buttons = [];
   if (run.state === "awaiting_approval" && me && me.approver) {
     buttons.push(`<button data-approve="${run.run_id}">Approve</button>`,
@@ -612,6 +684,7 @@ $("open-new-run").onclick = () => showNewRun(true);
 $("close-new-run").onclick = () => showNewRun(false);
 $("close-detail").onclick = closeRun;
 $("new-run").addEventListener("change", summarizeSettings);
+for (const field of ["statement", "proof"]) $(field).addEventListener("input", () => countText(field));
 $("tab-text").onclick = () => selectTab(true);
 $("tab-uuid").onclick = () => selectTab(false);
 
@@ -622,6 +695,7 @@ $("submit").onclick = async () => {
     : {uuid: $("uuid").value};
   for (const role of ROLES) body[role] = selection(role);
   body.gpu_group = $("gpu-group").value;
+  body.settings = chosenSettings();
   body.page = PAGE;
   $("submit-message").textContent = "";
   try {
