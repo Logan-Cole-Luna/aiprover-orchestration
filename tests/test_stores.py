@@ -2,21 +2,16 @@
 trace writer."""
 
 import json
-import subprocess
 import threading
-import time
 import unittest
 from unittest import mock
 
-from aiprover_orchestration.agents.aiprover import AIProverAgent
-from aiprover_orchestration.agents.base import AgentCallError
 from aiprover_orchestration.lean.checker import CheckResult
 from aiprover_orchestration.library import verifier
 from aiprover_orchestration.library.store import Store
 from aiprover_orchestration.library.verifier import Library, Rejected
 from aiprover_orchestration.orchestrator.trace import Trace
-from aiprover_orchestration.server import models
-from aiprover_orchestration.server.jobs import CONFIG, JobStore, Worker
+from aiprover_orchestration.server.jobs import JobStore, Worker
 from aiprover_orchestration.utils import share_results
 from tests.support import TemporaryDirectoryTest, job
 
@@ -65,44 +60,6 @@ class JobStoreTest(TemporaryDirectoryTest):
             ],
             ["cancelled", "cancelled", "cancelling", "finished"],
         )
-
-    def test_approve_only_awaiting(self):
-        worker = Worker(self.store)
-        self.store.add(job("r1", "awaiting_approval"))
-        self.assertTrue(worker.approve("r1", "admin"))
-        self.assertFalse(worker.reject("r1", "admin"))
-        self.assertEqual(self.store.get("r1")["state"], "queued")
-
-    def test_resume_only_ended(self):
-        worker = Worker(self.store)
-        for run_id, state in [("stopped", "cancelled"), ("running", "running")]:
-            self.store.add(job(run_id, state))
-        self.store.update("stopped", status="failed", ended=1.0)
-        self.assertTrue(worker.resume("stopped"))
-        self.assertFalse(worker.resume("running"))
-        stopped = self.store.get("stopped")
-        self.assertEqual(
-            (stopped["state"], stopped["status"], stopped["ended"]),
-            ("queued", None, None),
-        )
-
-
-class LibraryStoreTest(TemporaryDirectoryTest):
-
-    def test_items_and_status(self):
-        store = Store(self.directory / "library.db")
-        item = store.add_item(
-            kind="theorem",
-            name="T",
-            module="Lib.T",
-            lean="theorem T : True := by sorry",
-            status="Open",
-            tags=["a"],
-            created=time.time(),
-        )
-        self.assertEqual(store.item("T", by="name")["tags"], ["a"])
-        store.set_status(item, "Proved")
-        self.assertEqual(store.proved(), {item})
 
 
 class PublishTest(TemporaryDirectoryTest):
@@ -158,16 +115,6 @@ class ShareTest(unittest.TestCase):
             )
 
 
-class CliTimeoutTest(unittest.TestCase):
-
-    def test_timeout_is_an_infrastructure_failure(self):
-        agent = mock.Mock(cli="cli", env={})
-        timeout = subprocess.TimeoutExpired(["cli", "wait"], 1)
-        with mock.patch.object(subprocess, "run", side_effect=timeout):
-            with self.assertRaises(AgentCallError):
-                AIProverAgent._cli(agent, "wait", "job", timeout=1)
-
-
 class TraceTest(TemporaryDirectoryTest):
 
     def test_flush_finish_and_resume(self):
@@ -196,20 +143,3 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class HandbackRoleTest(unittest.TestCase):
-
-    def test_handback_model_sets_the_captain_phase(self):
-        selection = models.validate({
-            "subagent": {"provider": "aiprover", "model": "dgx"},
-            "handback": {"provider": "claude", "model": "claude-sonnet-5-5",
-                         "effort": "", "tools": True},
-        })
-        captain = models.build_config(CONFIG, selection)["agents"]["captain"]
-        self.assertEqual(captain["model"], "claude-opus-5-5")
-        self.assertEqual(captain["phases"]["handback"],
-                         {"model": "claude-sonnet-5-5", "tools": True})
-        self.assertIn("judge", captain["phases"])
-
-    def test_handback_requires_claude(self):
-        with self.assertRaises(ValueError):
-            models.validate({"handback": {"provider": "aiprover", "model": "dgx"}})

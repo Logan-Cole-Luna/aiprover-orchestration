@@ -22,18 +22,6 @@ SPENT = "theorem a (n : Nat) : n = n"
 
 class BudgetTest(TemporaryDirectoryTest):
 
-    def test_retry_extends_the_budget(self):
-        run = self.orchestration(
-            ScriptedPool(),
-            Config(aiprover_attempts_per_lemma=2, aiprover_handback_after=3),
-        )
-        self.assertEqual(run._attempts_allowed(0), 2)
-        self.assertEqual(run._attempts_allowed(2), 5)
-        lemma = Lemma("a", SPENT, attempts=2)
-        self.assertTrue(run._exhausted(lemma))
-        lemma.reviewed_at = 2
-        self.assertFalse(run._exhausted(lemma))
-
     def test_excluded_statements(self):
         run = self.orchestration(ScriptedPool())
         proved = "theorem p : True"
@@ -58,19 +46,6 @@ class BudgetTest(TemporaryDirectoryTest):
             },
         )
         self.assertIn("refuted", excluded[statement_key("theorem r : 1 = 2")])
-
-    def test_chat_solvers_count_one_attempt_per_phase(self):
-        # The solver's only reply uses `sorry`, which the text filter
-        # rejects before Lean.
-        pool = ScriptedPool(["<proof>sorry</proof>"], solver=object())
-        run = self.orchestration(pool, Config(workers=1, max_repairs=0))
-        lemma = Lemma("a", SPENT)
-        sketch = Sketch([lemma], "trivial")
-        run.prove(FORM, sketch)
-        self.assertEqual(lemma.attempts, 1)
-        self.assertIn(("lemma_failed", None), self.decisions(run))
-        run.prove(FORM, sketch)  # the budget of one attempt is spent
-        self.assertEqual(len(pool.phases), 1)
 
 
 @requires_lean

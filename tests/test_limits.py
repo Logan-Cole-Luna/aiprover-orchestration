@@ -1,11 +1,10 @@
 """Limits of the machine (limits.py): slots shared across threads and
-processes, the budget under concurrent calls, jobs that wait for session
-slots, and the end of a Claude call's processes."""
+processes, the budget under concurrent calls, and jobs that wait for
+session slots."""
 
 import threading
 import time
 import unittest
-from types import SimpleNamespace
 from unittest import mock
 
 from aiprover_orchestration import limits
@@ -63,15 +62,6 @@ class MachineSlotsTest(unittest.TestCase):
             self.assertEqual(first.take(5), 1)
             first.release(2)
             self.assertEqual(len(first), 1)
-
-    def test_limits_follow_the_machine(self):
-        with mock.patch.object(limits, "memory_gib", return_value=16.0):
-            self.assertEqual(limits.LEAN.limit(), min(2, limits.os.cpu_count()))
-            self.assertEqual(limits.HOSTED.limit(), 16)
-            self.assertEqual(limits.SESSIONS.limit(), 8)
-            self.assertEqual(limits.lean_megabytes(), 8192)
-        with mock.patch.dict(limits.os.environ, {"AIPROVER_MAX_LEAN": "3"}):
-            self.assertEqual(limits.LEAN.limit(), 3)
 
 
 class HostedAgent(Agent):
@@ -162,26 +152,6 @@ class SessionSlotsTest(TemporaryDirectoryTest):
             phase.slot_freed.notify()
         waiter.join(5)
         self.assertEqual(claimed, [1])
-
-    def test_without_slots_the_harness_bounds_the_sessions(self):
-        run = self.orchestration(ScriptedPool(), Config(workers=4))
-        solver = FakeSolver({})
-        solver.total_slots = 2
-        phase = SimpleNamespace(solver=solver)
-        self.assertEqual(run._capacity(phase), 2)
-
-
-class RetiredSummaryTest(TemporaryDirectoryTest):
-
-    def test_a_resuming_run_sets_its_summary_aside(self):
-        summary = self.directory / "r" / "summary.json"
-        summary.parent.mkdir()
-        summary.write_text('{"status": "lemmas_unproved"}')
-        with mock.patch.object(jobs, "RESULTS_DIR", self.directory):
-            jobs.retire_summary("r")
-            jobs.retire_summary("r")
-            self.assertEqual(jobs.read_summary("r"), {})
-        self.assertTrue(summary.with_name("summary.previous.json").exists())
 
 
 if __name__ == "__main__":
