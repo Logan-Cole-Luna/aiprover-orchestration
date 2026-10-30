@@ -22,6 +22,7 @@ Usage:
 """
 
 import argparse
+import base64
 import html
 import json
 import re
@@ -40,6 +41,8 @@ from ..benchmark import run_costs
 from ..trace import Trace
 
 ASSETS = Path(__file__).parent / "assets"
+# Shared with the query server's page.
+SERVER_STATIC = Path(__file__).parents[2] / "server" / "static"
 # Output file name → (template, page title suffix).
 PAGES = {
     "trace.html": ("trace_view.html", "proof run"),
@@ -48,6 +51,8 @@ PAGES = {
 COMMON_CSS_MARKER = "/*TRACE_COMMON_CSS*/"
 COMMON_JS_MARKER = "/*TRACE_COMMON_JS*/"
 THEME_CSS_MARKER = "/*TRACE_THEME_CSS*/"
+THEME_JS_MARKER = "/*TRACE_THEME_JS*/"
+FAVICON_MARKER = "__FAVICON__"
 DATA_MARKER = "/*TRACE_DATA*/null"
 TITLE_MARKER = "__PAGE_TITLE__"
 
@@ -216,7 +221,13 @@ def render(trace_path: Path, output_dir: Path) -> list[Path]:
     }
     common_css = (ASSETS / "trace_common.css").read_text()
     common_js = (ASSETS / "trace_common.js").read_text()
-    theme_css = (ASSETS / "trace_theme.css").read_text()
+    theme_css = (SERVER_STATIC / "palette.css").read_text() + (
+        ASSETS / "trace_theme.css"
+    ).read_text()
+    theme_js = (SERVER_STATIC / "theme.js").read_text()
+    # Embedded, so that a page keeps its icon when opened from an export.
+    icon = base64.b64encode((SERVER_STATIC / "favicon.svg").read_bytes()).decode()
+    favicon = f"data:image/svg+xml;base64,{icon}"
     theorem = trace.get("theorem_name", "Orchestration")
     written = []
     for output_name, (template_name, title_suffix) in PAGES.items():
@@ -225,6 +236,8 @@ def render(trace_path: Path, output_dir: Path) -> list[Path]:
             page.replace(COMMON_CSS_MARKER, common_css)
             .replace(COMMON_JS_MARKER, common_js)
             .replace(THEME_CSS_MARKER, theme_css)
+            .replace(THEME_JS_MARKER, theme_js)
+            .replace(FAVICON_MARKER, favicon)
             .replace(TITLE_MARKER, html.escape(f"{theorem} {title_suffix}"))
             .replace(DATA_MARKER, payloads[output_name == "trace_replay.html"])
         )

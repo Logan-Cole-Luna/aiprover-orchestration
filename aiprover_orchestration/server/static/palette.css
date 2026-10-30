@@ -1,0 +1,29 @@
+/* Colors, fonts, and the theme picker of the query server's page and the trace
+   pages, which inline this file. */
+:root {
+  color-scheme: light;
+  --bg: #fff; --surface: #fff; --surface-2: #f1f1f1; --ink: #121212; --muted: #555;
+  --line: #c9c9c9; --accent: #0b4fa8; --accent-soft: #e3ecf8; --mast: #22303f; --mast-ink: #fff; --caption: #4f6275;
+  --captain: #2b5797; --auditor: #6a4c93; --solver: #2f7d6d; --lean: #8a6a1f;
+  --ok: #116233; --ok-soft: #e1efe2; --fail: #9a1c1c; --fail-soft: #f7dcd7;
+  --warn: #7a5200; --warn-soft: #f6e6c8; --code-bg: #f4f4f4;
+  --kw: #0b4fa8; --cm: #6f7788; --str: #2f7d6d;
+  --font-ui: Literata, Georgia, serif; --font-prose: Literata, Georgia, serif;
+  --font-display: Literata, Georgia, serif; --font-mono: "Fira Mono", ui-monospace, monospace;
+}
+:root[data-theme="warm"] {
+  --bg: #f5efe4; --surface: #fffaf1; --surface-2: #ece4d4; --ink: #1d1a16; --muted: #74695a;
+  --line: #ddd2bf; --accent: #c8401c; --accent-soft: #f7e0d4; --mast: #1d1a16; --mast-ink: #f5efe4; --caption: #7d5f4c;
+  --lean: #b5831f; --ok: #2f7d4d; --fail: #b3261e; --warn: #a8660a; --code-bg: #f9f4ea;
+  --kw: #c8401c; --cm: #8b7f6e;
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #16181c; --surface: #1e2126; --surface-2: #2a2e35; --ink: #e8e6e1; --muted: #a3a6ad;
+  --line: #3a3e46; --accent: #7fb0f0; --accent-soft: #24303f; --mast: #0f1114; --mast-ink: #e8e6e1; --caption: #9db0c2;
+  --captain: #939cf3; --auditor: #da8cc1; --solver: #4fc7b8; --lean: #d4b366;
+  --ok: #6fcf97; --ok-soft: #173325; --fail: #f28b82; --fail-soft: #3a1c1b;
+  --warn: #e5b567; --warn-soft: #3a2c12; --code-bg: #23262c;
+  --kw: #a5adf6; --cm: #7d8698; --str: #62cfc1;
+}
+#theme { width: auto; font: inherit; font-size: .85rem; padding: 2px 4px; color: var(--mast-ink); background: var(--mast); border: 1px solid var(--mast-ink); }
