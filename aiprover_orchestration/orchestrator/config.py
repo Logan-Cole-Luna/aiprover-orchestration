@@ -86,7 +86,9 @@ ALGORITHM = [
         "description": "Splice proofs into the sketch and verify: compiles, no "
         "`sorry`, only standard axioms, and the solution's type "
         "equals the target theorem's type (checked in a module "
-        "importing both).",
+        "importing both). A failure returns to the captain: the "
+        "lemmas responsible are handed back, or the sketch is "
+        "replanned when none is.",
     },
     {
         "stage": "review",
@@ -198,6 +200,8 @@ class Config:
     # to leave this many, so a run that spent its budget on proving is still
     # reviewed.
     final_claude_calls: int = 8
+    # Failed assemblies returned to the captain before the run ends.
+    max_assembly_rounds: int = 3
     # Claude calls added for the informalization (write, check, revise,
     # repairs).
     informal_claude_calls: int = 6

@@ -31,6 +31,7 @@ import logging
 import os
 import re
 import secrets
+import shutil
 import sqlite3
 import tempfile
 import threading
@@ -39,7 +40,7 @@ import urllib.request
 import zipfile
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
@@ -51,6 +52,7 @@ from ..library import api as library_api
 from ..orchestrator import libraries
 from ..orchestrator.config import FILE_HEADER
 from ..orchestrator.reports.informal import RESULT_ROW_SUFFIX
+from ..orchestrator.trace import Trace
 from ..paths import (
     CONFIG_DIR,
     HOME_DIR,
@@ -85,6 +87,10 @@ MAX_LIBRARY_CHARS = 2_000_000
 # A bound on a submitted statement or proof against oversized requests; the
 # page warns at lengths that strain the context of the agents long before it.
 MAX_TEXT_CHARS = 1_000_000
+# Bounds on an imported run: the upload and its unpacked files.
+MAX_IMPORT_BYTES = 2**30
+MAX_UNPACKED_BYTES = 2**32
+MAX_IMPORTS_PER_USER = 20
 # Libraries a run may build on (orchestrator/libraries.py); uploads are kept
 # per run under uploads/.
 LIBRARY_DIR = LIBRARIES_DIR
@@ -527,6 +533,7 @@ class Selection(BaseModel):
 
 
 class Submission(BaseModel):
+    name: str = ""  # run name; the run id if free
     uuid: str = ""
     statement: str = ""
     proof: str = ""
@@ -564,13 +571,47 @@ def model_catalog(
     }
 
 
-def new_run_id(suffix: str) -> str:
-    base = f"srv_{time.strftime('%Y%m%d_%H%M%S')}_{suffix}"
+def run_name(text: str) -> str:
+    """`text` in the characters of a run id, which names files and URLs."""
+    return re.sub(r"[^A-Za-z0-9_.-]+", "_", text).strip("_.-")[:80]
+
+
+def new_run_id(suffix: str, name: str = "") -> str:
+    """A free run id, reserved by creating its result directory."""
+    base = run_name(name) or f"srv_{time.strftime('%Y%m%d_%H%M%S')}_{suffix}"
     run_id, count = base, 1
-    while store.get(run_id) or (RESULTS_DIR / run_id).exists():
+    while True:
+        if not store.get(run_id):
+            try:
+                (RESULTS_DIR / run_id).mkdir(parents=True)
+                return run_id
+            except FileExistsError:
+                pass
         count += 1
         run_id = f"{base}_{count}"
-    return run_id
+
+
+def write_problem(run_id: str, row: dict) -> Path:
+    """The dataset of a run's problem, written from `row`."""
+    dataset = PROBLEM_DIR / f"{run_id}.jsonl"
+    dataset.parent.mkdir(parents=True, exist_ok=True)
+    dataset.write_text(json.dumps(row) + "\n")
+    return dataset
+
+
+def statement_title(statement: str) -> str:
+    """The first line with words: a statement may open with a rule line."""
+    return next(
+        (line for line in statement.splitlines() if re.search(r"\w", line)),
+        "",
+    ).strip()[:120]
+
+
+def claude_allowed(page: Page, selection: dict) -> bool:
+    """Whether the page's runs may use `selection` on the server's login."""
+    return page.claude or not any(
+        choice["provider"] == "claude" for choice in selection.values()
+    )
 
 
 def check_capacity(user: str) -> None:
@@ -602,9 +643,7 @@ def submit(body: Submission, user: str = Depends(current_user)) -> dict:
         )
     except ValueError as error:
         raise HTTPException(400, str(error))
-    if not page.claude and any(
-        choice["provider"] == "claude" for choice in selection.values()
-    ):
+    if not claude_allowed(page, selection):
         raise HTTPException(
             400,
             "Claude roles run on your own Claude login: start your own server "
@@ -649,7 +688,7 @@ def submit(body: Submission, user: str = Depends(current_user)) -> dict:
             if body.uuid.startswith("JiatuBook_")
             else body.uuid
         )
-        run_id = new_run_id(suffix)
+        run_id = new_run_id(suffix, body.name)
         uuid, dataset = body.uuid, row["_dataset"]
         title = book_label(row["informal_statement"]) or body.uuid
     else:
@@ -660,10 +699,8 @@ def submit(body: Submission, user: str = Depends(current_user)) -> dict:
             )
         if max(len(statement), len(proof)) > MAX_TEXT_CHARS:
             raise HTTPException(413, "statement or proof too long")
-        run_id = new_run_id("user")
+        run_id = new_run_id("user", body.name)
         uuid = f"user_{run_id}"
-        dataset = PROBLEM_DIR / f"{run_id}.jsonl"
-        dataset.parent.mkdir(parents=True, exist_ok=True)
         row = {
             "uuid": uuid,
             "source_name": "user",
@@ -671,14 +708,15 @@ def submit(body: Submission, user: str = Depends(current_user)) -> dict:
             "informal_statement": statement,
             "informal_proof": proof or "(No informal proof is given.)",
         }
-        dataset.write_text(json.dumps(row) + "\n")
-        # The first line with words: a statement may open with a rule line.
-        title = next(
-            (line for line in statement.splitlines() if re.search(r"\w", line)),
-            "",
-        ).strip()[:120]
+        dataset = write_problem(run_id, row)
+        title = statement_title(statement)
 
-    options = library_options(body, run_id) | run_settings
+    try:
+        options = library_options(body, run_id) | run_settings
+    except HTTPException:
+        # A refused submission keeps no claim on its name.
+        (RESULTS_DIR / run_id).rmdir()
+        raise
     store.add(
         {
             "run_id": run_id,
@@ -695,6 +733,135 @@ def submit(body: Submission, user: str = Depends(current_user)) -> dict:
         }
     )
     return {"run_id": run_id, "state": store.get(run_id)["state"]}
+
+
+def unpack_run(archive: zipfile.ZipFile, target: Path) -> None:
+    """Restore a zip of a run folder or of an export into `target`."""
+    files = {
+        info: PurePosixPath(info.filename)
+        for info in archive.infolist()
+        if not info.is_dir() and not info.filename.startswith("__MACOSX/")
+    }
+    if not files:
+        raise ValueError("the archive is empty")
+    if sum(info.file_size for info in files) > MAX_UNPACKED_BYTES:
+        raise ValueError("the archive unpacks to too much data")
+    if any(path.is_absolute() or ".." in path.parts for path in files.values()):
+        raise ValueError("the archive has paths outside its folder")
+    # Both forms may hold one folder named after the run.
+    tops = {path.parts[0] for path in files.values()}
+    nested = len(tops) == 1 and all(len(p.parts) > 1 for p in files.values())
+    for info, path in files.items():
+        relative = restored_path(path.parts[nested:])
+        if relative is None:
+            continue
+        (target / relative).parent.mkdir(parents=True, exist_ok=True)
+        with archive.open(info) as source, open(target / relative, "wb") as out:
+            shutil.copyfileobj(source, out)
+
+
+def first_text(key: str, *records: dict) -> str:
+    """The first text field `key` of imported records; empty if none."""
+    values = (record.get(key) for record in records)
+    return next((value for value in values if isinstance(value, str)), "")
+
+
+def read_run(unpacked: Path) -> dict:
+    """The job fields of an unpacked run. A trace in another form (gzip,
+    lines) becomes the trace.json that resuming reads."""
+    trace = Trace.load(unpacked / "trace.json") or {}
+    summary_path = unpacked / "summary.json"
+    summary = (
+        json.loads(summary_path.read_text()) if summary_path.exists() else {}
+    )
+    if not trace and not (unpacked / "trace.html").exists():
+        raise ValueError("the archive holds no run trace")
+    if trace and not (unpacked / "trace.json").exists():
+        (unpacked / "trace.json").write_text(json.dumps(trace))
+        (unpacked / "trace.json.gz").unlink(missing_ok=True)
+        (unpacked / "trace.jsonl").unlink(missing_ok=True)
+    problem = trace.get("problem") or {}
+    uuid = first_text("uuid", problem, summary) or "imported"
+    statement = first_text("informal_statement", problem)
+    status = first_text("status", summary, trace.get("outcome") or {})
+    return {
+        "problem": problem | {"uuid": uuid},
+        "original": first_text("run_id", trace, summary) or uuid,
+        "job": {
+            "uuid": uuid,
+            "title": statement_title(statement) or uuid,
+            "status": status or "no_summary",
+            # The pipeline needs the problem to continue.
+            "imported": "resume"
+            if statement and first_text("uuid", problem)
+            else "view",
+        },
+    }
+
+
+def restore_run(upload, user: str, page: str) -> str:
+    """Add a run archive to the run list as a finished run; its results stay
+    as they were produced and are not checked again. A resumed import uses
+    the page's default models."""
+    with tempfile.TemporaryDirectory(dir=TEMP_DIR) as staging:
+        unpacked = Path(staging) / "run"
+        try:
+            with zipfile.ZipFile(upload) as archive:
+                unpack_run(archive, unpacked)
+            run = read_run(unpacked)
+        # An archive is arbitrary data; any failure to read it is the upload's.
+        except Exception as error:
+            raise HTTPException(400, f"unreadable run archive: {error}")
+        run_id = new_run_id("", f"imported_{run['original']}")
+        dataset = write_problem(run_id, run["problem"])
+        for item in unpacked.iterdir():
+            shutil.move(item, RESULTS_DIR / run_id)
+    now = time.time()
+    store.add(
+        {
+            **run["job"],
+            "run_id": run_id,
+            "owner": user,
+            "dataset": str(dataset),
+            "state": "finished",
+            "submitted": now,
+            "ended": now,
+            "agents": json.dumps(models.validate(PAGES[page].defaults)),
+            "gpu_group": PAGES[page].gpu_groups[0],
+            "page": page,
+        }
+    )
+    return run_id
+
+
+@app.post("/api/runs/import", status_code=201)
+async def import_run(
+    request: Request,
+    user: str = Depends(current_user),
+    page: str = DEFAULT_PAGE,
+) -> dict:
+    """Add a run from a zip of its folder or of its export (the body)."""
+    page_of(page)
+    if AUTH_REQUIRED and (
+        sum(bool(job["imported"]) for job in store.jobs(user))
+        >= MAX_IMPORTS_PER_USER
+    ):
+        raise HTTPException(
+            429, f"at most {MAX_IMPORTS_PER_USER} imported runs per user"
+        )
+    TEMP_DIR.mkdir(exist_ok=True)
+    size = 0
+    with tempfile.TemporaryFile(dir=TEMP_DIR) as upload:
+        async for chunk in request.stream():
+            size += len(chunk)
+            if size > MAX_IMPORT_BYTES:
+                raise HTTPException(413, "run archive too large")
+            try:
+                await asyncio.to_thread(upload.write, chunk)
+            except OSError as error:
+                raise HTTPException(507, f"cannot store the upload: {error}")
+        run_id = await asyncio.to_thread(restore_run, upload, user, page)
+    return {"run_id": run_id, "state": "finished"}
 
 
 def library_options(body: Submission, run_id: str) -> dict:
@@ -758,7 +925,9 @@ def list_libraries(user: str = Depends(current_user)) -> list[dict]:
 
 def resumable(job: dict) -> bool:
     """A cancelled run, or a finished one that neither proved nor disproved
-    its theorem, with a trace to continue from."""
+    its theorem, with a trace to continue from. An imported run needs its
+    problem and, having had no approval, a server without authentication; a
+    page refuses the Claude roles it may not run."""
     ended = job["state"] == "cancelled" or (
         job["state"] == "finished" and job["status"] not in CONCLUSIVE
     )
@@ -766,6 +935,13 @@ def resumable(job: dict) -> bool:
         ended
         and "home" not in job
         and (run_dir(job, RESULTS_DIR) / "trace.json").exists()
+        and (
+            not job.get("imported")
+            or (job["imported"] == "resume" and not AUTH_REQUIRED)
+        )
+        and claude_allowed(
+            PAGES.get(job.get("page"), PAGES["dev"]), job_selection(job)
+        )
     )
 
 
@@ -800,11 +976,13 @@ def describe(job: dict) -> dict:
             "ended",
             "approved_by",
             "resumptions",
+            "imported",
         )
     } | {
         "position": None if "home" in job else store.queue_position(job["run_id"]),
         "files": files,
-        "agents": job_selection(job),
+        # An import's selection is for resuming; it did not produce the run.
+        "agents": {} if job.get("imported") else job_selection(job),
         "gpu_group": job.get("gpu_group") or vista.DEFAULT_GROUP,
         "hidden": bool(job.get("hidden")),
         "resumable": resumable(job),
@@ -920,7 +1098,14 @@ def get_file(name: str, job: dict = Depends(owned_job)) -> FileResponse:
         if path.suffix in (".lean", ".tex", ".jsonl")
         else None
     )
-    return FileResponse(path, media_type=media_type)
+    # Pages of imported runs come from other people: a sandbox keeps their
+    # scripts from acting on this site as the viewer.
+    headers = (
+        {"Content-Security-Policy": "sandbox allow-scripts"}
+        if path.suffix == ".html"
+        else None
+    )
+    return FileResponse(path, media_type=media_type, headers=headers)
 
 
 # Export layout: the files a reader opens first at the root of the folder,
@@ -971,6 +1156,23 @@ def export_path(relative: Path) -> str | None:
     return f"run_data/{relative}"
 
 
+def restored_path(parts: tuple[str, ...]) -> Path | None:
+    """Where a file of a run archive goes in results/<run_id>/: the inverse of
+    `export_path`, which leaves a plain run folder as it is. None for logs,
+    which are not restored, and the problem record, which an export writes
+    anew."""
+    folder, *rest = parts
+    if folder == "logs" or parts == ("run_data", "problem.json"):
+        return None
+    if rest and folder in ("lean_modules", "run_data"):
+        return Path(*rest)
+    if rest and folder == "report_build":
+        return Path("report", *rest)
+    if not rest and folder.endswith((".tex", ".pdf")):
+        return Path("informal" if "_informal." in folder else "report", folder)
+    return Path(*parts)
+
+
 def export_readme(record: dict, trace_agents: dict, files: list[str]) -> str:
     """A short guide to the exported folder; the models are those the trace
     records."""
@@ -1016,7 +1218,8 @@ def export_readme(record: dict, trace_agents: dict, files: list[str]) -> str:
             for choice in record["agents"].values()
             if choice["provider"] == "aiprover"
         ),
-        "trained",
+        # An import's version is unknown; the trace names only "aiprover".
+        None if record["imported"] else "trained",
     )
     roles = sorted(
         trace_agents,

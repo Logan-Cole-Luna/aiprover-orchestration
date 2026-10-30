@@ -6,12 +6,16 @@ target and solution are then written as library modules; a check module
 importing target and solution proves `example : type_of% @target :=
 @solution`, so the solution's type is the target's without the solution
 importing the target.
+
+A failed assembly returns to the captain (`assembly_rejected`): the lemmas
+responsible lose their proofs and are handed back, and the sketch itself is
+revised when no lemma is responsible.
 """
 
 from ...lean import checker
 from ...lean.layout import module_name, module_path
 from ..config import MAIN_NAME
-from ..structures import Formalization, Sketch
+from ..structures import Formalization, Sketch, refers_to
 
 VERIFICATION_CHECKS = (
     "compiles",
@@ -42,6 +46,68 @@ class AssembleStage:
         checks["verified"] = all(checks[key] for key in VERIFICATION_CHECKS)
         self._decision("final_verification", checks=checks, solution=standalone)
         return standalone, checks
+
+    def responsible_lemmas(
+        self, sketch: Sketch, standalone: str
+    ) -> dict[str, str]:
+        """The lemmas whose own proofs cause a failed assembly, each with
+        the problem. A lemma that fails only through another lemma it uses
+        is left out, since `#print axioms` follows dependencies."""
+        queries = "".join(
+            f"\n#print axioms {lemma.name}" for lemma in sketch.lemmas
+        )
+        result = self._check("final_axioms", standalone + queries + "\n")
+        if result.timed_out:
+            return {}
+        failing = {}
+        for lemma in sketch.lemmas:
+            extra = checker.nonstandard_axioms(result, lemma.name)
+            if extra is None or extra:
+                failing[lemma.name] = extra
+        problems = {}
+        for lemma in sketch.lemmas:
+            if lemma.name not in failing:
+                continue
+            extra = failing[lemma.name]
+            text = f"{lemma.helpers}\n{lemma.proof}"
+            if any(
+                refers_to(text, name)
+                for name in failing
+                if name != lemma.name
+            ):
+                continue
+            problems[lemma.name] = (
+                f"`{lemma.name}` depends on {', '.join(extra)}, and only "
+                f"{', '.join(sorted(checker.STANDARD_AXIOMS))} are allowed; "
+                f"tactics such as `bv_decide` and `native_decide` add them."
+                if extra
+                else f"`{lemma.name}` does not compile in the assembled file."
+            )
+        return problems
+
+    def reject_assembly(
+        self, sketch: Sketch, checks: dict, problems: dict[str, str]
+    ) -> None:
+        """Withdraw the proofs of the lemmas in `problems` for the captain."""
+        report = "\n".join(checks["errors"])
+        for lemma in sketch.lemmas:
+            problem = problems.get(lemma.name)
+            if problem:
+                lemma.last_errors = report or problem
+                lemma.last_attempts = f"{lemma.helpers}\n{lemma.proof}".strip()
+                lemma.helpers = lemma.proof = ""
+                lemma.proved = lemma.handed_back = False
+                lemma.assembly_failure = problem
+        self._decision(
+            "assembly_rejected",
+            lemmas=problems,
+            attempts={
+                lemma.name: lemma.last_attempts
+                for lemma in sketch.lemmas
+                if lemma.name in problems
+            },
+            errors=report,
+        )
 
     def _verify_modules(self, form: Formalization, body: str) -> dict:
         """Write the run's modules and check the solution against the

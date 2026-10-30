@@ -166,7 +166,9 @@ replace the derived limits.
 The page submits an informal statement and proof, or a problem of the open
 and OpenAI math datasets, and lists the proved OpenAI problems and the runs
 submitted from it with their Lean files, reports, and traces. A cancelled or
-unproved run has a Resume button that continues it from its trace. The
+unproved run has a Resume button that continues it from its trace. Import
+run adds a run started elsewhere from a zip of its `results/<run_id>/` folder
+or of its export. A run takes an optional name, which becomes its id. The
 form's "Orchestrator settings" set a run's hand-backs, retries, attempts, and
 Claude budget, among others.
 

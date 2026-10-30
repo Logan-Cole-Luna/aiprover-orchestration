@@ -14,7 +14,7 @@
 {main_proof}
 </main_proof>
 
-Solver agents have failed {attempts} times to prove the lemma `{lemma_name}` of your proof sketch. The other lemmas are still being proved. Diagnose the failure from the attempts below and choose one action.
+{situation} Diagnose the failure from the attempts below and choose one action.
 
 <sketch_lemmas>
 {lemmas}

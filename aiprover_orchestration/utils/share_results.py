@@ -93,13 +93,19 @@ were in progress on our machine are submitted afresh.
 """
 
 
+def run_problem(run_id: str) -> str:
+    """The problem of a run id `srv_<date>_<time>_<problem>`; a named or
+    imported run stands for itself."""
+    return re.sub(r"^srv_\d{8}_\d{6}_", "", run_id)
+
+
 def latest_runs(match: str) -> dict[str, Path]:
     """The latest result directory of each problem whose run id contains
-    `match`; run ids are `srv_<date>_<time>_<problem>`."""
+    `match`."""
     latest: dict[str, Path] = {}
-    for run in sorted(RESULTS_DIR.glob("srv_*")):
+    for run in sorted(RESULTS_DIR.iterdir()):
         if match in run.name and (run / "trace.json").exists():
-            latest[run.name.split("_", 3)[3]] = run
+            latest[run_problem(run.name)] = run
     return latest
 
 
@@ -230,7 +236,7 @@ def index_row(run: Path, job: dict | None) -> str:
     )
     wall = summary.get("wall_seconds")
     return (
-        f"| `{run.name}` | {run.name.split('_', 3)[3]} "
+        f"| `{run.name}` | {run_problem(run.name)} "
         f"| {(job or {}).get('state', '')} "
         f"| {(job or {}).get('status') or ''} "
         f"| {f'{wall / 3600:.1f}' if wall else ''} |"

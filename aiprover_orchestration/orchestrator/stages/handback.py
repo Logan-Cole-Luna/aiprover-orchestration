@@ -130,8 +130,17 @@ class HandbackStage:
         retries = self._retries_spent(phase, lemma)
         # Cleared when a reply stops at the hand-back's spend or turn limit.
         direct_proof = True
+        situation = (
+            prompts.HANDBACK_ASSEMBLY.format(
+                lemma_name=lemma.name, problem=lemma.assembly_failure
+            )
+            if lemma.assembly_failure
+            else prompts.HANDBACK_SOLVERS.format(
+                attempts=lemma.attempts, lemma_name=lemma.name
+            )
+        )
         prompt = prompts.HANDBACK_TEMPLATE.format(
-            attempts=lemma.attempts,
+            situation=situation,
             lemma_name=lemma.name,
             definitions=form.definitions,
             preamble=form.preamble,

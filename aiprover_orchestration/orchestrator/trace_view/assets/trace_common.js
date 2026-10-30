@@ -437,6 +437,7 @@ const EVENT_TEXT = {
   replan: "Sketch revision requested",
   lemma_reused: "Proved lemma reused",
   lemma_handback: "Lemma handed back to the captain",
+  assembly_rejected: "Assembly failed; returned to the captain",
   early_revision: "Attempts used: lemma revised early",
   lemma_direction: "Captain's direction for the lemma's jobs",
   conflict: "Conflict analysed (CDCL)",

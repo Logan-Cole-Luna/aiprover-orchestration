@@ -396,10 +396,15 @@ class SketchStage:
         return "\n\n".join(parts)
 
     def replan(
-        self, form: Formalization, sketch: Sketch, resumed: bool = False
+        self,
+        form: Formalization,
+        sketch: Sketch,
+        resumed: bool = False,
+        assembly_failure: str = "",
     ) -> Sketch:
-        """Revise `sketch` after failed lemmas. `resumed` marks the redo of a
-        replan interrupted before its new sketch was accepted."""
+        """Revise `sketch` after failed lemmas or an `assembly_failure` that
+        no lemma caused. `resumed` marks the redo of a replan interrupted
+        before its new sketch was accepted."""
         proved = [lemma for lemma in sketch.lemmas if lemma.proved]
         failed = [lemma for lemma in sketch.lemmas if not lemma.proved]
         refuted = [lemma.name for lemma in failed if lemma.refutation]
@@ -425,6 +430,10 @@ class SketchStage:
             ),
             clauses=self._clauses_text(failed, sketch.lemmas),
         )
+        if assembly_failure:
+            feedback += prompts.REPLAN_ASSEMBLY.format(
+                failure=assembly_failure
+            )
         self._decision(
             "replan_resumed" if resumed else "replan",
             proved=[lemma.name for lemma in proved],
