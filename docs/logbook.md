@@ -227,11 +227,21 @@ Results
 
 ## Decisions
 
+- Failed assembly returns to the captain (2026-10-30): `#print axioms` on every
+  lemma names the lemmas responsible; their proofs are withdrawn and handed
+  back at once, for up to `max_assembly_rounds` rounds. A failure with no
+  responsible lemma goes to a replan.
 - Projects (`orchestrator/project.py`, §7.1 of docs/orchestration.md):
   groups of runs sharing a library, launched in dependency order through
   the query server and written up as one paper from their informalizations
   (writer Sonnet, reviewer Opus by default). Project files live in
   `data/projects/`, outside the repository.
+- A failed assembly returns to the captain instead of ending the run, for
+  up to `max_assembly_rounds` (3) rounds. `#print axioms` on every lemma
+  names the lemmas whose own proofs cause the failure; their proofs are
+  withdrawn and each goes to a hand-back at once, while the other lemmas
+  stay proved. A failure no lemma causes goes to a replan. Event
+  `assembly_rejected`, restored on resume.
 - A resumed run records `lemma_reused` for each restored proof of the
   current sketch that its trace does not record since the sketch was
   accepted (`ResumeState.unrecorded_proofs`), so the replay page marks

@@ -53,6 +53,8 @@ class Lemma:
     knowledge: str = ""  # notes carried to the next jobs (knowledge.py)
     refutation: str = ""  # compiled Lean proof of the statement's negation
     parent: str = ""  # the lemma this one was split from (cdcl.py)
+    # Why assembly rejected its proof; the captain answers this first.
+    assembly_failure: str = ""
     # Lean definitions its statement may use, introduced by splits above it,
     # outermost first; each block is placed once, before the first lemma
     # that needs it (`stub_listing`).

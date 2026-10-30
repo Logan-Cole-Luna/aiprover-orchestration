@@ -33,6 +33,9 @@ class ResumeState:
     formalize_feedback: str = ""  # set when the latest verdict is REVISE
     sketch: Sketch | None = None
     replans_started: int = 0
+    assembly_rounds: int = 0  # failed assemblies returned to the captain
+    # Why assembly rejected a lemma's proof, until the captain answers.
+    assembly_failures: dict[str, str] = field(default_factory=dict)
     replan_pending: bool = (
         False  # a replan began but no new sketch was accepted
     )
@@ -318,6 +321,7 @@ def restore_state(document: dict) -> ResumeState:
             )
             if "knowledge" in step:
                 state.knowledge[target.name] = step["knowledge"]
+            state.assembly_failures.pop(target.name, None)
             if step["action"] == "restate":
                 target.statement = step["statement"]
                 statement_of[target.name] = target.statement
@@ -362,6 +366,17 @@ def restore_state(document: dict) -> ResumeState:
             state.knowledge.pop(target.name, None)
             target.statement = step["statement"]
             statement_of[target.name] = target.statement
+        elif event == "assembly_rejected" and state.sketch is not None:
+            state.assembly_rounds += 1
+            for name, problem in step["lemmas"].items():
+                state.proofs.pop(normalize(statement_of[name]), None)
+                state.handed_back.discard((name, normalize(statement_of[name])))
+                state.failures[name] = (
+                    step["errors"] or problem,
+                    step["attempts"][name],
+                )
+                state.assembly_failures[name] = problem
+                recorded.discard(name)
         elif event == "replan":
             # A replan that follows a refutation is not counted.
             state.replans_started += not step.get("refuted")
@@ -376,6 +391,7 @@ def restore_state(document: dict) -> ResumeState:
             lemma.handed_back = key in state.handed_back
             lemma.knowledge = state.knowledge.get(lemma.name, "")
             lemma.refutation = state.refutations.get(key, "")
+            lemma.assembly_failure = state.assembly_failures.get(lemma.name, "")
             proof = state.proofs.get(normalize(lemma.statement))
             if proof:
                 lemma.helpers, lemma.proof, proved_under = proof

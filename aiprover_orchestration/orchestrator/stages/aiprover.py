@@ -477,6 +477,8 @@ class AIProverStage:
             )
         # Retried more often than allowed (before the limit existed).
         over = phase.retries[lemma.name] > self.config.aiprover_max_retries > 0
+        # A proof that assembly rejected goes to the captain at once.
+        over = over or bool(lemma.assembly_failure)
         if (
             waiting
             or not handback_after
@@ -519,6 +521,7 @@ class AIProverStage:
             return
         try:
             self._handback(phase, lemma)
+            lemma.assembly_failure = ""
             if lemma.refutation:
                 phase.refuted.set()
         except AgentRefusal as error:
@@ -531,6 +534,7 @@ class AIProverStage:
                 f"continuing without it"
             )
             lemma.handed_back = True
+            lemma.assembly_failure = ""
             self._decision(
                 "lemma_handback",
                 lemma=lemma.name,

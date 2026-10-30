@@ -415,6 +415,7 @@ class Orchestration(
                     form.add_setting_facts(facts)
             summary["formalization"] = asdict(form)
             replans_used = state.replans_started
+            assembly_rounds = state.assembly_rounds
             if state.sketch is None:
                 with self._timed("sketch"):
                     sketch = self.sketch(form)
@@ -443,7 +444,41 @@ class Orchestration(
                 with self._timed("prove"):
                     self.prove(form, sketch)
                 if all(lemma.proved for lemma in sketch.lemmas):
-                    break
+                    with self._timed("assemble"):
+                        standalone, checks = self.assemble(form, sketch)
+                    summary["checks"] = checks
+                    summary["status"] = "assembly_failed"
+                    (
+                        self.result_dir / f"{self.slug}_standalone.lean"
+                    ).write_text(standalone)
+                    if checks["verified"]:
+                        break
+                    if assembly_rounds >= self.config.max_assembly_rounds:
+                        return summary
+                    assembly_rounds += 1
+                    with self._timed("assemble"):
+                        problems = self.responsible_lemmas(sketch, standalone)
+                    self.reject_assembly(sketch, checks, problems)
+                    if problems:
+                        logger.info(f"assembly failed: {sorted(problems)}")
+                        continue
+                    if replans_used >= self.config.max_replans:
+                        return summary
+                    logger.info("assembly failed in the sketch; replanning")
+                    with self._timed("sketch"):
+                        sketch = self.replan(
+                            form,
+                            sketch,
+                            assembly_failure=str(
+                                {
+                                    name: value
+                                    for name, value in checks.items()
+                                    if name != "axioms"
+                                }
+                            ),
+                        )
+                    replans_used += 1
+                    continue
                 # A refuted lemma makes the sketch unprovable: its revision
                 # is not charged to the replan budget.
                 refuted = any(lemma.refutation for lemma in sketch.lemmas)
@@ -458,15 +493,6 @@ class Orchestration(
                 with self._timed("sketch"):
                     sketch = self.replan(form, sketch)
                 replans_used += not refuted
-            with self._timed("assemble"):
-                standalone, checks = self.assemble(form, sketch)
-            summary["checks"] = checks
-            summary["status"] = "assembly_failed"
-            (self.result_dir / f"{self.slug}_standalone.lean").write_text(
-                standalone
-            )
-            if not checks["verified"]:
-                return summary
             self._export_jiatu_row(standalone)
             # A verified proof stands even if the review or the report cannot
             # be completed; its status then says so.
