@@ -472,20 +472,16 @@ class Orchestration(
             # be completed; its status then says so.
             summary["status"] = "review_flagged"
             if self.agents.max_claude_calls:
-                self.agents.max_claude_calls = (
-                    self.agents.claude_calls + self.config.final_claude_calls
+                self.agents.max_claude_calls = max(
+                    self.agents.max_claude_calls,
+                    self.agents.claude_calls + self.config.final_claude_calls,
                 )
             with self._timed("review"):
                 review = self.final_review(form, standalone)
             summary["review"] = review
             if review["verdict"] == "FAITHFUL":
                 summary["status"] = "proved"
-            with self._timed("report"):
-                summary["report"] = self.report(
-                    form, sketch, standalone, checks, review
-                )
-            with self._timed("informal"):
-                summary["informal"] = self.informalize(form, sketch, standalone)
+            # Before the documents, whose failure leaves the proof standing.
             if (
                 self.config.extend_library
                 and self.library_path
@@ -494,6 +490,12 @@ class Orchestration(
                 summary["library_extension"] = self._extend_library(
                     form, standalone
                 )
+            with self._timed("report"):
+                summary["report"] = self.report(
+                    form, sketch, standalone, checks, review
+                )
+            with self._timed("informal"):
+                summary["informal"] = self.informalize(form, sketch, standalone)
             return summary
         except AgentRefusal as error:
             # A resume would send the same prompt and be refused again.

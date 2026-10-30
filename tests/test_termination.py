@@ -17,7 +17,8 @@ from aiprover_orchestration.agents import (
     Completion,
     Terminated,
 )
-from aiprover_orchestration.lean.checker import _communicate
+from aiprover_orchestration.lean.checker import communicate
+from aiprover_orchestration.utils.processes import run_group
 from aiprover_orchestration.paths import ROOT
 from tests.support import TESTS, TemporaryDirectoryTest
 
@@ -79,7 +80,7 @@ class LeanProcessTest(TemporaryDirectoryTest):
 
     def run_tree(self, timeout: int, stop) -> tuple[str, int]:
         pid_file = self.directory / "child.pid"
-        ran = _communicate(
+        ran = communicate(
             ["sh", "-c", f"sleep 60 & echo $! > {pid_file}; wait"],
             self.directory,
             timeout,
@@ -106,9 +107,18 @@ class LeanProcessTest(TemporaryDirectoryTest):
         self.assertIn("timed out", ran)
         self.assert_dies(child)
 
+    def test_grace_ends_the_group_as_well(self):
+        marker = self.directory / "child.pid"
+        script = f"sleep 300 & echo $! > {marker}; wait"
+        with self.assertRaises(subprocess.TimeoutExpired):
+            run_group(
+                ["sh", "-c", script], cwd=self.directory, timeout=1, grace=1
+            )
+        self.assert_dies(int(marker.read_text()))
+
     def test_output_and_exit_code(self):
         self.assertEqual(
-            _communicate(["sh", "-c", "echo out; echo err >&2; exit 2"],
+            communicate(["sh", "-c", "echo out; echo err >&2; exit 2"],
                          self.directory, 10, None),
             (2, "out\nerr\n"),
         )

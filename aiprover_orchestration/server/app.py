@@ -521,6 +521,9 @@ class Selection(BaseModel):
     provider: str
     model: str
     effort: str = ""
+    # Lean tools of a Claude role; None takes the role's default.
+    tools: bool | None = None
+    judge_tools: bool | None = None
 
 
 class Submission(BaseModel):
@@ -592,7 +595,7 @@ def submit(body: Submission, user: str = Depends(current_user)) -> dict:
         selection = models.validate(
             page.defaults
             | {
-                role: getattr(body, role).model_dump()
+                role: getattr(body, role).model_dump(exclude_none=True)
                 for role in models.SELECTABLE_ROLES
                 if getattr(body, role)
             }

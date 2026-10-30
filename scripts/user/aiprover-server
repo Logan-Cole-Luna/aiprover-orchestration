@@ -41,6 +41,8 @@ MAX_PARALLEL=${AIPROVER_MAX_PARALLEL:-12}
 ELAN_HOME=$OWNER_HOME/.elan
 DGX_URL="http://cic-dgx-01.tacc.cloud:8040"
 DGX_MODEL="aip-leanstral"
+# Sessions the DGX serves, shared by all users of the machine.
+DGX_SESSIONS=48
 VM_ADDRESS="129.114.35.157"
 STATE=$HOME_DIR/state
 PIDS=$STATE/pids
@@ -171,6 +173,7 @@ start() {
     AIPROVER_DGX_CONFIG="$STATE/aiprover_dgx.toml" \
     AIPROVER_DGX_PROXY_PORT="$PROXY_PORT" \
     AIPROVER_MAX_PARALLEL="$MAX_PARALLEL" \
+    AIPROVER_MAX_SESSIONS="${AIPROVER_MAX_SESSIONS:-$DGX_SESSIONS}" \
     CLAUDE_AUTH=subscription \
     QUERY_SERVER_PER_USER=on \
     QUERY_SERVER_AUTH=off \

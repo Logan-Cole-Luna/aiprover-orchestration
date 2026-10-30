@@ -14,10 +14,11 @@ Related published work (tags defined in docs/lit_review/lit_review.md §6):
 
 import logging
 import threading
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from ...agents.aiprover import AIProverAgent
 from ...lean.checker import forbidden_problems
+from ...limits import HOSTED
 from ...lean.text import (
     declaration_names,
     drop_imports,
@@ -58,6 +59,8 @@ class ProveStage:
             return
         solved = {lemma.name: threading.Event() for _, lemma in pending}
         result_lock = threading.Lock()
+        # A failed chain ends the phase: the others stop at their next round.
+        failed = threading.Event()
 
         def chain(k: int, lemma: Lemma, worker: int) -> None:
             available = (
@@ -65,7 +68,7 @@ class ProveStage:
             )
             feedback = ""
             for repair in range(self.config.max_repairs + 1):
-                if solved[lemma.name].is_set():
+                if solved[lemma.name].is_set() or failed.is_set():
                     return
                 reply = self.agents.complete(
                     prompts.SOLVER_TEMPLATE.format(
@@ -149,14 +152,22 @@ class ProveStage:
             )
 
         workers = self.config.workers
-        with ThreadPoolExecutor(max_workers=len(pending) * workers) as pool:
+        # Chains beyond the machine's model calls wait in the queue, on a
+        # local model server as well: each one elaborates Lean here.
+        chains = min(len(pending) * workers, HOSTED.limit())
+        with ThreadPoolExecutor(max_workers=chains) as pool:
             futures = [
                 pool.submit(chain, k, lemma, worker)
                 for k, lemma in pending
                 for worker in range(workers)
             ]
-            for future in futures:
-                future.result()
+            try:
+                for future in as_completed(futures):
+                    future.result()
+            except BaseException:
+                failed.set()
+                pool.shutdown(wait=False, cancel_futures=True)
+                raise
         for _, lemma in pending:
             if not lemma.proved:
                 self.state.count_attempt(lemma)

@@ -16,20 +16,28 @@ packages and the checked file's directory, and open no TCP connection.
 """
 
 import fcntl
-import os
 import re
-import signal
 import subprocess
 import sys
 import threading
-import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from ..limits import LEAN, lean_megabytes
+from ..utils.processes import ProcessStopped, run_group
 from .text import strip_comments
 
 STANDARD_AXIOMS = {"propext", "Classical.choice", "Quot.sound"}
+
+# Keywords of commands that declare or extend, reserved by Lean: a bare
+# occurrence anywhere is the command, however it is introduced (`open X in`).
+def _command(*keywords: str) -> str:
+    return r"(?<![\w.'«])(" + "|".join(keywords) + r")\b"
+
+
+# An attribute list, given to a declaration or by the `attribute` command.
+_ATTRIBUTE_LIST = r"(?:@|\battribute\s*)\[[^\]]*"
 
 # Constructs that run code during elaboration (beyond tactics and the
 # kernel). No proof needs them; they are rejected before any elaboration.
@@ -37,20 +45,20 @@ EXECUTION_PATTERNS = {
     "#eval": r"#eval\b",
     "#guard": r"#guard\b",
     "unsafe": r"\bunsafe\w*",
-    "initialize": r"^\s*(builtin_)?initialize\b",
+    "initialize": _command("builtin_initialize", "initialize"),
     "simproc": r"\b(d?simproc|simproc_decl)\b",
     "IO": r"\b(E|Base)?IO\b",
     "System": r"\bSystem\.\w",
     "Process": r"\bProcess\.\w",
     "evalExpr/evalConst": r"\beval(Expr|Const|Decl)\b",
-    "elab": r"^\s*(local\s+|scoped\s+)?(elab|elab_rules)\b",
+    "elab": _command("elab", "elab_rules"),
     "run_cmd": r"\b(run_cmd|run_tac|run_elab|run_meta)\b",
     "extension attribute": (
-        r"@\[[^\]]*\b(command_elab|term_elab|tactic|init|builtin_init|"
+        _ATTRIBUTE_LIST + r"\b(command_elab|term_elab|tactic|init|builtin_init|"
         r"norm_num|positivity|simproc|env_linter|code_action)\b"
     ),
     "implemented_by": r"implemented_by",
-    "extern": r"@\[\s*extern",
+    "extern": _ATTRIBUTE_LIST + r"\bextern\b",
     "native_decide": r"\bnative_decide\b",
 }
 
@@ -62,11 +70,10 @@ FORBIDDEN_PATTERNS = {
     "sorry": r"\bsorry\b",
     "sorryAx": r"\bsorryAx\b",
     "admit": r"\badmit\b",
-    "axiom": r"^\s*(private\s+|protected\s+)?axiom\b",
-    "opaque": r"^\s*(private\s+|protected\s+)?opaque\b",
-    "macro/syntax/elab": (
-        r"^\s*(local\s+|scoped\s+)?"
-        r"(macro|macro_rules|syntax|elab|elab_rules)\b"
+    "axiom": _command("axiom"),
+    "opaque": _command("opaque"),
+    "macro/syntax/elab": _command(
+        "macro", "macro_rules", "syntax", "elab", "elab_rules"
     ),
     "debug.skipKernelTC": r"debug\.skipKernelTC",
 }
@@ -253,6 +260,11 @@ def sandboxed(
     return [*arguments, "--", *command]
 
 
+def lean_command(*files) -> list[str]:
+    """Elaboration of `files`, under the memory limit of one Lean process."""
+    return ["lake", "env", "lean", f"-M{lean_megabytes()}", *map(str, files)]
+
+
 def rejected(constructs: list[str]) -> CheckResult:
     """The result of text refused before elaboration."""
     message = (
@@ -262,42 +274,43 @@ def rejected(constructs: list[str]) -> CheckResult:
     return CheckResult(ok=False, output=message, errors=[message])
 
 
-# Interval at which a running check looks at its stop event.
-STOP_POLL_SECONDS = 1
-
-
-def _communicate(
+def communicate(
     command: list[str], cwd: Path, timeout: int, stop: threading.Event | None
 ) -> tuple[int, str] | str:
-    """Run `command` in a process group of its own; its exit code and
-    output, or why it was ended: a timeout or `stop`. An ended check kills
-    the whole group, since `lake env` runs `lean` as a child."""
-    stopped = "Lean check stopped: the run is terminating"
-    if stop is not None and stop.is_set():
-        return stopped
-    deadline = time.monotonic() + timeout
-    with subprocess.Popen(
-        command,
-        cwd=cwd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        start_new_session=True,
-    ) as proc:
-        while True:
-            try:
-                output, _ = proc.communicate(timeout=STOP_POLL_SECONDS)
-                return proc.returncode, output
-            except subprocess.TimeoutExpired:
-                if stop is not None and stop.is_set():
-                    reason = stopped
-                elif time.monotonic() >= deadline:
-                    reason = f"Lean timed out after {timeout}s"
-                else:
-                    continue
-            os.killpg(proc.pid, signal.SIGKILL)
-            proc.communicate()
-            return reason
+    """Run `command`; its exit code and output, or why it was ended: a
+    timeout or `stop`. The group ends with it, since `lake env` runs `lean`
+    as a child."""
+    try:
+        done = run_group(
+            command, cwd=cwd, timeout=timeout, stop=stop, merge_stderr=True
+        )
+        return done.returncode, done.stdout
+    except ProcessStopped:
+        return "Lean check stopped: the run is terminating"
+    except subprocess.TimeoutExpired:
+        return f"Lean timed out after {timeout}s"
+
+
+def run_lean(
+    command: list[str],
+    workspace: Path,
+    timeout: int,
+    readable: list[Path] = (),
+    stop: threading.Event | None = None,
+    cpu_seconds: int = 0,
+    wait: float | None = None,
+) -> tuple[int, str] | str:
+    """`communicate` for a Lean or Lake command in the sandbox, on one of
+    the machine's Lean slots, for which it waits `wait` seconds at most."""
+    with LEAN.slots(1, stop, wait=wait) as slot:
+        if not slot and not (stop and stop.is_set()):
+            return f"no Lean slot free within {wait}s; the machine is busy"
+        return communicate(
+            sandboxed(command, workspace, readable, cpu_seconds),
+            workspace,
+            timeout,
+            stop,
+        )
 
 
 def _run(
@@ -307,10 +320,8 @@ def _run(
     readable: list[Path] = (),
     stop: threading.Event | None = None,
 ) -> CheckResult:
-    """Run a Lean or Lake command in the sandbox and parse its messages."""
-    ran = _communicate(
-        sandboxed(command, workspace, readable), workspace, timeout, stop
-    )
+    """Run a Lean or Lake command with `run_lean` and parse its messages."""
+    ran = run_lean(command, workspace, timeout, readable, stop)
     if isinstance(ran, str):
         return CheckResult(ok=False, output=ran, errors=[ran], timed_out=True)
     returncode, output = ran
@@ -365,10 +376,9 @@ class LeanChecker:
         constructs = executable_constructs(path.read_text())
         if constructs:
             return rejected(constructs)
-        command = ["lake", "env", "lean", str(path)]
         with self._slots:
             return _run(
-                command,
+                lean_command(path),
                 self.workspace,
                 self.timeout,
                 [path.parent],

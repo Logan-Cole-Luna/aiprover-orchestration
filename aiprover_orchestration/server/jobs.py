@@ -298,6 +298,14 @@ def read_summary(run_id: str) -> dict:
     return json.loads(path.read_text()) if path.exists() else {}
 
 
+def retire_summary(run_id: str) -> None:
+    """Keep the summary of a run about to resume as summary.previous.json:
+    it is not the outcome of the new process."""
+    path = RESULTS_DIR / run_id / "summary.json"
+    if path.exists():
+        path.replace(path.with_name("summary.previous.json"))
+
+
 def progress_count(run_id: str) -> int:
     """Durable steps of a run (decisions a resume restores) in its trace."""
     path = RESULTS_DIR / run_id / "trace.json"
@@ -756,12 +764,8 @@ class Worker(threading.Thread):
     def _completed_while_away(job: dict) -> bool:
         """True if the run wrote a final summary after the server stopped
         watching it; an interrupted run's summary does not count."""
-        summary_path = RESULTS_DIR / job["run_id"] / "summary.json"
-        if not summary_path.exists() or summary_path.stat().st_mtime < (
-            job["started"] or 0
-        ):
-            return False
-        return read_summary(job["run_id"]).get("error_kind") != "interrupted"
+        summary = read_summary(job["run_id"])
+        return bool(summary) and summary.get("error_kind") != "interrupted"
 
     def _execute(self, job: dict) -> bool:
         """Start a queued job; False if it left the queue meanwhile (a
@@ -820,6 +824,7 @@ class Worker(threading.Thread):
             arguments += ["--" + name.replace("_", "-"), str(value)]
         if (RESULTS_DIR / run_id / "trace.json").exists():
             arguments.append("--resume")
+            retire_summary(run_id)
         else:
             arguments += ["--problem-uuid", job["uuid"]]
         output_path = TEMP_DIR / f"{run_id}.out"

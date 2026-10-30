@@ -4,7 +4,8 @@ tools (agents/claude_cli.py).
 Each FILE must be a `.lean` file inside the working directory, a scratch Lake
 project. Every Lean file of the project is checked for constructs that run
 code; if none is found, the files are elaborated with `lake env lean` under
-the sandbox of `sandbox.py`, which may write only in the project.
+the sandbox of `sandbox.py`, which may write only in the project, on one of
+the machine's Lean slots (`limits.py`).
 
 Run with `python3 -I`, so that nothing in the project or the environment is
 imported in place of the orchestration's modules.
@@ -18,7 +19,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from aiprover_orchestration.lean.checker import (  # noqa: E402
     executable_constructs,
-    sandboxed,
+    lean_command,
+    run_lean,
+)
+from aiprover_orchestration.limits import (  # noqa: E402
+    LEAN_CHECK_SLOT_SECONDS,
+    LEAN_CHECK_WALL_SECONDS,
 )
 
 CPU_SECONDS = 900
@@ -55,12 +61,19 @@ def main(arguments: list[str]) -> None:
                 f"constructs that run code are not allowed "
                 f"({', '.join(constructs)})"
             )
-    command = sandboxed(
-        ["lake", "env", "lean", *map(str, targets)],
+    ran = run_lean(
+        lean_command(*targets),
         project,
+        LEAN_CHECK_WALL_SECONDS,
         cpu_seconds=CPU_SECONDS,
+        # The agent is told of a busy machine, rather than left waiting.
+        wait=LEAN_CHECK_SLOT_SECONDS,
     )
-    os.execv(command[0], command)
+    if isinstance(ran, str):
+        sys.exit(f"lean-check: {ran}")
+    returncode, output = ran
+    print(output, end="")
+    sys.exit(returncode)
 
 
 if __name__ == "__main__":
