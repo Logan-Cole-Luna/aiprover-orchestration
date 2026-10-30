@@ -227,11 +227,21 @@ Results
 
 ## Decisions
 
+- Failed assembly returns to the captain (2026-10-30): `#print axioms` on every
+  lemma names the lemmas responsible; their proofs are withdrawn and handed
+  back at once, for up to `max_assembly_rounds` rounds. A failure with no
+  responsible lemma goes to a replan.
 - Projects (`orchestrator/project.py`, §7.1 of docs/orchestration.md):
   groups of runs sharing a library, launched in dependency order through
   the query server and written up as one paper from their informalizations
   (writer Sonnet, reviewer Opus by default). Project files live in
   `data/projects/`, outside the repository.
+- A failed assembly returns to the captain instead of ending the run, for
+  up to `max_assembly_rounds` (3) rounds. `#print axioms` on every lemma
+  names the lemmas whose own proofs cause the failure; their proofs are
+  withdrawn and each goes to a hand-back at once, while the other lemmas
+  stay proved. A failure no lemma causes goes to a replan. Event
+  `assembly_rejected`, restored on resume.
 - A resumed run records `lemma_reused` for each restored proof of the
   current sketch that its trace does not record since the sketch was
   accepted (`ResumeState.unrecorded_proofs`), so the replay page marks
@@ -392,6 +402,15 @@ Results
 
 ## Done
 
+- Run names and imports (2026-10-30): a submission takes an optional run name,
+  which becomes the run id. `POST /api/runs/import` and the Import run button
+  add a run from a zip of its folder or of its export. Trace pages are served
+  in a browser sandbox, since imported pages come from other people. The
+  `imported` column of `jobs` holds whether an import can resume.
+- Replay filter (2026-10-30): "Successful only" on the replay page lays out the
+  tree with the attempts behind kept proofs, and the hand-backs that proved or
+  split a lemma, alone. The page opens on the completed tree, and Play restarts
+  it from the beginning.
 - Machine limits (2026-10-30): `limits.py` holds `flock` slots in a directory
   shared by all runs and users, with limits derived from the machine's memory
   and processors and replaced by environment variables (`AIPROVER_MAX_HOSTED`,

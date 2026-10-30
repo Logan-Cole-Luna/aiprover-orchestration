@@ -38,6 +38,43 @@ SKETCH = decision(
 )
 
 
+class AssemblyRejectedTest(unittest.TestCase):
+    """A rejected proof is withdrawn until the captain answers."""
+
+    STEPS = [
+        SKETCH,
+        decision("lemma_proved", lemma="a", worker=0, helpers="", proof="rfl"),
+        decision("lemma_proved", lemma="b", worker=0, helpers="", proof="trivial"),
+        decision(
+            "assembly_rejected",
+            lemmas={"a": "`a` depends on Lean.ofReduceBool"},
+            attempts={"a": "rfl"},
+            errors="",
+        ),
+    ]
+
+    def test_withdrawn(self):
+        state = restore_state({"steps": self.STEPS})
+        first, second = state.sketch.lemmas
+        self.assertFalse(first.proved)
+        self.assertEqual(first.proof, "")
+        self.assertIn("ofReduceBool", first.assembly_failure)
+        self.assertEqual(first.last_attempts, "rfl")
+        self.assertTrue(second.proved)
+        self.assertEqual(state.assembly_rounds, 1)
+
+    def test_answered(self):
+        steps = self.STEPS + [
+            decision("lemma_handback", lemma="a", action="proof", diagnosis=""),
+            decision("lemma_proved", lemma="a", worker="captain", helpers="", proof="simp"),
+        ]
+        state = restore_state({"steps": steps})
+        first = state.sketch.lemmas[0]
+        self.assertTrue(first.proved)
+        self.assertEqual(first.proof, "simp")
+        self.assertEqual(first.assembly_failure, "")
+
+
 class RecordedTracesTest(unittest.TestCase):
     """Every trace in results/ replays to a consistent state."""
 

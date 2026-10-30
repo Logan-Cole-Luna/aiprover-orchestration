@@ -210,6 +210,7 @@ svg.exporting *, svg.exporting { transition: none !important; animation: none !i
     <div class="stage-tools">
       <button class="btn" type="button" id="follow" aria-pressed="true">Follow</button>
       <button class="btn" type="button" id="fit">Show all</button>
+      <button class="btn" type="button" id="successful" aria-pressed="false" title="Show only the attempts that produced a kept proof">Successful only</button>
       <button class="btn" type="button" id="export">Export JPG</button>
     </div>
     <div class="export-status" id="export-status" aria-live="polite" hidden></div>
@@ -354,6 +355,10 @@ const compactJob = job => !expandedJobs.has(job.index)
 // Colour of a session's mark: compiled, Lean errors, sorry, or no answer.
 const markState = o => ({ win: "ok", ok: "ok", fail: "fail", late: "late" }[o.state]
   || { verified: "ok", sorry: "warn", error: "fail", rejected: "fail" }[o.sample?.status] || "empty");
+// The filter "Successful only" lays out only the attempts behind kept proofs.
+let successfulOnly = false;
+const shownLanes = job => jobLanes(job)
+  .filter(w => !successfulOnly || sampleOutcome(job, w).state === "win");
 const sessionSpan = count => (Math.min(count, SESSIONS_PER_ROW) + (count > SESSIONS_PER_ROW ? 0.5 : 0)) * SESSION_STEP - 14;
 
 function buildLayout() {
@@ -429,12 +434,12 @@ function buildLayout() {
     // A column is as wide as its widest job: a compact job is one node, an
     // expanded one spans its sessions. A subtree is as wide as the larger of
     // its column and the row of its children's subtrees.
-    const jobsOf = name => calls.filter(c => isJob(c) && c.lemma === name && inSection(c));
+    const jobsOf = name => calls.filter(c => isJob(c) && c.lemma === name && inSection(c) && shownLanes(c).length);
     const columnWidth = name => {
       if (reused.has(name)) return NODE_WIDTH.lemma;
       if (!jobsByLemma.size) return chatWidth;
       return Math.max(NODE_WIDTH.lemma, ...jobsOf(name).map(job =>
-        compactJob(job) ? NODE_WIDTH.job : Math.max(NODE_WIDTH.job, sessionSpan(jobSamples(job)))));
+        compactJob(job) ? NODE_WIDTH.job : Math.max(NODE_WIDTH.job, sessionSpan(shownLanes(job).length))));
     };
     const rowWidth = list => sum(list.map(subtreeWidth)) + LEMMA_GAP * Math.max(0, list.length - 1);
     const subtreeWidth = name => Math.max(columnWidth(name), rowWidth(childrenOf(name)));
@@ -482,18 +487,21 @@ function buildLayout() {
         items.forEach(item => {
           if (isHandback(item)) {
             const decision = decisions.find(d => d.event === "lemma_handback" && d.lemma === name && d.index > item.index);
+            const productive = decision?.action === "proof" || decision?.action === "split";
+            if (successfulOnly && !productive) return;
             const node = addNode({ id: `h${item.index}`, kind: "spine", x, y: jy, ...callNode(item, {
               role: "captain", title: "Hand-back to captain",
               subtitle: decision ? `captain · ${decision.action}` : "captain", handback: decision || null, lemma: name }) });
             upstream.forEach((up, u) => addEdge(up, node, "captain",
               u === Math.floor((upstream.length - 1) / 2) ? { label: "hand-back" } : {}));
-            if (decision?.action === "proof" || decision?.action === "split") winners.push(node);
+            if (productive) winners.push(node);
             if (decision) handbackNodes.set(decision.index, node);
             upstream = [node]; previousItem = item; bottom = jy; jy += ROW;
             return;
           }
           const job = item;
-          const lanes = jobLanes(job);
+          const lanes = shownLanes(job);
+          if (!lanes.length) return;
           const outcomes = lanes.map(w => sampleOutcome(job, w));
           const start = Math.min(...outcomes.map(o => o.start));
           const compact = compactJob(job);
@@ -536,7 +544,8 @@ function buildLayout() {
         workers.forEach((worker, w) => {
           const laneX = x + (w - (workers.length - 1) / 2) * LANE;
           let upstream = lemmaNode;
-          calls.filter(c => c.lemma === name && c.worker === worker && inSection(c))
+          calls.filter(c => c.lemma === name && c.worker === worker && inSection(c)
+            && (!successfulOnly || (sectionWin && sameAttempt(sectionWin, c))))
             .sort((a, b) => a.index - b.index).forEach((call, r) => {
               const ay = lemmaY + ROW + r * ROW;
               bottom = Math.max(bottom, ay);
@@ -1126,14 +1135,31 @@ function openNode(node) {
   if (node.step) showStep(node.step.index, node.sample ?? null);
 }
 
-// Shows or hides a job's sessions and lays the tree out again.
-function toggleJob(node) {
-  const id = node.step.index;
-  if (!expandedJobs.delete(id)) expandedJobs.add(id);
+function layOutAgain() {
   nodes.length = 0; edges.length = 0; byId.clear(); BANDS.length = 0;
   buildLayout();
   renderGraph();
   updateGraph(time);
+}
+
+// Shows or hides a job's sessions.
+function toggleJob(node) {
+  const id = node.step.index;
+  if (!expandedJobs.delete(id)) expandedJobs.add(id);
+  layOutAgain();
+}
+
+function showAll() {
+  setFollow(false);
+  Object.assign(view, frameFor(nodes, 1));
+  applyView();
+}
+
+function toggleSuccessful(button) {
+  successfulOnly = !successfulOnly;
+  button.setAttribute("aria-pressed", successfulOnly);
+  layOutAgain();
+  showAll();
 }
 
 // Export ------------------------------------------------------------------------------
@@ -1299,11 +1325,8 @@ function init() {
   document.getElementById("speed").addEventListener("change", event => { speed = Number(event.target.value); });
   document.getElementById("follow").addEventListener("click", () => setFollow(!follow));
   document.getElementById("export").addEventListener("click", exportTree);
-  document.getElementById("fit").addEventListener("click", () => {
-    setFollow(false);
-    Object.assign(view, frameFor(nodes, 1));
-    applyView();
-  });
+  document.getElementById("fit").addEventListener("click", showAll);
+  document.getElementById("successful").addEventListener("click", event => toggleSuccessful(event.target));
   document.getElementById("log").addEventListener("click", event => {
     const button = event.target.closest("[data-event]");
     if (button) setTime(events[Number(button.dataset.event)].t + 0.01);
@@ -1319,11 +1342,11 @@ function init() {
     else if (event.key === "f") setFollow(!follow);
   });
 
-  // Opening frame: the whole orchestration, so the reader sees its shape before playing.
+  // Opening frame: the completed tree; Play starts it again from the beginning.
   Object.assign(view, frameFor(nodes, 1));
   applyView();
   setFollow(false);
-  setTime(0);
+  setTime(runEnd);
   requestAnimationFrame(frame);
   document.getElementById("play").addEventListener("click", () => setFollow(true), { once: true });
 }

@@ -92,6 +92,22 @@ BACKJUMP_ACTION = (
     "return. The main proof and the proofs that use `{decision_name}` must "
     "still compile with the new statement.\n"
 )
+HANDBACK_SOLVERS = (
+    "Solver agents have failed {attempts} times to prove the lemma "
+    "`{lemma_name}` of your proof sketch. The other lemmas are still being "
+    "proved."
+)
+HANDBACK_ASSEMBLY = (
+    "The final assembly of your proof failed verification because of the "
+    "lemma `{lemma_name}`, whose accepted proof is withdrawn: {problem} "
+    "Its withdrawn proof is under <last_attempts> below; every other lemma "
+    "stays proved. Diagnose the failure and choose one action; for a "
+    "failure confined to a step of the proof, prefer to correct the proof."
+)
+REPLAN_ASSEMBLY = (
+    "\n\nAll lemmas were proved, but the assembled proof failed "
+    "verification for a reason in the sketch itself:\n{failure}\n"
+)
 NO_RETRY = (
     "Retry is not available: the solvers have failed on this statement "
     "after {retries} retries. Prove it yourself, split it, restate it or "
