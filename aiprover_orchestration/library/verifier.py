@@ -1,6 +1,7 @@
 """Publishing library items and verifying proof submissions.
 
-Publishing compiles a definition or theorem statement as its own module.
+Publishing compiles a definition or theorem statement as its own module; an
+Open theorem's module states it as an axiom.
 Verification elaborates a submitted `theorem solution` and checks it against
 its target in a separate check module. A submission that imports Open
 theorems is accepted as a sketch; it proves its target once those children
@@ -31,14 +32,26 @@ from ..lean.layout import (
     module_path,
     with_header,
 )
-from ..lean.text import declaration_names, imports, strip_comments
+from ..lean.text import (
+    DECL_START,
+    declaration_names,
+    imports,
+    strip_comments,
+)
 from ..paths import WORKSPACE
 from .store import Store, implied_proofs
 
-# Imported Open theorems carry `sorry`; a sketch's proof depends on it only
-# through them, since the submission's own module may not use `sorry`.
-SKETCH_AXIOM = "sorryAx"
 SORRY_STATEMENT_RE = re.compile(r":=\s*by\s+sorry\s*$")
+
+
+def open_theorem_axiom(text: str) -> str:
+    """The module of an Open theorem, whose last declaration is `theorem ...
+    := by sorry`: the statement as an axiom, so that the axioms of a proof
+    that imports it name exactly the theorems it assumes."""
+    code = strip_comments(text)
+    last = list(DECL_START.finditer(code))[-1]
+    statement = SORRY_STATEMENT_RE.sub("", code[last.end(1) :])
+    return f"{code[: last.start(1)]}axiom{statement}\n"
 
 
 class Rejected(ValueError):
@@ -77,21 +90,28 @@ class Library:
             raise Rejected(f"invalid name {name!r}")
         if self.store.item(name, by="name"):
             raise Rejected(f"{name} already exists")
+        module = module_name(kind, name)
+        if self.store.item(module, by="module"):
+            raise Rejected(f"{name} shares the module {module}")
         text = with_header(lean)
         problems, _ = self._import_problems(text, theorems_allowed=False)
         problems += self._statement_problems(kind, name, text)
         if problems:
             raise Rejected("; ".join(problems))
 
-        module = module_name(kind, name)
         path = module_path(module, self.workspace)
-        result = build(self.workspace, {path: text}, module, self.timeout)
-        if not result.ok or (kind == "definition" and result.has_sorry_warning):
+        source_text = (
+            open_theorem_axiom(text) if kind == "theorem" else text
+        )
+        result = build(
+            self.workspace, {path: source_text}, module, self.timeout
+        )
+        if not result.ok or result.has_sorry_warning:
             path.unlink(missing_ok=True)
             raise Rejected(
                 result.error_report()
                 if not result.ok
-                else "definition uses sorry"
+                else f"{kind} uses sorry beyond its statement"
             )
         item_id = self.store.add_item(
             kind=kind,
@@ -118,6 +138,8 @@ class Library:
             problems.append(f"no top-level `theorem {name}`")
         if not SORRY_STATEMENT_RE.search(code):
             problems.append("statement must end in `:= by sorry`")
+        if declaration_names(text)[-1:] != [name]:
+            problems.append(f"`{name}` must be the last declaration")
         return problems
 
     def _import_problems(
@@ -206,8 +228,7 @@ class Library:
 
         axioms = result.axioms.get(SOLUTION_NAME, [])
         unexpected = set(nonstandard_axioms(result, SOLUTION_NAME) or [])
-        if children:
-            unexpected.discard(SKETCH_AXIOM)
+        unexpected -= {child["name"] for child in children}
         if unexpected:
             solution_path.unlink(missing_ok=True)
             return self._finish(
