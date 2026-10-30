@@ -144,11 +144,13 @@ const jobLanes = job => [...Array(jobSamples(job)).keys()];
 // Captain calls on a lemma the solvers kept failing on, and their decisions.
 const handbackLemma = call => (/^handback\/(.+)$/.exec(call.label || "") || [])[1] || null;
 const isHandback = step => step?.kind === "model_call" && handbackLemma(step) != null;
+// The trace records the orchestrator as "captain"; pages show the former.
+const roleName = text => String(text).replace(/captain( \(orchestrator model\))?/g, "orchestrator");
 const captainCheck = step => step.kind === "lean_check" && (step.worker === "captain" || /_restated$/.test(step.label || ""));
 
 // Who proved a lemma, for the lemma_proved decision `win`.
 function winnerText(win) {
-  if (win.worker === "captain") return "the captain, after a hand-back";
+  if (win.worker === "captain") return "the orchestrator, after a hand-back";
   if (win.worker === "manual") return "a proof from its parts, written by hand";
   const job = jobOf(win);
   return job ? `AIProver job ${jobNumber(job)}, sample ${win.worker}`
@@ -436,10 +438,10 @@ const EVENT_TEXT = {
   solver_budget_exhausted: "Solver chain exhausted its budget",
   replan: "Sketch revision requested",
   lemma_reused: "Proved lemma reused",
-  lemma_handback: "Lemma handed back to the captain",
-  assembly_rejected: "Assembly failed; returned to the captain",
+  lemma_handback: "Lemma handed back to the orchestrator",
+  assembly_rejected: "Assembly failed; returned to the orchestrator",
   early_revision: "Attempts used: lemma revised early",
-  lemma_direction: "Captain's direction for the lemma's jobs",
+  lemma_direction: "Orchestrator's direction for the lemma's jobs",
   conflict: "Conflict analysed (CDCL)",
   backjump: "Backjump: subtree retracted, decision restated",
   clause_learned: "Clause learned",
@@ -448,7 +450,7 @@ const EVENT_TEXT = {
   report: "LaTeX report",
 };
 
-// A split whose new lemmas were all added by hand, not by the captain
+// A split whose new lemmas were all added by hand, not by the orchestrator
 // (`manual_lemmas` names the lemmas added by hand).
 const manualSplit = step => (step.new_lemmas || []).length > 0
   && (step.manual_lemmas || []).length === step.new_lemmas.length;
@@ -457,7 +459,7 @@ function stepTitle(step) {
   if (step.kind === "model_call") {
     if (isJob(step)) return `AIProver job ${jobNumber(step)} · ${step.lemma}`;
     if (step.lemma != null) return `solver ${step.worker} · ${step.lemma} · round ${step.round}`;
-    return `${step.role} · ${step.label}`;
+    return `${roleName(step.role)} · ${step.label}`;
   }
   if (step.kind === "lean_check") return `Lean check · ${step.file}`;
   if (step.event === "lemma_handback" && manualSplit(step)) return "Lemma split by hand";
@@ -506,7 +508,7 @@ function stepRow(step) {
   return `<button class="steprow" type="button" data-step="${step.index}">
     <span class="idx">#${step.index}</span>
     <span class="t">${formatClock(step.elapsed_seconds)}</span>
-    <span class="dot ${role}" title="${role}"></span>
+    <span class="dot ${role}" title="${roleName(role)}"></span>
     <span class="what"><span class="lbl">${escapeHTML(stepTitle(step))}</span></span>
     <span>${stepResult(step)}</span>
   </button>`;

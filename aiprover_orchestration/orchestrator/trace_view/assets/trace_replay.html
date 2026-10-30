@@ -4,9 +4,13 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>__PAGE_TITLE__</title>
+<link rel="icon" type="image/svg+xml" href="__FAVICON__">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,600;8..60,700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&family=Newsreader:ital,opsz,wght@0,6..72,400;1,6..72,400&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=Fira+Mono:wght@400;500&display=swap">
+<script>
+/*TRACE_THEME_JS*/
+</script>
 <style>
 /*TRACE_COMMON_CSS*/
 
@@ -133,7 +137,7 @@ svg.exporting *, svg.exporting { transition: none !important; animation: none !i
 .rnode.compiling rect.body { stroke: var(--lean); stroke-width: 2.4; stroke-dasharray: 6 4; }
 .rnode.s-ok rect.body, .rnode.s-win rect.body { fill: var(--ok-soft); stroke: var(--ok); }
 .rnode.s-win rect.body { stroke-width: 3; }
-/* A lemma proved by a hand-back takes the captain's colour. */
+/* A lemma proved by a hand-back takes the orchestrator's colour. */
 .rnode.s-captain rect.body { fill: color-mix(in srgb, var(--captain) 14%, var(--surface)); stroke: var(--captain); }
 .rnode.s-fail rect.body { fill: var(--fail-soft); stroke: var(--fail); }
 /* A REVISE verdict returns the work to the previous stage. */
@@ -202,7 +206,9 @@ svg.exporting *, svg.exporting { transition: none !important; animation: none !i
   <span id="status"></span>
   <span class="spacer"></span>
   <span class="run" id="models"></span>
-  <a class="btn" href="trace.html">Walkthrough</a>
+  <a class="btn" id="home" data-keep-theme href="#">Home</a>
+  <a class="btn" data-keep-theme href="trace.html">Walkthrough</a>
+  <select id="theme" aria-label="Color theme"></select>
 </header>
 
 <div class="workspace">
@@ -308,6 +314,7 @@ const NODE_LINES = {
 const LINE_HEIGHT = { eyebrow: 16, title: 19, subtitle: 16, marks: 16, status: 16 };
 const PAD_TOP = 9, PAD_BOTTOM = 14;   // bottom padding holds the progress bar
 const LANE = 160, ROW = 118;
+const MIN_ZOOM = 0.04;   // low enough to frame the widest trees
 
 const nodes = [];
 const edges = [];
@@ -367,7 +374,7 @@ function buildLayout() {
     title: TRACE.theorem_name, subtitle: `${problem.source_name} · ${problem.source_subset}`, band: "Input" });
   y += ROW;
   const root = addNode({ id: "captain", kind: "root", role: "captain", x: 0, y, start: 0, end: 0,
-    title: "Captain", subtitle: `orchestrator · ${TRACE.models?.orchestrator}` });
+    title: "Orchestrator", subtitle: `orchestrator · ${TRACE.models?.orchestrator}` });
   addEdge(problemNode, root, "captain", { label: "statement + proof" });
 
   const sketchEvents = eventsOf("sketch_accepted");
@@ -386,7 +393,7 @@ function buildLayout() {
     const kindText = /^formalize/.test(call.label) ? "Formalize" : /^judge_sketch/.test(call.label) ? "Sketch verdict" : /^judge/.test(call.label) ? "Faithfulness verdict"
       : /^sketch/.test(call.label) ? (lastCaptain.sketch ? "Revised sketch" : "Proof sketch") : isAuditor ? "Blind read-back" : call.label;
     const node = addNode({ id: `s${call.index}`, kind: "spine", x: isAuditor ? 300 : 0, y, ...callNode(call, {
-      title: kindText, subtitle: `${call.role} · ${call.label}`, sketch: /^sketch/.test(call.label),
+      title: kindText, subtitle: `${roleName(call.role)} · ${call.label}`, sketch: /^sketch/.test(call.label),
       band: /^formalize/.test(call.label) ? "Formalize"
         : /^judge_sketch/.test(call.label) ? "Sketch"
         : isAuditor || /^judge/.test(call.label) ? "Audit" : /^sketch/.test(call.label) ? "Sketch" : null }) });
@@ -490,8 +497,8 @@ function buildLayout() {
             const productive = decision?.action === "proof" || decision?.action === "split";
             if (successfulOnly && !productive) return;
             const node = addNode({ id: `h${item.index}`, kind: "spine", x, y: jy, ...callNode(item, {
-              role: "captain", title: "Hand-back to captain",
-              subtitle: decision ? `captain · ${decision.action}` : "captain", handback: decision || null, lemma: name }) });
+              role: "captain", title: "Hand-back to orchestrator",
+              subtitle: decision ? `orchestrator · ${decision.action}` : "orchestrator", handback: decision || null, lemma: name }) });
             upstream.forEach((up, u) => addEdge(up, node, "captain",
               u === Math.floor((upstream.length - 1) / 2) ? { label: "hand-back" } : {}));
             if (productive) winners.push(node);
@@ -630,7 +637,7 @@ function buildLayout() {
           const reportNode = addNode({ id: "report", kind: "spine", role: "captain", x: 0, y,
             start: reportCalls.length ? callStart(reportCalls[0]) : report.elapsed_seconds,
             replied: report.elapsed_seconds, end: report.elapsed_seconds, step: report, report,
-            title: "LaTeX report", subtitle: `${plural(reportCalls.length, "call")} · captain and reviewer`, band: "Report" });
+            title: "LaTeX report", subtitle: `${plural(reportCalls.length, "call")} · orchestrator and reviewer`, band: "Report" });
           addEdge(node, reportNode, "captain", { win: !!report.pdf });
         }
       }
@@ -691,7 +698,7 @@ function nodeState(node, t) {
   // Model-call nodes.
   if (node.handback !== undefined && t >= node.replied) {
     const action = node.handback?.action;
-    const line = { proof: "captain's proof kept ✓", split: "split; proof kept ✓", restate: "lemma restated",
+    const line = { proof: "orchestrator's proof kept ✓", split: "split; proof kept ✓", restate: "lemma restated",
       refute: "lemma refuted in Lean ✓", retry: "retry unchanged", rejected: "reply rejected by Lean" }[action] || "reply received";
     return { phase: "done", status: action === "proof" || action === "split" ? "captain" : action === "rejected" ? "fail" : "neutral", line };
   }
@@ -883,18 +890,18 @@ function describe(step) {
   if (step.kind === "model_call") {
     const call = step;
     const started = [callStart(call)];
-    if (call.role === "auditor") return { t: started[0], role: "auditor", title: "Captain delegates a blind read-back",
+    if (call.role === "auditor") return { t: started[0], role: "auditor", title: "Orchestrator delegates a blind read-back",
       text: "The auditor receives only the Lean code and the auditor playbook, never the source, and states what the code literally asserts." };
-    if (/^formalize/.test(call.label)) return { t: started[0], role: "captain", title: "Captain formalizes the statement",
-      text: "The captain writes Lean definitions for the setting and a theorem statement whose proof is left as sorry." };
-    if (/^judge_sketch/.test(call.label)) return { t: started[0], role: "captain", title: "Captain judges the sketch",
+    if (/^formalize/.test(call.label)) return { t: started[0], role: "captain", title: "Orchestrator formalizes the statement",
+      text: "The orchestrator writes Lean definitions for the setting and a theorem statement whose proof is left as sorry." };
+    if (/^judge_sketch/.test(call.label)) return { t: started[0], role: "captain", title: "Orchestrator judges the sketch",
       text: "A second call checks the decomposition: no lemma as strong as the theorem, open or false, or bundling several steps." };
-    if (/^judge/.test(call.label)) return { t: started[0], role: "captain", title: "Captain judges faithfulness",
-      text: "The captain compares the auditor's read-back with the source statement: does the Lean code say exactly what the source says?" };
-    if (/^sketch/.test(call.label)) return { t: started[0], role: "captain", title: "Captain sketches the proof",
-      text: "The captain splits the proof into lemmas, each stated in full but left as sorry, and proves the main theorem from them." };
-    if (isHandback(call)) return { t: started[0], role: "captain", title: `${handbackLemma(call)} handed back to the captain`,
-      text: "The solvers failed on this lemma repeatedly. The captain reads their attempts and proves the lemma itself, splits it, restates it, or asks for a retry." };
+    if (/^judge/.test(call.label)) return { t: started[0], role: "captain", title: "Orchestrator judges faithfulness",
+      text: "The orchestrator compares the auditor's read-back with the source statement: does the Lean code say exactly what the source says?" };
+    if (/^sketch/.test(call.label)) return { t: started[0], role: "captain", title: "Orchestrator sketches the proof",
+      text: "The orchestrator splits the proof into lemmas, each stated in full but left as sorry, and proves the main theorem from them." };
+    if (isHandback(call)) return { t: started[0], role: "captain", title: `${handbackLemma(call)} handed back to the orchestrator`,
+      text: "The solvers failed on this lemma repeatedly. The orchestrator reads their attempts and proves the lemma itself, splits it, restates it, or asks for a retry." };
     if (isJob(call)) return { t: started[0], role: "solver", title: who,
       text: `AIProver runs ${plural((call.samples || []).length || (cfg.workers ?? 1), "independent agentic Lean session")} on the lemma; ${jobSummary(call)}.` };
     if (call.lemma != null) return { t: started[0], role: "solver", title: `${who}, round ${call.round}`,
@@ -907,7 +914,7 @@ function describe(step) {
       const late = call && solverOutcome(call).state === "late";
       const job = jobOf(step);
       if (captainCheck(step)) return { t: step.elapsed_seconds, role: "lean",
-        title: `Lean checks the captain's ${/_restated$/.test(step.label) ? "restated sketch" : "proof"} for ${step.lemma}`,
+        title: `Lean checks the orchestrator's ${/_restated$/.test(step.label) ? "restated sketch" : "proof"} for ${step.lemma}`,
         text: step.ok ? "It compiles." : `Lean reports ${plural(step.errors.length, "error")}.` };
       return { t: step.elapsed_seconds, role: "lean",
         title: job ? `Lean checks ${step.lemma} (AIProver job ${jobNumber(job)}, sample ${step.worker})`
@@ -921,7 +928,7 @@ function describe(step) {
       text: `The kept proofs replace every sorry in the sketch. ${step.ok ? "The complete file compiles" : "The file fails"}${step.sorry_warning ? "" : " with no sorry"}.` };
     return { t: step.elapsed_seconds, role: "lean", title: `Lean checks the ${step.label === "formalize" ? "formalization" : step.label}`,
       text: step.ok ? (step.label === "sketch" ? "The sketch compiles: the lemmas suffice to prove the theorem." : "The formalization compiles. The sorry placeholder is expected here.")
-        : `Lean reports ${plural(step.errors.length, "error")}; they go back to the captain for repair.` };
+        : `Lean reports ${plural(step.errors.length, "error")}; they go back to the orchestrator for repair.` };
   }
   if (step.event === "audit_verdict") return { t: step.elapsed_seconds, role: "captain", title: `Verdict: ${step.verdict}`,
     text: step.verdict === "FAITHFUL" ? "The read-back matches the source, so the formal statement is accepted." : "The formalization is sent back for revision." };
@@ -954,16 +961,16 @@ function describe(step) {
     title: `Conflict at ${step.lemma}: ${step.action}`, text: `${(step.stuck || []).length} stuck lemmas. ${step.diagnosis || ""}` };
   if (step.event === "backjump") return { t: step.elapsed_seconds, role: "captain",
     title: `Backjump to ${step.lemma}`,
-    text: `The captain restates ${step.lemma} and retracts ${(step.retracted || []).length} lemmas below it. ${step.diagnosis || ""}` };
+    text: `The orchestrator restates ${step.lemma} and retracts ${(step.retracted || []).length} lemmas below it. ${step.diagnosis || ""}` };
   if (step.event === "clause_learned") return { t: step.elapsed_seconds, role: "captain",
     title: `Clause learned (${step.clause_kind})`, text: step.fact || "" };
-  if (step.event === "replan") return { t: step.elapsed_seconds, role: "captain", title: "Captain revises the sketch",
-    text: "Some lemmas were not proved within budget; the captain writes a new decomposition." };
+  if (step.event === "replan") return { t: step.elapsed_seconds, role: "captain", title: "Orchestrator revises the sketch",
+    text: "Some lemmas were not proved within budget; the orchestrator writes a new decomposition." };
   return null;
 }
 
 const events = [{ t: 0, role: "decision", title: "The run begins",
-  text: "The captain receives the informal statement and proof. Everything below follows from this input.", step: null }];
+  text: "The orchestrator receives the informal statement and proof. Everything below follows from this input.", step: null }];
 for (const step of steps) {
   const entry = describe(step);
   if (entry) events.push({ ...entry, step });
@@ -1006,7 +1013,7 @@ function frameFor(list, maxZoom = 1) {
   const stage = document.getElementById("stage").getBoundingClientRect();
   const minX = Math.min(...list.map(n => n.x - n.w / 2)) - 40, maxX = Math.max(...list.map(n => n.x + n.w / 2)) + 40;
   const minY = Math.min(...list.map(n => n.y - n.h / 2)) - 70, maxY = Math.max(...list.map(n => n.y + n.h / 2)) + 50;
-  const k = Math.max(0.12, Math.min(maxZoom, stage.width / (maxX - minX), stage.height / (maxY - minY)));
+  const k = Math.max(MIN_ZOOM, Math.min(maxZoom, stage.width / (maxX - minX), stage.height / (maxY - minY)));
   return { k, x: stage.width / 2 - (minX + maxX) / 2 * k, y: stage.height / 2 - (minY + maxY) / 2 * k };
 }
 
@@ -1040,7 +1047,7 @@ function installPanZoom() {
   let drag = null, pinch = null;
   const local = e => { const r = stage.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; };
   const zoomAt = (factor, px, py) => {
-    const k = Math.min(2.5, Math.max(0.12, view.k * factor));
+    const k = Math.min(2.5, Math.max(MIN_ZOOM, view.k * factor));
     view.x = px - (px - view.x) * (k / view.k);
     view.y = py - (py - view.y) * (k / view.k);
     view.k = k;
@@ -1111,7 +1118,7 @@ function openNode(node) {
        <div class="tagblock"><span class="tagname">informal proof</span><div class="prose">${mathHTML(problem.informal_proof || "")}</div></div>`);
   }
   if (node.kind === "root") {
-    return showDrawer(summaryHead("Captain", `<span>model <b>${escapeHTML(TRACE.models?.orchestrator)}</b></span>`, "captain"),
+    return showDrawer(summaryHead("Orchestrator", `<span>model <b>${escapeHTML(TRACE.models?.orchestrator)}</b></span>`, "captain"),
       `<p>The orchestrating model. It formalizes, judges, and plans the proof itself, and delegates the
        read-back to the auditor and each lemma to ${cfg.workers ?? "several"} parallel solvers.</p>
        ${stepList(callsByRole("captain"))}`);
@@ -1121,7 +1128,7 @@ function openNode(node) {
     const direction = eventsOf("lemma_direction").filter(d => d.lemma === node.lemma).at(-1);
     return showDrawer(summaryHead(`<code>${escapeHTML(node.lemma)}</code>`, `<span>${plural(calls.filter(c => c.lemma === node.lemma).length, "solver call")}</span>`, "solver"),
       `${statement ? `<div class="tagblock"><span class="tagname">statement</span>${leanHTML(statement)}</div>` : ""}
-       ${direction?.direction ? `<div class="tagblock"><span class="tagname">direction · ${escapeHTML(direction.source || "captain")}</span><div class="prose">${mathHTML(direction.direction)}</div></div>` : ""}
+       ${direction?.direction ? `<div class="tagblock"><span class="tagname">direction · ${escapeHTML(roleName(direction.source || "captain"))}</span><div class="prose">${mathHTML(direction.direction)}</div></div>` : ""}
        ${node.win ? `<div class="tagblock"><span class="tagname">kept proof · ${winnerText(node.win)}</span>${leanHTML(node.win.proof || "")}</div>` : ""}
        ${stepList(steps.filter(s => s.lemma === node.lemma))}`);
   }

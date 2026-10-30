@@ -1,9 +1,13 @@
 <title>__PAGE_TITLE__</title>
+<link rel="icon" type="image/svg+xml" href="__FAVICON__">
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,600;8..60,700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&family=Newsreader:ital,opsz,wght@0,6..72,400;1,6..72,400&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=Fira+Mono:wght@400;500&display=swap">
+<script>
+/*TRACE_THEME_JS*/
+</script>
 <style>
 /*TRACE_COMMON_CSS*/
 </style>
@@ -17,7 +21,9 @@
   <span id="status"></span>
   <span class="spacer"></span>
   <span class="run" id="models"></span>
-  <a class="btn" href="trace_replay.html">Replay</a>
+  <a class="btn" id="home" data-keep-theme href="#">Home</a>
+  <a class="btn" data-keep-theme href="trace_replay.html">Replay</a>
+  <select id="theme" aria-label="Color theme"></select>
 </header>
 
 <div class="frame">
@@ -64,7 +70,7 @@ if (!TRACE) {
 function costPanel() {
   const hosted = costs.hosted || [];
   const solver = costs.solver || {};
-  const rows = hosted.map(row => `<tr><td><span class="role ${escapeHTML(row.role)}">${escapeHTML(row.role)}</span></td>
+  const rows = hosted.map(row => `<tr><td><span class="role ${escapeHTML(row.role)}">${escapeHTML(roleName(row.role))}</span></td>
     <td class="num">${escapeHTML(row.model)}</td><td>${escapeHTML(row.purpose)}</td><td class="num">${row.calls}</td>
     <td class="num">${row.output_tokens.toLocaleString()}</td><td class="num">${formatUSD(row.cost_usd)}</td></tr>`).join("");
   const gpu = solver.gpu_hours != null
@@ -104,7 +110,7 @@ function chapterOverview() {
   <div class="eyebrow">Run ${escapeHTML(TRACE.run_id)} · ${escapeHTML(TRACE.started || "")}</div>
   <h2>Orchestrated formal proof of <code>${escapeHTML(TRACE.theorem_name)}</code></h2>
   <p class="lead">This page reconstructs one run of a multi-model Lean 4 proving pipeline.
-  An orchestrator model, the <span class="role captain">captain</span>, translates an informal
+  An orchestrator model, the <span class="role captain">orchestrator</span>, translates an informal
   mathematical result into Lean, has the translation checked by a blind
   <span class="role auditor">auditor</span>, splits the proof into lemmas, and delegates each
   lemma to several parallel <span class="role solver">solver</span> models. The
@@ -113,7 +119,7 @@ function chapterOverview() {
   <div class="stats">
     <div class="stat"><span class="v">${verified ? "Proved" : escapeHTML(outcome.status || "running")}</span><span class="k">${verified ? "all final checks pass" : "final status"}</span></div>
     <div class="stat"><span class="v">${formatDuration(outcome.wall_seconds || steps.at(-1)?.elapsed_seconds || 0)}</span><span class="k">wall-clock time</span></div>
-    <div class="stat"><span class="v">${calls.length}</span><span class="k">model calls (${callRoles.map(r => `${callsByRole(r).length} ${r}`).join(", ")})</span></div>
+    <div class="stat"><span class="v">${calls.length}</span><span class="k">model calls (${callRoles.map(r => `${callsByRole(r).length} ${roleName(r)}`).join(", ")})</span></div>
     <div class="stat"><span class="v">${checks.length}</span><span class="k">Lean checks</span></div>
     ${TRACE.live ? `<div class="stat"><span class="v">${TRACE.live.jobs.length} · ${sum(TRACE.live.jobs.map(j => j.sessions.filter(s => s.state !== "done").length))}</span><span class="k">jobs · sessions in progress</span></div>` : ""}
     <div class="stat"><span class="v">${formatUSD(costs.hosted_cost_usd ?? totalCost)}</span><span class="k">hosted model cost</span></div>
@@ -167,18 +173,18 @@ function chapterProblem() {
     <h3>Informal proof</h3>
     <div class="prose">${mathHTML(problem.informal_proof || "")}</div>
   </div>
-  <p class="note">The statement is given to the captain for formalization and judging. The
-  informal proof guides the captain's decomposition and is passed to every solver. The auditor
+  <p class="note">The statement is given to the orchestrator for formalization and judging. The
+  informal proof guides the orchestrator's decomposition and is passed to every solver. The auditor
   never sees either.</p>`;
 }
 
 // Vertical flow chart of the pipeline; nodes open the matching algorithm entry.
 const FLOW_NODES = [
   { id: "problem", title: "Informal problem", actor: "dataset", tone: "data", algorithm: null, chapter: "problem" },
-  { id: "formalize", title: "Formalize", actor: "captain", tone: "captain", algorithm: 0, chapter: "formalize" },
+  { id: "formalize", title: "Formalize", actor: "orchestrator", tone: "captain", algorithm: 0, chapter: "formalize" },
   { id: "audit", title: "Blind read-back", actor: "auditor", tone: "auditor", algorithm: 1, chapter: "audit" },
-  { id: "judge", title: "Faithfulness verdict", actor: "captain", tone: "captain", algorithm: 2, chapter: "audit" },
-  { id: "sketch", title: "Proof sketch", actor: "captain", tone: "captain", algorithm: 3, chapter: "sketch" },
+  { id: "judge", title: "Faithfulness verdict", actor: "orchestrator", tone: "captain", algorithm: 2, chapter: "audit" },
+  { id: "sketch", title: "Proof sketch", actor: "orchestrator", tone: "captain", algorithm: 3, chapter: "sketch" },
   { id: "prove", title: "Prove lemmas", actor: "solvers, in parallel", tone: "solver", algorithm: 4, chapter: "prove" },
   { id: "assemble", title: "Assemble and verify", actor: "Lean", tone: "lean", algorithm: 6, chapter: "assemble" },
 ];
@@ -284,8 +290,8 @@ function showFlowDetail(id) {
        <div><button class="btn" type="button" data-goto="problem">Open chapter</button></div>`
     : `<span class="eyebrow">${escapeHTML(entry?.stage || "")}</span>
        <h3>${id === "replan" ? "Replan" : node.title}</h3>
-       <div class="muted">${escapeHTML(entry?.actor || "")}</div>
-       <p>${inlineCode(entry?.description || "")}</p>
+       <div class="muted">${escapeHTML(roleName(entry?.actor || ""))}</div>
+       <p>${inlineCode(roleName(entry?.description || ""))}</p>
        <div><button class="btn" type="button" data-goto="${chapter}">Open chapter</button></div>`;
 }
 
@@ -316,20 +322,20 @@ function chapterPrompts() {
     <h3>Roles</h3>
     <table class="kv">
       <tr><th>Role</th><th>Model</th><th>Task</th></tr>
-      <tr><td><span class="role captain">captain</span></td><td class="num">${escapeHTML(TRACE.models?.orchestrator)}</td><td>Formalizes the statement, judges the read-back, writes and revises the proof sketch.</td></tr>
+      <tr><td><span class="role captain">orchestrator</span></td><td class="num">${escapeHTML(TRACE.models?.orchestrator)}</td><td>Formalizes the statement, judges the read-back, writes and revises the proof sketch.</td></tr>
       <tr><td><span class="role auditor">auditor</span></td><td class="num">${escapeHTML(TRACE.models?.worker)}</td><td>Reads the Lean code blind and states what it asserts.</td></tr>
       <tr><td><span class="role solver">solver</span></td><td class="num">${escapeHTML(TRACE.models?.worker)}</td><td>Proves one lemma, repairing its proof from Lean error messages.</td></tr>
     </table>
   </div>
   <h3>System prompts</h3>
   ${Object.entries(system).map(([role, text]) => `
-    <details class="fold"><summary><span class="role ${role}">${role}</span><span class="muted">${text.length.toLocaleString()} characters</span></summary>
+    <details class="fold"><summary><span class="role ${role}">${roleName(role)}</span><span class="muted">${text.length.toLocaleString()} characters</span></summary>
       <div class="body">${markdownHTML(text)}</div></details>`).join("")}
   <h3>Message templates</h3>
   <p class="muted">Placeholders in <span class="placeholder">{braces}</span> are filled from the problem and from earlier steps.</p>
   ${order.map(name => {
     const [role, use] = TEMPLATE_USE[name] || ["decision", ""];
-    return `<details class="fold"><summary><span class="mono">${name}</span><span class="role ${role}">${role}</span><span class="muted">${escapeHTML(use)}</span></summary>
+    return `<details class="fold"><summary><span class="mono">${name}</span><span class="role ${role}">${roleName(role)}</span><span class="muted">${escapeHTML(use)}</span></summary>
       <div class="body">${templateHTML(templates[name])}</div></details>`;
   }).join("")}`;
 }
@@ -340,11 +346,11 @@ function chapterFormalize() {
   const form = compiled.at(-1);
   const rejected = eventsOf("formalization_rejected");
   return `
-  <div class="eyebrow">Stage 1 · captain</div>
+  <div class="eyebrow">Stage 1 · orchestrator</div>
   <h2>Formalization</h2>
-  <p class="lead">The captain writes Lean definitions for every object in the setting and a theorem
+  <p class="lead">The orchestrator writes Lean definitions for every object in the setting and a theorem
   statement whose proof is left as <code>sorry</code>. The file is compiled; on errors the
-  compiler output is returned to the captain for up to ${cfg.max_repairs ?? "N"} repairs. At this stage only
+  compiler output is returned to the orchestrator for up to ${cfg.max_repairs ?? "N"} repairs. At this stage only
   the statement must be correct, not the proof.</p>
   ${stepList(stageSteps)}
   ${rejected.length ? `<p class="note">${plural(rejected.length, "formalization attempt")} failed to compile and ${rejected.length === 1 ? "was" : "were"} repaired.</p>` : ""}
@@ -355,7 +361,7 @@ function chapterFormalize() {
     <p class="muted">Preamble: <code>${escapeHTML(form.preamble || "")}</code></p>
   </div>
   <div class="panel">
-    <h3>Captain's notes on the encoding</h3>
+    <h3>Orchestrator's notes on the encoding</h3>
     <div class="prose">${mathHTML(form.notes || "")}</div>
   </div>
   <details class="fold"><summary><b>Definitions</b><span class="muted">${(form.definitions || "").split("\n").length} lines of Lean</span></summary>
@@ -366,19 +372,19 @@ function chapterAudit() {
   const auditSteps = steps.filter(s => s.role === "auditor" || /^judge/.test(s.label || "") || s.event === "audit_verdict");
   const verdicts = eventsOf("audit_verdict");
   return `
-  <div class="eyebrow">Stage 2 · auditor, then captain</div>
+  <div class="eyebrow">Stage 2 · auditor, then orchestrator</div>
   <h2>Blind audit</h2>
   <p class="lead">A formal statement can compile and still say something different from the source:
   a missing hypothesis, a vacuous case, or a weaker theorem. To detect this, a separate auditor
   receives only the Lean code and the auditor playbook, never the source, and writes a read-back of
-  what the code asserts. The captain then compares the read-back with the source statement. A
+  what the code asserts. The orchestrator then compares the read-back with the source statement. A
   <b>FAITHFUL</b> verdict continues to the sketch; <b>REVISE</b> returns to formalization
   (at most ${cfg.max_audit_rounds ?? "N"} times).</p>
   ${stepList(auditSteps)}
   ${verdicts.map(v => `
   <div class="two">
     <div class="panel">
-      <span class="eyebrow">Source statement · seen by captain only</span>
+      <span class="eyebrow">Source statement · seen by orchestrator only</span>
       <div class="prose">${mathHTML(propositionText())}</div>
     </div>
     <div class="panel">
@@ -396,9 +402,9 @@ function chapterSketch() {
   const sketchSteps = steps.filter(s => s.stage === "sketch");
   const replans = eventsOf("replan");
   return `
-  <div class="eyebrow">Stage 3 · captain</div>
+  <div class="eyebrow">Stage 3 · orchestrator</div>
   <h2>Proof sketch</h2>
-  <p class="lead">The captain decomposes the proof into lemmas. Each lemma is stated in full but
+  <p class="lead">The orchestrator decomposes the proof into lemmas. Each lemma is stated in full but
   proved only by <code>sorry</code>; the main theorem is then proved from the lemmas without
   <code>sorry</code>. Lean compiles the sketch, which confirms that the lemmas suffice for the
   theorem before any lemma is attempted.</p>

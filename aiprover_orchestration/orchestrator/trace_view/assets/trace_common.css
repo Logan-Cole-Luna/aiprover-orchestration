@@ -1,52 +1,3 @@
-:root {
-  --bg: #f4f5f8;
-  --surface: #ffffff;
-  --surface-2: #eceef3;
-  --ink: #161b26;
-  --muted: #586176;
-  --line: #d8dce4;
-  --accent: #3a46b8;
-  --accent-soft: #e4e6f7;
-  --captain: #3a46b8;
-  --auditor: #9b3f7e;
-  --solver: #0b7a70;
-  --lean: #8a6a1f;
-  --ok: #1e7b45;
-  --ok-soft: #dcefe3;
-  --fail: #b4322b;
-  --fail-soft: #f6dedc;
-  --warn: #9a6200;
-  --warn-soft: #f5e8cf;
-  --code-bg: #f7f8fb;
-  --err-line: #fbe6e4;
-  --kw: #3a46b8;
-  --cm: #6f7788;
-  --str: #0b7a70;
-  --font-ui: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
-  --font-prose: "Source Serif 4", "Iowan Old Style", Georgia, serif;
-  --font-mono: "JetBrains Mono", "DejaVu Sans Mono", ui-monospace, Menlo, monospace;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    color-scheme: dark;
-    --bg: #0f1218; --surface: #171b24; --surface-2: #202533; --ink: #e5e8ef;
-    --muted: #9aa3b5; --line: #2d3342; --accent: #939cf3; --accent-soft: #252a4a;
-    --captain: #939cf3; --auditor: #da8cc1; --solver: #4fc7b8; --lean: #d4b366;
-    --ok: #5cc98a; --ok-soft: #173325; --fail: #f07b71; --fail-soft: #3a1c1b;
-    --warn: #e2ab44; --warn-soft: #3a2c12; --code-bg: #12151c; --err-line: #3a1c1b;
-    --kw: #a5adf6; --cm: #7d8698; --str: #62cfc1;
-  }
-}
-:root[data-theme="dark"] {
-  color-scheme: dark;
-  --bg: #0f1218; --surface: #171b24; --surface-2: #202533; --ink: #e5e8ef;
-  --muted: #9aa3b5; --line: #2d3342; --accent: #939cf3; --accent-soft: #252a4a;
-  --captain: #939cf3; --auditor: #da8cc1; --solver: #4fc7b8; --lean: #d4b366;
-  --ok: #5cc98a; --ok-soft: #173325; --fail: #f07b71; --fail-soft: #3a1c1b;
-  --warn: #e2ab44; --warn-soft: #3a2c12; --code-bg: #12151c; --err-line: #3a1c1b;
-  --kw: #a5adf6; --cm: #7d8698; --str: #62cfc1;
-}
-
 * { box-sizing: border-box; }
 body {
   background: var(--bg);
@@ -236,7 +187,7 @@ pre.lean .line .no {
   user-select: none;
   opacity: 0.7;
 }
-pre.lean .line.err { background: var(--err-line); }
+pre.lean .line.err { background: var(--fail-soft); }
 pre.lean .kw { color: var(--kw); font-weight: 600; }
 pre.lean .cm { color: var(--cm); font-style: italic; }
 pre.lean .st { color: var(--str); }
