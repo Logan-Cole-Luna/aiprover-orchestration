@@ -62,3 +62,6 @@ docs/*
 !docs/figures/
 !docs/slides/
 !docs/logbook.md
+
+# Runtime state of per-user servers (scripts/user/aiprover-server).
+users/

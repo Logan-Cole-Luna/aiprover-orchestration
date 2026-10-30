@@ -188,12 +188,26 @@ def seatbelt_arguments(
 
 def minimal_environment(home: str) -> dict[str, str]:
     """The environment of the command: tool paths and nothing else."""
+    # Lake reads the remote of each package with git, which refuses a
+    # repository of another owner: the shared packages of a per-user server.
+    # Exactly the project's packages are admitted as safe directories.
+    packages = sorted(
+        os.path.realpath(path)
+        for path in (Path(home) / ".lake" / "packages").glob("*/")
+    )
+    trusted = {
+        f"GIT_CONFIG_{field}_{index}": value
+        for index, package in enumerate(packages)
+        for field, value in (("KEY", "safe.directory"), ("VALUE", package))
+    }
     return {
         "PATH": f"{ELAN_HOME / 'bin'}:/usr/bin:/bin",
         "ELAN_HOME": str(ELAN_HOME),
         "HOME": home,
         "TMPDIR": home,
         "LANG": "C.UTF-8",
+        "GIT_CONFIG_COUNT": str(len(packages)),
+        **trusted,
     }
 
 

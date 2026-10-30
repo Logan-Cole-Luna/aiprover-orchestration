@@ -37,6 +37,7 @@ from pathlib import Path
 from ..agents import AgentPool, build_agent, role_spec
 from ..paths import DATA_DIR, LOGS_DIR, RESULTS_DIR
 from . import prompts
+from .config import MAIN_NAME
 from .reports.informal import INFORMAL_PREAMBLE
 from .reports.report import (
     PREAMBLE,
@@ -144,10 +145,12 @@ def member_result(member: dict) -> dict:
         .read_text()
     )
     builder, text = parts["builder"], parts["text"]
+    # The run's file states the theorem as MAIN_NAME; the library and the
+    # paper use the slug name.
     theorem = next(
         source
         for kind, name, source in lean_declarations(builder["lean_source"])
-        if name == builder["theorem_name"]
+        if name in (builder["theorem_name"], MAIN_NAME)
     )
     return {
         "slug": builder["slug"],
@@ -211,17 +214,17 @@ class PaperBuilder(LatexBuilder):
         """The machine-verified results, generated from the members."""
         rows = "\n".join(
             f"\\cref{{thm:{r['slug']}}} & \\texttt{{{escape(r['theorem_name'])}}} "
-            f"& {len(r['lemmas'])} & \\texttt{{{escape(r['run'])}}} \\\\"
+            f"& {len(r['lemmas'])} \\\\"
             for r in self.results
         )
         return (
             "\\appendix\n\\section{Machine verification}\n"
             "Every result of this paper is proved in Lean 4 with Mathlib, "
             "with the standard axioms only. Each theorem, the Lean "
-            "declaration that states it, the number of lemmas of its formal "
-            "proof, and the run that produced it:\n\n"
-            "\\begin{longtable}{@{}llrl@{}}\n\\toprule\n"
-            "Result & Lean declaration & Lemmas & Run \\\\\n\\midrule\n\\endhead\n"
+            "declaration that states it, and the number of lemmas of its "
+            "formal proof:\n\n"
+            "\\begin{longtable}{@{}llr@{}}\n\\toprule\n"
+            "Result & Lean declaration & Lemmas \\\\\n\\midrule\n\\endhead\n"
             f"{rows}\n\\bottomrule\n\\end{{longtable}}"
         )
 

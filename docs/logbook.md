@@ -141,14 +141,15 @@ Results
 
 - **Temporary access, to be closed.** For per-user servers
   (`scripts/user/aiprover-server`), other accounts read the checkout and its
-  toolchain from `/home/loganluna` (`o+x` on the home directory, `o+rX` on
+  toolchain from `/home/loganluna` (`go+x` on the home directory, `go+rX` on
   the code and toolchain). This is open for development only; revert it
-  (`chmod o-x /home/loganluna`) once a read-only deployment exists at
+  (`chmod go-x /home/loganluna`) once a read-only deployment exists at
   `/opt/aiprover_orchestration`.
-- Per-user servers have not yet run under a second account: whether
-  `lake` and `elan` work on the owner's read-only `.lake/packages` and
-  `~/.elan`, and whether the AIProver harness needs the owner's `~/.vibe`,
-  remains to be verified.
+- Per-user servers: Lake on the owner's shared `.lake/packages` requires a
+  git `safe.directory` exception for each package (git refuses repositories
+  of another owner), which the sandbox sets for exactly the project's
+  packages. Whether the
+  AIProver harness needs the owner's `~/.vibe` remains to be verified.
 
 - The DGX server (vLLM 0.31.0) runs without a tool-call parser; every
   client must reach it through a reasoning proxy (the skill starts one
@@ -391,6 +392,38 @@ Results
 
 ## Done
 
+- Development page lists per-user runs (2026-10-29): runs of the servers
+  with state in `users/<account>` appear on `/dev` of the shared server as
+  `<account>:<run_id>`, read-only (`JobStore(readonly=True)`); their actions
+  are refused (403), and only files that resolve inside the account's state
+  are served. Test in `tests/test_per_user.py`.
+
+- Per-user state in the checkout (2026-10-29): `users/<account>`, created by
+  the owner with an ACL for the account, holds that account's server state
+  and stays readable by the owner (`users/pjana`); ignored by git.
+
+- Run form (2026-10-29): the statement and the proof are bounded only
+  against oversized requests (1,000,000 characters each); each field shows
+  its characters and estimated tokens (about four characters each), with a
+  warning above 5,000 (statement) and 12,500 (proof) tokens, since both are
+  part of most prompts of a run.
+
+- One-command access to a per-user server (2026-10-29): `ssh -t -L PORT:...
+  aiprover-server serve` signs in to Claude through Anthropic's own flow on
+  first use, starts the user's server on ports fixed per account, and holds
+  the tunnel; the page shows the server's Claude account. A sign-in on the
+  page itself is excluded by Anthropic's terms (no Claude.ai login in
+  third-party applications).
+
+- Orchestrator settings on the run form (2026-10-28): 22 fields of `Config`
+  (proof search, AIProver, Claude budget) with bounds, validated by
+  `server/settings.py` and stored as run options. Tests in
+  `tests/test_settings.py`.
+
+- First project complete (2026-10-28): its four members are proved, the
+  project and its runs carry the project's name, and `project paper` produced
+  a 12-page paper. The paper builder accepts a member theorem stated under
+  `MAIN_NAME` in its run file, as the library states it under its slug.
 - Lean sandbox on macOS (2026-10-27): `lean/sandbox.py` confines Lean with
   Seatbelt (`sandbox-exec`) under the same file and execution rules as
   Landlock on Linux; the doctor of `orchestration_plugin/setup.sh` elaborates

@@ -31,7 +31,9 @@ import logging
 import os
 import re
 import secrets
+import sqlite3
 import tempfile
+import threading
 import time
 import urllib.request
 import zipfile
@@ -44,6 +46,7 @@ from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
 from starlette.background import BackgroundTask
 from pydantic import BaseModel
 
+from ..agents.claude_cli import get_account_status
 from ..library import api as library_api
 from ..orchestrator import libraries
 from ..orchestrator.config import FILE_HEADER
@@ -57,9 +60,11 @@ from ..paths import (
     TEMP_DIR,
 )
 
-from . import models, vista
+from . import models, settings, vista
 from .jobs import (
+    CONFIG,
     DATA_DIR,
+    DATABASE,
     OPEN_STATES,
     PROBLEM_DIR,
     JobStore,
@@ -76,9 +81,10 @@ GUEST = "guest"
 INDEX_PAGE = Path(__file__).parent / "static" / "index.html"
 MAX_OPEN_JOBS_PER_USER = 3
 MAX_QUEUED_JOBS = 20
-MAX_STATEMENT_CHARS = 20_000
-MAX_PROOF_CHARS = 50_000
 MAX_LIBRARY_CHARS = 2_000_000
+# A bound on a submitted statement or proof against oversized requests; the
+# page warns at lengths that strain the context of the agents long before it.
+MAX_TEXT_CHARS = 1_000_000
 # Libraries a run may build on (orchestrator/libraries.py); uploads are kept
 # per run under uploads/.
 LIBRARY_DIR = LIBRARIES_DIR
@@ -177,10 +183,110 @@ def visible_owner(user: str) -> str | None:
     return user if AUTH_REQUIRED else None
 
 
+# Per-user servers (scripts/user/aiprover-server) whose state the owner of
+# the checkout keeps in users/<account>: the shared server's development
+# page lists their runs read-only, as `<account>:<run_id>`. Their actions
+# remain with the user's own server, which runs on the user's Claude login.
+USERS_DIR = HOME_DIR / "users"
+user_stores: dict[str, JobStore] = {}
+
+
+def read_user_store(account: str, read):
+    """`read` applied to the run records of an account's server, opened
+    read-only; None if they are not readable."""
+    try:
+        if account not in user_stores:
+            user_stores[account] = JobStore(
+                USERS_DIR / account / DATABASE.relative_to(HOME_DIR),
+                readonly=True,
+            )
+        return read(user_stores[account])
+    except sqlite3.Error:
+        return None
+
+
+def user_job(account: str, job: dict | None) -> dict | None:
+    """A job of an account's server, keyed by `<account>:<run_id>` and
+    carrying the state directory it lives in."""
+    return job and job | {
+        "run_id": f"{account}:{job['run_id']}",
+        "owner": account,
+        "local_id": job["run_id"],
+        "home": USERS_DIR / account,
+    }
+
+
+def user_jobs(account: str) -> list[dict]:
+    return [
+        user_job(account, job)
+        for job in read_user_store(account, JobStore.jobs) or []
+    ]
+
+
+def other_users() -> list[str]:
+    """Accounts whose servers the shared server shows; none on a per-user
+    server."""
+    if PER_USER or not USERS_DIR.is_dir():
+        return []
+    return sorted(
+        path.name
+        for path in USERS_DIR.iterdir()
+        if (path / DATABASE.relative_to(HOME_DIR)).exists()
+    )
+
+
+def find_job(run_id: str) -> dict | None:
+    """A job of this server, or `<account>:<run_id>` of a user's server."""
+    account, separator, local = run_id.partition(":")
+    if not separator:
+        return store.get(run_id)
+    if account not in other_users():
+        return None
+    return user_job(account, read_user_store(account, lambda s: s.get(local)))
+
+
+def current_record(job: dict) -> dict | None:
+    """The job's record as its server holds it now."""
+    if "home" not in job:
+        return store.get(job["run_id"])
+    return read_user_store(job["owner"], lambda s: s.get(job["local_id"]))
+
+
+def run_dir(job: dict, folder: Path) -> Path:
+    """The run's directory in RESULTS_DIR, LOGS_DIR or TEMP_DIR of its
+    server."""
+    home = job.get("home", HOME_DIR)
+    return home / folder.relative_to(HOME_DIR) / job.get("local_id", job["run_id"])
+
+
+def servable(job: dict, path: Path, *roots: Path) -> bool:
+    """Whether `path` exists and the server reads it for the job. A user's
+    run admits only files that resolve inside the user's state (or `roots`),
+    since the user may replace its files with links to files of the server's
+    account."""
+    if not path.exists():
+        return False
+    if "home" not in job:
+        return True
+    target = path.resolve()
+    return any(
+        target.is_relative_to(root.resolve()) for root in (job["home"], *roots)
+    )
+
+
 def owned_job(run_id: str, user: str = Depends(current_user)) -> dict:
-    job = store.get(run_id)
+    job = find_job(run_id)
     if job is None or visible_owner(user) not in (None, job["owner"]):
         raise HTTPException(404, "no such run")
+    return job
+
+
+def own_job(job: dict = Depends(owned_job)) -> dict:
+    """A job this server runs; a user's own server manages the others."""
+    if "home" in job:
+        raise HTTPException(
+            403, f"run is managed by the server of {job['owner']}"
+        )
     return job
 
 
@@ -225,8 +331,9 @@ def book_label(statement: str) -> str:
 class Page:
     """What a page offers: GPU groups (the first is the default), AIProver
     versions and datasets of data/ (None: all), default model choices,
-    whether its run list holds only the runs submitted from it, and whether
-    its runs may use Claude roles on the server's login."""
+    whether its run list holds only the runs submitted from it, whether its
+    runs may use Claude roles on the server's login, and whether it lists
+    the runs of per-user servers (read-only)."""
 
     gpu_groups: tuple[str, ...]
     versions: tuple[str, ...] | None = None
@@ -234,11 +341,13 @@ class Page:
     defaults: dict = field(default_factory=dict)
     own_runs: bool = False
     claude: bool = True
+    user_servers: bool = False
 
 
 PAGES = {
     "dev": Page(
-        tuple(sorted(vista.GPU_GROUPS, key=lambda g: g != vista.DEFAULT_GROUP))
+        tuple(sorted(vista.GPU_GROUPS, key=lambda g: g != vista.DEFAULT_GROUP)),
+        user_servers=True,
     ),
     "user": Page(
         ("dgx",),
@@ -289,12 +398,31 @@ def serve_page() -> FileResponse:
     return FileResponse(INDEX_PAGE)
 
 
+# The account of the server's Claude login, read at most every
+# ACCOUNT_SECONDS rather than by a CLI process on each page load.
+ACCOUNT_SECONDS = 300
+account_cache: dict = {"read": float("-inf"), "email": None}
+account_lock = threading.Lock()
+
+
+def claude_account() -> str | None:
+    with account_lock:
+        if time.monotonic() - account_cache["read"] > ACCOUNT_SECONDS:
+            account_cache["email"] = (get_account_status() or {}).get("email")
+            account_cache["read"] = time.monotonic()
+        return account_cache["email"]
+
+
 @app.get("/api/me")
 def me(request: Request, user: str = Depends(current_user)) -> dict:
     return {
         "user": user,
         "auth_required": AUTH_REQUIRED,
         "approver": AUTH_REQUIRED and token_user(request) is not None,
+        # The Claude account of a per-user server, which is its user's own;
+        # a shared server does not show its account.
+        "per_user": PER_USER,
+        "claude_account": claude_account() if PER_USER else None,
     }
 
 
@@ -411,6 +539,7 @@ class Submission(BaseModel):
     extend_library: bool = False
     new_library: str = ""  # or a library this run starts, in libraries/
     after: str = ""  # a run that must end first
+    settings: dict = {}  # orchestrator settings (settings.SETTINGS)
     page: str = DEFAULT_PAGE  # the page submitting (PAGES)
 
 
@@ -428,6 +557,7 @@ def model_catalog(
         "default": catalog["default"] | page.defaults,
         "gpu_groups": list(page.gpu_groups),
         "default_gpu_group": page.gpu_groups[0],
+        "settings": settings.catalog(json.loads(CONFIG.read_text())),
     }
 
 
@@ -477,6 +607,10 @@ def submit(body: Submission, user: str = Depends(current_user)) -> dict:
             "Claude roles run on your own Claude login: start your own server "
             "with scripts/user/aiprover-server (docs/server.md)",
         )
+    try:
+        run_settings = settings.validate(body.settings)
+    except ValueError as error:
+        raise HTTPException(400, str(error))
     if page.versions is not None and not (
         models.checkpoint_names(selection) <= set(page.versions)
     ):
@@ -521,7 +655,7 @@ def submit(body: Submission, user: str = Depends(current_user)) -> dict:
             raise HTTPException(
                 400, "give a dataset uuid or an informal statement"
             )
-        if len(statement) > MAX_STATEMENT_CHARS or len(proof) > MAX_PROOF_CHARS:
+        if max(len(statement), len(proof)) > MAX_TEXT_CHARS:
             raise HTTPException(413, "statement or proof too long")
         run_id = new_run_id("user")
         uuid = f"user_{run_id}"
@@ -535,9 +669,13 @@ def submit(body: Submission, user: str = Depends(current_user)) -> dict:
             "informal_proof": proof or "(No informal proof is given.)",
         }
         dataset.write_text(json.dumps(row) + "\n")
-        title = statement.splitlines()[0][:120]
+        # The first line with words: a statement may open with a rule line.
+        title = next(
+            (line for line in statement.splitlines() if re.search(r"\w", line)),
+            "",
+        ).strip()[:120]
 
-    options = library_options(body, run_id)
+    options = library_options(body, run_id) | run_settings
     store.add(
         {
             "run_id": run_id,
@@ -621,11 +759,15 @@ def resumable(job: dict) -> bool:
     ended = job["state"] == "cancelled" or (
         job["state"] == "finished" and job["status"] not in CONCLUSIVE
     )
-    return ended and (RESULTS_DIR / job["run_id"] / "trace.json").exists()
+    return (
+        ended
+        and "home" not in job
+        and (run_dir(job, RESULTS_DIR) / "trace.json").exists()
+    )
 
 
 def describe(job: dict) -> dict:
-    result_dir = RESULTS_DIR / job["run_id"]
+    result_dir = run_dir(job, RESULTS_DIR)
     files = [name for name in RESULT_PAGES if (result_dir / name).exists()]
     files += [
         name for name, pattern in ROOT_FILES.items()
@@ -642,7 +784,7 @@ def describe(job: dict) -> dict:
         if any((result_dir / "informal").glob(f"*_informal{suffix}"))
     ]
     return {
-        key: job[key]
+        key: job.get(key)
         for key in (
             "run_id",
             "owner",
@@ -657,12 +799,13 @@ def describe(job: dict) -> dict:
             "resumptions",
         )
     } | {
-        "position": store.queue_position(job["run_id"]),
+        "position": None if "home" in job else store.queue_position(job["run_id"]),
         "files": files,
         "agents": job_selection(job),
         "gpu_group": job.get("gpu_group") or vista.DEFAULT_GROUP,
         "hidden": bool(job.get("hidden")),
         "resumable": resumable(job),
+        "external": "home" in job,
     }
 
 
@@ -673,24 +816,35 @@ def list_runs(
     """Every visible run on the development page; on a page with its own run
     list, the runs submitted from it."""
     own_runs = page_of(page).own_runs
-    return [
-        describe(job)
+    jobs = [
+        job
         for job in store.jobs(visible_owner(user))
         if not own_runs or job.get("page") == page
     ]
+    if page_of(page).user_servers:
+        jobs += [
+            job
+            for account in other_users()
+            if visible_owner(user) in (None, account)
+            for job in user_jobs(account)
+        ]
+        jobs.sort(key=lambda job: job["submitted"] or 0, reverse=True)
+    return [describe(job) for job in jobs]
 
 
 @app.get("/api/runs/{run_id}")
 def get_run(job: dict = Depends(owned_job)) -> dict:
-    summary_path = RESULTS_DIR / job["run_id"] / "summary.json"
+    summary_path = run_dir(job, RESULTS_DIR) / "summary.json"
     summary = (
-        json.loads(summary_path.read_text()) if summary_path.exists() else None
+        json.loads(summary_path.read_text())
+        if servable(job, summary_path)
+        else None
     )
     return describe(job) | {"summary": summary}
 
 
 @app.delete("/api/runs/{run_id}")
-def cancel_run(job: dict = Depends(owned_job)) -> dict:
+def cancel_run(job: dict = Depends(own_job)) -> dict:
     if not worker.cancel(job["run_id"]):
         raise HTTPException(409, f"run is {job['state']}")
     return describe(store.get(job["run_id"]))
@@ -698,7 +852,7 @@ def cancel_run(job: dict = Depends(owned_job)) -> dict:
 
 @app.post("/api/runs/{run_id}/resume")
 def resume_run(
-    job: dict = Depends(owned_job), user: str = Depends(current_user)
+    job: dict = Depends(own_job), user: str = Depends(current_user)
 ) -> dict:
     """Queue an ended run again; it continues from its last completed step."""
     if not resumable(job):
@@ -710,7 +864,7 @@ def resume_run(
 
 
 @app.post("/api/runs/{run_id}/hide")
-def hide_run(job: dict = Depends(owned_job)) -> dict:
+def hide_run(job: dict = Depends(own_job)) -> dict:
     """Leave a finished run out of the page's list; nothing is deleted."""
     if job["state"] not in TERMINAL_STATES:
         raise HTTPException(
@@ -721,7 +875,7 @@ def hide_run(job: dict = Depends(owned_job)) -> dict:
 
 
 @app.post("/api/runs/{run_id}/unhide")
-def unhide_run(job: dict = Depends(owned_job)) -> dict:
+def unhide_run(job: dict = Depends(own_job)) -> dict:
     store.update(job["run_id"], hidden=0)
     return describe(store.get(job["run_id"]))
 
@@ -742,7 +896,7 @@ def reject_run(run_id: str, user: str = Depends(approver)) -> dict:
 
 @app.get("/api/runs/{run_id}/files/{name}")
 def get_file(name: str, job: dict = Depends(owned_job)) -> FileResponse:
-    result_dir = RESULTS_DIR / job["run_id"]
+    result_dir = run_dir(job, RESULTS_DIR)
     if name in ROOT_FILES:
         matches = sorted(result_dir.glob(ROOT_FILES[name]))
         path = matches[0] if matches else None
@@ -756,7 +910,7 @@ def get_file(name: str, job: dict = Depends(owned_job)) -> FileResponse:
         path = matches[0] if matches else None
     else:
         path = result_dir / name if name in RESULT_PAGES else None
-    if path is None or not path.exists():
+    if path is None or not servable(job, path):
         raise HTTPException(404, "no such file")
     media_type = (
         "text/plain; charset=utf-8"
@@ -889,10 +1043,11 @@ def export_run(job: dict = Depends(owned_job)) -> FileResponse:
     """The run as a zip of one folder: the standalone Lean file, the report
     (.tex, .pdf), the trace pages and a README at its root; Lean modules, LaTeX
     by-products, run data and logs in the subfolders of EXPORT_FOLDERS."""
-    run_id = job["run_id"]
+    run_id = job.get("local_id", job["run_id"])
+    dataset = Path(job["dataset"])
     rows = (
-        (json.loads(line) for line in open(job["dataset"]) if line.strip())
-        if Path(job["dataset"]).exists()
+        (json.loads(line) for line in open(dataset) if line.strip())
+        if servable(job, dataset, DATA_DIR)
         else ()
     )
     problem = next((row for row in rows if row["uuid"] == job["uuid"]), None)
@@ -909,17 +1064,17 @@ def export_run(job: dict = Depends(owned_job)) -> FileResponse:
         )
     }
     sources = {}
-    result_dir, log_dir = RESULTS_DIR / run_id, LOGS_DIR / run_id
+    result_dir, log_dir = run_dir(job, RESULTS_DIR), run_dir(job, LOGS_DIR)
     for path in sorted(result_dir.rglob("*")) if result_dir.is_dir() else []:
         target = (
             export_path(path.relative_to(result_dir))
-            if path.is_file()
+            if path.is_file() and servable(job, path)
             else None
         )
         if target:
             sources[target] = path
     for path in sorted(log_dir.rglob("*")) if log_dir.is_dir() else []:
-        if path.is_file():
+        if path.is_file() and servable(job, path):
             sources[f"logs/{path.relative_to(log_dir)}"] = path
     # Root files first (Lean, PDF, TeX, pages), then the subfolders in order.
     order = lambda name: (
@@ -934,7 +1089,12 @@ def export_run(job: dict = Depends(owned_job)) -> FileResponse:
     sources = dict(sorted(sources.items(), key=lambda item: order(item[0])))
     trace_path = result_dir / "trace.json"
     try:
-        trace_agents = json.loads(trace_path.read_text()).get("agents") or {}
+        trace = (
+            json.loads(trace_path.read_text())
+            if servable(job, trace_path)
+            else {}
+        )
+        trace_agents = trace.get("agents") or {}
     except (OSError, json.JSONDecodeError):
         trace_agents = {}
     entries = {
@@ -961,13 +1121,12 @@ def export_run(job: dict = Depends(owned_job)) -> FileResponse:
 @app.get("/api/runs/{run_id}/progress")
 async def progress(job: dict = Depends(owned_job)) -> StreamingResponse:
     """Server-sent events: the run's progress log, line by line, then `end`."""
-    run_id = job["run_id"]
-    log_path = TEMP_DIR / run_id / "progress.log"
+    log_path = run_dir(job, TEMP_DIR) / "progress.log"
 
     async def events():
         offset = 0
         while True:
-            if log_path.exists():
+            if servable(job, log_path):
                 with open(log_path, "rb") as f:
                     f.seek(offset)
                     chunk = f.read()
@@ -976,7 +1135,8 @@ async def progress(job: dict = Depends(owned_job)) -> StreamingResponse:
                 offset += len(complete)
                 for line in complete.decode(errors="replace").splitlines():
                     yield f"data: {json.dumps(line)}\n\n"
-            state = store.get(run_id)["state"]
+            # A user's store may be briefly unreadable; the stream waits.
+            state = (current_record(job) or {}).get("state")
             if state in TERMINAL_STATES:
                 yield f"event: end\ndata: {json.dumps(state)}\n\n"
                 return
