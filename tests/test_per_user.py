@@ -103,6 +103,14 @@ print(json.dumps({
 """
 
 
+# Prints the group of each job given as argument.
+GROUPS = """
+import json, sys
+from aiprover_orchestration.server.app import problem_group
+print(json.dumps([problem_group(job) for job in json.loads(sys.argv[1])]))
+"""
+
+
 class ImportTest(ServerProcessTest):
 
     def archive(self, files: dict[str, str | bytes]) -> str:
@@ -156,6 +164,13 @@ class ImportTest(ServerProcessTest):
         path = self.archive({"trace.json": "[1]", "trace.html": "page"})
         self.assertEqual(self.run_python(IMPORT, path, "dev")["status"], 400)
         self.assertEqual(list((self.directory / "results").glob("*")), [])
+
+    def test_a_run_takes_its_group_or_that_of_its_dataset(self):
+        named = job("r1", "queued") | {"problem_group": "My book"}
+        dataset = job("r2", "queued") | {"uuid": "OpenAIMath_001_X"}
+        (self.directory / "state").mkdir(exist_ok=True)
+        (self.directory / "state" / "groups.json").write_text('{"OpenAIMath_": "OpenAI math"}')
+        self.assertEqual(self.run_python(GROUPS, json.dumps([named, dataset, job("r3", "queued")])), ["My book", "OpenAI math", ""])
 
     def test_run_name_becomes_the_id(self):
         body = PROBLEM | {"name": "my run/1"}

@@ -51,7 +51,7 @@ SETTINGS = {
         "AIProver", "Hand-backs per run (0: unlimited)", 0, 100
     ),
     "aiprover_max_retries": Setting(
-        "AIProver", "Retries the captain may grant a lemma (0: unlimited)", 0, 20
+        "AIProver", "Retries the orchestrator may grant a lemma (0: unlimited)", 0, 20
     ),
     "aiprover_early_revision": Setting(
         "AIProver", "Hand a lemma back once its attempts are spent"
@@ -70,7 +70,7 @@ SETTINGS = {
     ),
     "aiprover_direction": Setting(
         "AIProver",
-        "Direction for each job: the captain's proof of the lemma, the "
+        "Direction for each job: the orchestrator's proof of the lemma, the "
         "sketch's comments, or none",
         choices=("captain", "sketch", ""),
     ),

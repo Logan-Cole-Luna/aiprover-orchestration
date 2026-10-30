@@ -402,11 +402,18 @@ Results
 
 ## Done
 
+- Query server pages received a shared AP favicon, and review corrections covered the states of live runs, the zoom floor of the replay, theme persistence, guide deep links, malformed group files, and the sandbox of imported pages.
+- The Details tab reports the model cost of a finished run, read from its benchmark.
+
 - Run names and imports (2026-10-30): a submission takes an optional run name,
   which becomes the run id. `POST /api/runs/import` and the Import run button
   add a run from a zip of its folder or of its export. Trace pages are served
   in a browser sandbox, since imported pages come from other people. The
   `imported` column of `jobs` holds whether an import can resume.
+- Page and theme (2026-10-30): the server's page takes the listing layout, with
+  scope tabs, chronological run numbers, per-run tabs, a stepped submission, and
+  a user guide. White, warm, and dark themes share `server/static/palette.css`
+  and `theme.js` with the trace pages, which receive the theme through their link.
 - Replay filter (2026-10-30): "Successful only" on the replay page lays out the
   tree with the attempts behind kept proofs, and the hand-backs that proved or
   split a lemma, alone. The page opens on the completed tree, and Play restarts

@@ -43,7 +43,14 @@ from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
+from fastapi.exception_handlers import http_exception_handler
+from fastapi.responses import (
+    FileResponse,
+    HTMLResponse,
+    RedirectResponse,
+    StreamingResponse,
+)
+from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 from pydantic import BaseModel
 
@@ -59,6 +66,7 @@ from ..paths import (
     LIBRARIES_DIR,
     LOGS_DIR,
     RESULTS_DIR,
+    STATE_DIR,
     TEMP_DIR,
 )
 
@@ -101,6 +109,9 @@ ROOT_FILES = {
     "standalone.lean": "*_standalone.lean",
     "result.jsonl": f"*{RESULT_ROW_SUFFIX}",
 }
+# Problem groups of this server, {"<start of a problem id>": "<group>"}. They
+# are specific to its users, so they lie in its state and not in the repository.
+GROUPS = STATE_DIR / "groups.json"
 TERMINAL_STATES = ("finished", "cancelled", "rejected")
 # Statuses of a finished run that settle its theorem; such a run is final.
 CONCLUSIVE = ("proved", "disproved")
@@ -125,6 +136,20 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="AIProver orchestration", lifespan=lifespan)
+
+
+class RevalidatedFiles(StaticFiles):
+    """Static files that a browser checks for changes on each load."""
+
+    async def get_response(self, path: str, scope) -> Response:
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
+app.mount(
+    "/static", RevalidatedFiles(directory=INDEX_PAGE.parent), name="static"
+)
 
 
 # ── Authentication ─────────────────────────────────────────────────────────
@@ -298,6 +323,25 @@ def own_job(job: dict = Depends(owned_job)) -> dict:
 
 class Login(BaseModel):
     token: str
+
+
+@app.exception_handler(HTTPException)
+async def retry_cookieless_navigation(request: Request, error: HTTPException):
+    """Repeat a page load the strict cookie missed, from this site's own page.
+
+    A link in a sandboxed trace page has an opaque origin, so its navigation
+    comes without the login cookie. The repeat is same-origin and carries it;
+    a viewer who is not signed in then receives the 401 itself.
+    """
+    if (
+        error.status_code == 401
+        and request.headers.get("sec-fetch-dest") == "document"
+        and request.headers.get("sec-fetch-site") != "same-origin"
+    ):
+        return HTMLResponse(
+            "<script>location.replace(location.href)</script>", 401
+        )
+    return await http_exception_handler(request, error)
 
 
 @app.post("/api/login")
@@ -504,7 +548,7 @@ def health(
         },
         "awaiting_approval": len(store.in_states("awaiting_approval")),
         "queued": len(store.in_states("queued")),
-        "running": ", ".join(job["run_id"] for job in running) or None,
+        "running": len(running),
     }
 
 
@@ -534,6 +578,7 @@ class Selection(BaseModel):
 
 class Submission(BaseModel):
     name: str = ""  # run name; the run id if free
+    group: str = ""  # problem group; by default that of the dataset
     uuid: str = ""
     statement: str = ""
     proof: str = ""
@@ -730,6 +775,7 @@ def submit(body: Submission, user: str = Depends(current_user)) -> dict:
             "options": json.dumps(options) if options else None,
             "gpu_group": body.gpu_group,
             "page": body.page,
+            "problem_group": body.group.strip()[:80] or None,
         }
     )
     return {"run_id": run_id, "state": store.get(run_id)["state"]}
@@ -945,8 +991,27 @@ def resumable(job: dict) -> bool:
     )
 
 
+def read_json(path: Path) -> dict:
+    """A JSON file; empty if it is missing or unreadable."""
+    try:
+        return json.loads(path.read_text()) if path.exists() else {}
+    except (OSError, ValueError):
+        logging.warning(f"{path} is not readable JSON; it is ignored")
+        return {}
+
+
+def problem_group(job: dict) -> str:
+    """The group a run was given, else that of its problem id; empty if none."""
+    if job.get("problem_group"):
+        return job["problem_group"]
+    groups = read_json(GROUPS).items()
+    return next((name for p, name in groups if job["uuid"].startswith(p)), "")
+
+
 def describe(job: dict) -> dict:
     result_dir = run_dir(job, RESULTS_DIR)
+    benchmark = result_dir / "benchmark.json"
+    costs = read_json(benchmark).get("costs", {}) if servable(job, benchmark) else {}
     files = [name for name in RESULT_PAGES if (result_dir / name).exists()]
     files += [
         name for name, pattern in ROOT_FILES.items()
@@ -984,8 +1049,11 @@ def describe(job: dict) -> dict:
         # An import's selection is for resuming; it did not produce the run.
         "agents": {} if job.get("imported") else job_selection(job),
         "gpu_group": job.get("gpu_group") or vista.DEFAULT_GROUP,
+        "group": problem_group(job),
         "hidden": bool(job.get("hidden")),
         "resumable": resumable(job),
+        "settled": job.get("status") in CONCLUSIVE,
+        "cost_usd": costs.get("hosted_cost_usd"),
         "external": "home" in job,
     }
 
@@ -1099,9 +1167,13 @@ def get_file(name: str, job: dict = Depends(owned_job)) -> FileResponse:
         else None
     )
     # Pages of imported runs come from other people: a sandbox keeps their
-    # scripts from acting on this site as the viewer.
+    # scripts from acting on this site as the viewer or saving files to the
+    # viewer's machine. Pages rendered here may save their image exports.
+    sandbox = "sandbox allow-scripts"
+    if not job.get("imported"):
+        sandbox += " allow-downloads"
     headers = (
-        {"Content-Security-Policy": "sandbox allow-scripts"}
+        {"Content-Security-Policy": sandbox}
         if path.suffix == ".html"
         else None
     )
