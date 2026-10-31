@@ -12,10 +12,12 @@
  },
  "usage_by_model": {
   "claude-opus-5-5": {
+   "input_tokens": 74,
    "output_tokens": 510099,
-   "cost_usd": 21.782405400000002
+   "cost_usd": 21.7824054
   },
   "claude-sonnet-5-5": {
+   "input_tokens": 2,
    "output_tokens": 1008,
    "cost_usd": 0.0153172
   }
@@ -132,11 +134,13 @@
    "model": "aiprover",
    "jobs": 119,
    "sessions": 298,
-   "session_hours": 378.86,
-   "gpu": "NVIDIA GH200 (H100, 96 GB)",
-   "gpus_per_server": 2,
-   "sessions_per_server": 8,
-   "gpu_hours": 94.72
+   "session_hours": 383.55,
+   "gpu": "NVIDIA H200",
+   "gpus": 2,
+   "active_hours": 23.094,
+   "gpu_hours": 46.19,
+   "usd_per_gpu_hour": 4.44,
+   "gpu_cost_usd": 205.07
   }
  },
  "server": {

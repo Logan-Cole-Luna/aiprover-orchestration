@@ -552,7 +552,7 @@ class Orchestration(
             self._write_summary(summary, sketch)
             try:
                 benchmark.summarize(self.result_dir, self.trace.document)
-            except (OSError, ValueError, KeyError, TypeError) as error:
+            except benchmark.ACCOUNTING_ERRORS as error:
                 logger.warning(f"benchmark summary not written: {error}")
 
     def _extend_library(self, form: Formalization, standalone: str) -> dict:

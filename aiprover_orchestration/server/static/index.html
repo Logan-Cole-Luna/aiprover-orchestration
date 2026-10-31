@@ -63,6 +63,12 @@ button.plain { color: var(--ink); background: var(--surface); }
 .fold i { display: inline-block; width: 1.1em; font-style: normal; color: var(--muted); }
 #run-list h2:first-child { margin-top: 0; } #run-list h2 small { font-weight: 400; color: var(--muted); }
 dl { margin: 0; } dt { margin-top: 11px; font-size: .93rem; } dd { margin: 0; }
+/* Each run is a box, with a left edge in the color of its outcome. */
+#run-list dt, #run-list dd { --edge: var(--fail); background: var(--surface); border: 1px solid var(--line); border-left: 3px solid var(--edge); }
+#run-list dt { margin-top: 12px; padding: 10px 14px 0; border-bottom: 0; }
+#run-list dd { padding: 0 14px 11px; border-top: 0; }
+#run-list [data-kind="good"] { --edge: var(--ok); } #run-list [data-kind="warn"] { --edge: var(--warn); }
+#run-list [data-kind="live"] { --edge: var(--accent); } #run-list [data-kind="quiet"] { --edge: var(--line); }
 .index { color: var(--muted); margin-right: 6px; }
 .title { font-weight: 600; font-size: 1.04rem; line-height: 1.3; overflow-wrap: anywhere; }
 .meta { font-size: .92rem; color: var(--muted); }
@@ -648,6 +654,16 @@ const capitalized = text => text[0].toUpperCase() + text.slice(1).replaceAll("_"
 const resultOf = run => capitalized(run.state === "finished" ? run.status || "finished" : run.state);
 const SCOPES = {All: () => true, Proved: run => run.settled, Unfinished: run => !run.settled};
 const RUN_TABS = ["Progress", "Files", "Details"];
+
+// GPU time and cost of a run; nothing while its usage is not yet computed.
+function gpuRows(gpu) {
+  if (gpu?.state === "none") return `<tr><td>GPU time</td><td>None: this run used no GPU</td></tr>`;
+  if (gpu?.state === "unrecorded") return `<tr><td>GPU time</td><td>Not recorded for this run</td></tr>`;
+  if (!["measured", "partial"].includes(gpu?.state)) return "";
+  const bound = gpu.state === "partial" ? "At least " : "";
+  return `<tr><td>GPU time</td><td>${bound}${gpu.gpu_hours.toFixed(1)} GPU-hours (${gpu.active_hours.toFixed(1)} h active on ${gpu.gpus} × ${escapeHtml(gpu.gpu)})</td></tr>
+      <tr><td>GPU cost</td><td>${bound}$${gpu.gpu_cost_usd.toFixed(2)} at $${gpu.usd_per_gpu_hour.toFixed(2)} per GPU-hour</td></tr>`;
+}
 // What each file of a run holds; an export is always available.
 const FILES = {
   "informal.pdf": ["Informal proof (PDF)", "The theorem and every lemma with its proof, in natural language, without Lean."],
@@ -690,7 +706,8 @@ function runPanel(run) {
       <tr><td>Group</td><td>${escapeHtml(groupName(run))}</td></tr>
       <tr><td>Submitted</td><td>${new Date(run.submitted * 1000).toLocaleString()}</td></tr>
       ${elapsed(run) ? `<tr><td>Elapsed</td><td>${elapsed(run)}</td></tr>` : ""}
-      ${run.cost_usd == null ? "" : `<tr><td>Cost</td><td>$${run.cost_usd.toFixed(run.cost_usd < 0.1 ? 3 : 2)} in model usage; GPU time is not included</td></tr>`}
+      ${run.cost_usd == null ? "" : `<tr><td>Cost</td><td>$${run.cost_usd.toFixed(run.cost_usd < 0.1 ? 3 : 2)} in hosted model usage</td></tr>`}
+      ${gpuRows(run.gpu)}
       <tr><td>Models</td><td>${modelsHTML(run.agents)}</td></tr>
       <tr><td>GPU group</td><td>${escapeHtml(run.gpu_group)}</td></tr></table></div>`,
   };
@@ -705,8 +722,8 @@ function runEntry(run, number) {
   const [glyph, kind] = OUTCOMES[result] || ["×", "bad"];
   const models = run.agents?.orchestrator
     ? `; ${shortModel(run.agents.orchestrator)} with ${shortModel(run.agents.subagent)}` : "";
-  return `<dt><span class="index">[${number}]</span><code>${escapeHtml(run.run_id)}</code> &nbsp;[${links.join(", ")}]</dt>
-    <dd><div class="title"><a href="#" data-open="${run.run_id}" aria-expanded="${run.run_id === selected}">${escapeHtml(run.title === run.uuid ? runTitle(run) : run.title)}</a></div>
+  return `<dt data-kind="${kind}"><span class="index">[${number}]</span><code>${escapeHtml(run.run_id)}</code> &nbsp;[${links.join(", ")}]</dt>
+    <dd data-kind="${kind}"><div class="title"><a href="#" data-open="${run.run_id}" aria-expanded="${run.run_id === selected}">${escapeHtml(run.title === run.uuid ? runTitle(run) : run.title)}</a></div>
     <div class="meta"><span class="${kind}">${glyph} ${run.state === "queued" ? queuedText(run) : result}</span>${elapsed(run) ? `; ${elapsed(run)} elapsed` : ""}${models}</div>
     ${run.run_id === selected ? runPanel(run) : ""}</dd>`;
 }

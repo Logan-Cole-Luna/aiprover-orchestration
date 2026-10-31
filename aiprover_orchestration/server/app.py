@@ -56,7 +56,7 @@ from pydantic import BaseModel
 
 from ..agents.claude_cli import get_account_status
 from ..library import api as library_api
-from ..orchestrator import libraries
+from ..orchestrator import gpu_usage, libraries
 from ..orchestrator.config import FILE_HEADER
 from ..orchestrator.reports.informal import RESULT_ROW_SUFFIX
 from ..orchestrator.trace import Trace
@@ -1012,6 +1012,11 @@ def describe(job: dict) -> dict:
     result_dir = run_dir(job, RESULTS_DIR)
     benchmark = result_dir / "benchmark.json"
     costs = read_json(benchmark).get("costs", {}) if servable(job, benchmark) else {}
+    gpu = (
+        gpu_usage.usage_of(result_dir)
+        if servable(job, result_dir / gpu_usage.USAGE_FILE)
+        else {}
+    )
     files = [name for name in RESULT_PAGES if (result_dir / name).exists()]
     files += [
         name for name, pattern in ROOT_FILES.items()
@@ -1054,6 +1059,7 @@ def describe(job: dict) -> dict:
         "resumable": resumable(job),
         "settled": job.get("status") in CONCLUSIVE,
         "cost_usd": costs.get("hosted_cost_usd"),
+        "gpu": gpu,
         "external": "home" in job,
     }
 

@@ -15,8 +15,8 @@ from pathlib import Path
 
 from ...agents.base import AgentCallError
 from ...lean.text import split_declarations
-from .. import libraries, prompts
-from ..benchmark import run_costs
+from .. import gpu_usage, libraries, prompts
+from ..benchmark import ACCOUNTING_ERRORS, run_costs
 from ..config import MAIN_NAME
 from ..reports import informal
 from ..reports.report import ReportBuilder, escape
@@ -49,11 +49,12 @@ def compute_rows(costs: dict) -> list[tuple[str, str]]:
             f"{solver['sessions']} AIProver sessions in {solver['jobs']} "
             f"jobs, {solver['session_hours']:.0f} session-hours"
         )
-        if solver["gpu_hours"] is not None:
+        gpu = solver["gpu"]
+        if "gpu_hours" in gpu:
+            bound = "at least " if gpu["state"] == "partial" else ""
             compute += (
-                f"; {solver['gpu_hours']:.0f} GPU-hours on "
-                f"{solver['gpus_per_server']} x {solver['gpu']} per model "
-                f"server ({solver['sessions_per_server']} sessions each)"
+                f"; {bound}{gpu['gpu_hours']:.0f} GPU-hours on "
+                f"{gpu['gpus']} x {gpu['gpu']}"
             )
         rows.append(("Compute", escape(compute)))
     calls = sum(row["calls"] for row in costs["hosted"])
@@ -186,6 +187,16 @@ class ReviewStage:
         credits[MAIN_NAME] = "main proof from the captain's sketch"
         return credits
 
+    def _costs(self) -> dict:
+        """The run's costs so far. An accounting failure does not hold back
+        the report, which then omits the GPU time."""
+        document = self.trace.document
+        try:
+            gpu_usage.refresh(self.result_dir, document)
+        except ACCOUNTING_ERRORS as error:
+            logger.warning(f"GPU usage not computed: {error}")
+        return run_costs(document, self.result_dir)
+
     def report(
         self,
         form: Formalization,
@@ -232,7 +243,7 @@ class ReviewStage:
                     f"{agents['writer'].model}"
                 ),
             ),
-            *compute_rows(run_costs(self.trace.document)),
+            *compute_rows(self._costs()),
             ("Run", f"\\texttt{{{escape(self.run_id)}}}"),
         ]
         library_names = sorted(

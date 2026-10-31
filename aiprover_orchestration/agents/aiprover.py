@@ -15,6 +15,7 @@ and extracts the lemma's proof and any helper declarations from each sample.
 import json
 import logging
 import os
+import re
 import subprocess
 import tempfile
 import time
@@ -26,6 +27,7 @@ from pathlib import Path
 from typing import Callable
 
 from ..paths import AIPROVER_CLI, DEFAULT_AIPROVER_CLI, ROOT
+from ..utils.files import read_jsonl
 from .base import (
     STOPPING,
     Agent,
@@ -92,6 +94,8 @@ MAX_DIAGNOSTICS = 20000
 # Transcript entries are cut to these lengths in the trace record.
 MAX_MESSAGE_TEXT = 8000
 MAX_TOOL_TEXT = 6000
+# Reasoning in a reply, whose closing tag is absent when the reply was cut off.
+THINK_BLOCK = re.compile(r"\[THINK\](.*?)(?:\[/THINK\]|\Z)", re.DOTALL)
 
 
 def sample_dir(lean_file: str | None, index) -> Path | None:
@@ -157,16 +161,38 @@ def read_reasoning(directory: Path | None) -> list[dict]:
     """The model's reasoning per turn, as recorded by server/reasoning_proxy.py
     (`reasoning.jsonl` in the sample directory); empty if it was not recorded.
     """
-    path = directory / "reasoning.jsonl" if directory else None
-    if not path or not path.exists():
-        return []
-    records = []
-    for line in path.read_text(errors="replace").splitlines():
-        try:
-            records.append(json.loads(line))
-        except json.JSONDecodeError:
+    return read_jsonl(directory / "reasoning.jsonl") if directory else []
+
+
+def split_session_reasoning(sample: dict) -> None:
+    """Move the reasoning that the model wrote into its messages, between
+    [THINK] tags, out of the sample's transcript and into its per-turn
+    reasoning, unless the proxy recorded it there; the proxy's empty records
+    are dropped. The tag of a reply cut off while reasoning has no end."""
+    records: dict[int, list[dict]] = {}
+    for record in sample.get("reasoning") or []:
+        records.setdefault(record["turn"], []).append(record)
+    turn = 0
+    for entry in sample.get("session") or []:
+        if entry.get("role") != "assistant":
             continue
-    return records
+        turn += 1
+        thoughts = "\n\n".join(
+            part.strip() for part in THINK_BLOCK.findall(entry["text"])
+        ).strip()
+        entry["text"] = THINK_BLOCK.sub("", entry["text"]).strip()
+        if not thoughts:
+            continue
+        recorded = records.setdefault(turn, [{"turn": turn}])
+        if not any(thoughts in record.get("reasoning", "") for record in recorded):
+            held = recorded[-1].get("reasoning", "")
+            recorded[-1]["reasoning"] = f"{held}\n\n{thoughts}".strip()
+    sample["reasoning"] = [
+        record
+        for turn in sorted(records)
+        for record in records[turn]
+        if record.get("reasoning")
+    ]
 
 
 def lean_check_summary(check: dict | None) -> dict:

@@ -1,0 +1,18 @@
+{
+  "dgx": [
+    {
+      "since": "2026-01-01",
+      "gpu": "NVIDIA DGX Spark (GB10)",
+      "gpus": 4,
+      "usd_per_gpu_hour": 0.75
+    }
+  ],
+  "vista": [
+    {
+      "since": "2026-01-01",
+      "gpu": "NVIDIA H200",
+      "gpus": 2,
+      "usd_per_gpu_hour": 4.44
+    }
+  ]
+}

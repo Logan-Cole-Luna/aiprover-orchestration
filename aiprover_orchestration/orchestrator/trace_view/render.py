@@ -34,9 +34,10 @@ from ...agents.aiprover import (
     read_reasoning,
     read_session,
     session_ending,
+    split_session_reasoning,
 )
 from ...paths import AIPROVER_JOBS
-from ...utils.files import write_atomic
+from ...utils.files import read_json, write_atomic
 from ..benchmark import run_costs
 from ..trace import Trace
 
@@ -101,12 +102,12 @@ def add_sample_records(trace: dict) -> dict:
     return trace
 
 
-def read_json(path: Path) -> dict:
-    """The JSON object at `path`; empty if it is missing or being written."""
-    try:
-        return json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError):
-        return {}
+def add_session_reasoning(trace: dict) -> dict:
+    """Complete each session's reasoning from its transcript."""
+    for step in trace.get("steps", []):
+        for sample in step.get("samples") or []:
+            split_session_reasoning(sample)
+    return trace
 
 
 def live_session(directory: Path) -> dict:
@@ -208,9 +209,11 @@ def without_sample_records(trace: dict) -> dict:
 
 def render(trace_path: Path, output_dir: Path) -> list[Path]:
     trace = shorten_paths(
-        add_live_jobs(add_sample_records(Trace.load(trace_path)))
+        add_live_jobs(
+            add_session_reasoning(add_sample_records(Trace.load(trace_path)))
+        )
     )
-    trace["costs"] = run_costs(trace)
+    trace["costs"] = run_costs(trace, Path(trace_path).parent)
     # `</` would terminate the enclosing <script> element early.
     payloads = {
         replay: json.dumps(

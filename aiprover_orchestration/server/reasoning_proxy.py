@@ -451,6 +451,9 @@ async def forward(request: web.Request) -> web.StreamResponse:
         return web.Response(status=502, text="no model server reachable")
     app["in_flight"][0] += 1
     upstreams.in_flight[upstream] += 1
+    streamed = False
+    accumulator = Accumulator()
+    whole = b""
     try:
         response = web.StreamResponse(
             status=reply.status,
@@ -464,25 +467,29 @@ async def forward(request: web.Request) -> web.StreamResponse:
         streamed = "text/event-stream" in reply.headers.get("content-type", "")
         chat = request.path.endswith("/chat/completions")
         stream = ToolCallStream() if streamed and chat else None
-        accumulator = Accumulator()
-        whole = b""
         async for chunk in reply.content.iter_any():
             if not streamed:
                 whole += chunk
                 continue
             if stream:
                 chunk = stream.feed(chunk)
-            await response.write(chunk)
             accumulator.feed(chunk)
+            await response.write(chunk)
         if stream:
             chunk = stream.flush()
-            await response.write(chunk)
             accumulator.feed(chunk)
+            await response.write(chunk)
         if not streamed:
             if chat and reply.status == 200:
                 whole = convert_completion(whole)
             await response.write(whole)
         await response.write_eof()
+    except ConnectionResetError:
+        # The harness's client closes at the end of a stream, often before
+        # the terminating chunk; the reply is still recorded below, without
+        # what the model sent after that.
+        logger.debug("client closed the connection")
+        metrics["client_closed"] = True
     finally:
         reply.release()
         app["in_flight"][0] -= 1

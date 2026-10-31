@@ -603,7 +603,7 @@ function chatCheckHTML(check) {
     <div class="tagblock"><span class="tagname">${escapeHTML(check.file || "")}</span>${leanHTML(check.source || "", errorLinesOf(errors), "tall")}</div>`;
 }
 
-// The model's reasoning before assistant turn `turn`, from the logging proxy.
+// The model's reasoning before assistant turn `turn`.
 const reasoningOfTurn = (sample, turn) => (sample.reasoning || []).filter(r => r.turn === turn);
 
 function reasoningBlock(text, open = false) {

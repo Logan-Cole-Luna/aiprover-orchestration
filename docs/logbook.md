@@ -227,6 +227,32 @@ Results
 
 ## Decisions
 
+- Reasoning in replays (2026-10-30): the model writes part of its reasoning
+  into message content between `[THINK]` tags, so the rendered pages take
+  each turn's reasoning from the proxy's record or the transcript
+  (`split_session_reasoning`). The proxy records a reply when the client has
+  closed the connection.
+- GPU time is measured, not attributed by slots (2026-10-30): a run is charged
+  for the server's active time (`vllm:num_requests_running` above zero, or a
+  request completed, between 30 s samples) while it has sessions open, in
+  proportion to its share of the open sessions (`orchestrator/gpu_usage.py`).
+  Hardware and prices lie in `configs/orchestrator/gpu_hardware.json`, dated
+  by `since`, and apply on display. Consequently, a correction takes effect
+  for every run. A run with under 90 % of its session time sampled reports
+  lower bounds. Runs share only with groups on the same servers (`sharing_key`
+  in `server/vista.py`), since `open` and `main`/`openai` run separate servers
+  of one hardware type.
+- GPU accounting scope (2026-10-31): `gpu_usage.json` is the only record of
+  GPU time, and `benchmark.json` holds none of it, since a later overlapping
+  run changes a charge. The hardware table describes one model server, and a
+  proxy's metrics sum its pool. Consequently, a run of a group that borrows
+  servers reports lower bounds. A resumed session is placed around the run's
+  outages, counted back from its end, and a session outside any run takes
+  its share of the DGX in both `refresh` and `refresh_all`.
+- Rates (2026-10-30): DGX Spark 0.75 USD per GPU-hour (published hosted rate);
+  H200 4.44 USD per GPU-hour (median on-demand rate across 46 providers,
+  2026-10-17). The model server `aip-leanstral` uses four DGX nodes with one
+  GB10 GPU each, confirmed by the system's administrators.
 - Failed assembly returns to the captain (2026-10-30): `#print axioms` on every
   lemma names the lemmas responsible; their proofs are withdrawn and handed
   back at once, for up to `max_assembly_rounds` rounds. A failure with no

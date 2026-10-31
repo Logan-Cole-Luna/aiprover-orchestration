@@ -69,10 +69,8 @@ class GpuGroup:
     # Groups whose model servers this group's runs also use: its reasoning
     # proxy pools their tunnels with its own (`--upstream`).
     borrows: tuple[str, ...] = ()
-    # Hardware of one model server, for attributing GPU time to runs; empty
-    # where it is not known.
-    gpu: str = ""
-    gpus: int = 0
+    # Key of the group's server in configs/orchestrator/gpu_hardware.json.
+    hardware: str = ""
 
     @property
     def serverless(self) -> bool:
@@ -107,8 +105,6 @@ def dgx_configs() -> tuple[Path, str, int]:
 DGX_CONFIG, DGX_SOLVER_CONFIG, DGX_PROXY_PORT = dgx_configs()
 
 DEFAULT_GROUP = "main"
-# One GPU per node of the gh partitions; a server spans `NODES` nodes.
-VISTA_GPU = "NVIDIA GH200 (H100, 96 GB)"
 GPU_GROUPS = {
     # Jobs of group "main" are named aiprover_srv_main: jobs named
     # aiprover_srv are cancelled by a process outside this server.
@@ -120,8 +116,7 @@ GPU_GROUPS = {
         "configs/aiprover/vista_logged.toml",
         18565,
         borrows=("openai",),
-        gpu=VISTA_GPU,
-        gpus=int(NODES),
+        hardware="vista",
     ),
     "open": GpuGroup(
         "open",
@@ -130,8 +125,7 @@ GPU_GROUPS = {
         AIPROVER_CONFIGS / "vista_open.toml",
         "configs/aiprover/vista_logged_open.toml",
         18568,
-        gpu=VISTA_GPU,
-        gpus=int(NODES),
+        hardware="vista",
     ),
     "openai": GpuGroup(
         "openai",
@@ -141,25 +135,38 @@ GPU_GROUPS = {
         "configs/aiprover/vista_logged_openai.toml",
         18569,
         borrows=("main",),
-        gpu=VISTA_GPU,
-        gpus=int(NODES),
+        hardware="vista",
     ),
     # The persistent server cic-dgx-01 through its reasoning proxy.
     "dgx": GpuGroup(
-        "dgx", "", "", DGX_CONFIG, DGX_SOLVER_CONFIG, DGX_PROXY_PORT
+        "dgx",
+        "",
+        "",
+        DGX_CONFIG,
+        DGX_SOLVER_CONFIG,
+        DGX_PROXY_PORT,
+        hardware="dgx",
     ),
     # Runs whose roles all use Claude or hosted models: no model server.
     "cpu": GpuGroup("cpu"),
 }
 
 
+def config_name(config: str) -> str:
+    """The name of an AIProver config, shared by its earlier spellings: both
+    aiprover/aiprover_vista_logged.toml and configs/aiprover/vista.toml give
+    `vista`."""
+    return Path(config).stem.removeprefix("aiprover_").replace("_logged", "")
+
+
 def group_of_solver(solver_config: str) -> GpuGroup | None:
     """The GPU group whose runs use this AIProver config."""
+    name = config_name(solver_config)
     return next(
         (
             group
             for group in GPU_GROUPS.values()
-            if group.solver_config == solver_config
+            if group.solver_config and config_name(group.solver_config) == name
         ),
         None,
     )
@@ -171,6 +178,13 @@ logger = logging.getLogger(__name__)
 def server_pool(group: GpuGroup) -> list[GpuGroup]:
     """The groups whose model servers the runs of `group` use."""
     return [group] + [GPU_GROUPS[name] for name in group.borrows]
+
+
+def sharing_key(group: GpuGroup) -> str:
+    """Key of the servers that the runs of `group` compete for: groups that
+    borrow from each other share it, and other groups do not, even on the
+    same hardware."""
+    return min(member.name for member in server_pool(group))
 
 
 def run_command(

@@ -251,7 +251,9 @@ A GPU group names the model server that runs a run's AIProver jobs. Group
 use the endpoint written by `./setup --endpoint <URL>`
 (`orchestration_plugin/aiprover.toml`) and its reasoning proxy
 (`orchestration_plugin/setup.sh endpoint` restarts the proxy after a
-reboot), or a harness configuration in `configs/aiprover/`.
+reboot), or a harness configuration in `configs/aiprover/`. The GPUs and
+hourly rate of each server lie in `configs/orchestrator/gpu_hardware.json`;
+GPU time counts only the server's active time during a run's sessions.
 
 The server has two pages. `/user`, where `/` leads, offers one GPU group,
 the open and OpenAI math problems, the proved OpenAI problems, and the runs

@@ -73,8 +73,11 @@ function costPanel() {
   const rows = hosted.map(row => `<tr><td><span class="role ${escapeHTML(row.role)}">${escapeHTML(roleName(row.role))}</span></td>
     <td class="num">${escapeHTML(row.model)}</td><td>${escapeHTML(row.purpose)}</td><td class="num">${row.calls}</td>
     <td class="num">${row.output_tokens.toLocaleString()}</td><td class="num">${formatUSD(row.cost_usd)}</td></tr>`).join("");
-  const gpu = solver.gpu_hours != null
-    ? `<tr><td>GPU time</td><td class="num">${solver.gpu_hours.toFixed(1)} GPU-hours: ${solver.gpus_per_server} × ${escapeHTML(solver.gpu)} per model server, ${solver.sessions_per_server} sessions per server</td></tr>`
+  const usage = solver.gpu || {};
+  const bound = usage.state === "partial" ? "At least " : "";
+  const gpu = usage.gpu_hours != null
+    ? `<tr><td>GPU time</td><td class="num">${bound}${usage.gpu_hours.toFixed(1)} GPU-hours: ${usage.active_hours.toFixed(1)} h active × ${usage.gpus} ${escapeHTML(usage.gpu)}</td></tr>
+      <tr><td>GPU cost</td><td class="num">${bound}${formatUSD(usage.gpu_cost_usd)} at ${formatUSD(usage.usd_per_gpu_hour)} per GPU-hour</td></tr>`
     : "";
   return `
   <div class="panel">
@@ -123,7 +126,7 @@ function chapterOverview() {
     <div class="stat"><span class="v">${checks.length}</span><span class="k">Lean checks</span></div>
     ${TRACE.live ? `<div class="stat"><span class="v">${TRACE.live.jobs.length} · ${sum(TRACE.live.jobs.map(j => j.sessions.filter(s => s.state !== "done").length))}</span><span class="k">jobs · sessions in progress</span></div>` : ""}
     <div class="stat"><span class="v">${formatUSD(costs.hosted_cost_usd ?? totalCost)}</span><span class="k">hosted model cost</span></div>
-    ${costs.solver?.gpu_hours != null ? `<div class="stat"><span class="v">${costs.solver.gpu_hours.toFixed(1)}</span><span class="k">GPU-hours (${escapeHTML(costs.solver.gpu)})</span></div>` : ""}
+    ${costs.solver?.gpu?.gpu_hours != null ? `<div class="stat"><span class="v">${costs.solver.gpu.state === "partial" ? "≥ " : ""}${costs.solver.gpu.gpu_hours.toFixed(1)}</span><span class="k">GPU-hours (${escapeHTML(costs.solver.gpu.gpu)})</span></div>` : ""}
   </div>
   ${phaseNames.length ? `
   <div class="panel">
