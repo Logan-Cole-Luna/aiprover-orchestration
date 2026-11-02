@@ -198,14 +198,16 @@ class Orchestration(
             index = self._file_counter
         return self.temp_dir / f"{index:04d}_{label}.lean"
 
-    def _check(self, label: str, lean_text: str, **trace_fields):
+    def _check(
+        self, label: str, lean_text: str, timeout: int = 0, **trace_fields
+    ):
         """Elaborate a standalone file and record the check in the trace. A
         check ended by the run's termination raises Terminated, so that it
         is never read as a failed proof."""
         raise_if_stopping()
         path = self._attempt_path(label)
         start = time.time()
-        result = self.lean.check_text(lean_text, path)
+        result = self.lean.check_text(lean_text, path, timeout)
         raise_if_stopping()
         self.trace.add(
             "lean_check",
@@ -421,8 +423,9 @@ class Orchestration(
                     sketch = self.sketch(form)
             else:
                 sketch = state.sketch
-                if state.replan_pending:
-                    with self._timed("sketch"):
+                with self._timed("sketch"):
+                    self.reuse_proofs(form, sketch, state.recheck)
+                    if state.replan_pending:
                         sketch = self.replan(form, sketch, resumed=True)
             while True:
                 if sketch.refutation:

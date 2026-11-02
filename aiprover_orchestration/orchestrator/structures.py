@@ -13,6 +13,17 @@ from ..lean.text import (
     strip_leading_by,
 )
 
+# Kinds of declaration that a sketch may state among its lemmas.
+DEFINITION_KINDS = (
+    "def",
+    "abbrev",
+    "inductive",
+    "structure",
+    "class",
+    "instance",
+    "opaque",
+)
+
 
 @dataclass
 class Formalization:
@@ -189,7 +200,8 @@ def reinstated(
     is thereby kept with the lemmas it was proved from rather than lost
     with them. Dependencies of reinstated proved lemmas return as well; a
     refuted lemma cannot, since a proof that uses it is unsound, nor can a
-    lemma whose name the new sketch gives another statement."""
+    lemma whose name the new sketch gives another statement. A reinstated
+    lemma takes the definitions of `lemmas`, which replace its earlier ones."""
     by_name = {lemma.name: lemma for lemma in earlier}
     kept = {normalize(lemma.statement) for lemma in lemmas}
     pending = [
@@ -212,14 +224,14 @@ def reinstated(
                 if normalize(lemma.statement) == normalize(user.statement)
             )
             dependency = by_name[name]
-            lemma = Lemma(
-                name, dependency.statement, definitions=dependency.definitions
-            )
+            lemma = Lemma(name, dependency.statement)
             lemmas.insert(position, lemma)
             present.add(name)
             added.append((lemma, before))
             if dependency.proved:
                 pending.append(dependency)
+    if added:
+        carry_definitions(lemmas, earlier, definition_blocks(lemmas))
     return added
 
 
@@ -242,6 +254,28 @@ def unchanged_names(before: dict[str, str], after: dict[str, str]) -> set[str]:
     return {name for name, text in after.items() if before.get(name) == text}
 
 
+def _in_order_of_use(items: list, uses) -> list:
+    """`items` in order, except that each follows those it uses (`uses(item,
+    other)`). A cycle leaves the rest in order."""
+    remaining, ordered = list(items), []
+    while remaining:
+        ready = next(
+            (
+                item
+                for item in remaining
+                if not any(
+                    uses(item, other)
+                    for other in remaining
+                    if other is not item
+                )
+            ),
+            remaining[0],
+        )
+        remaining.remove(ready)
+        ordered.append(ready)
+    return ordered
+
+
 def dependency_order(lemmas: list[Lemma]) -> list[Lemma]:
     """Lemmas in sketch order, except that each proved lemma follows the
     lemmas its proof uses. A proof kept across a replan may use a lemma the
@@ -251,23 +285,7 @@ def dependency_order(lemmas: list[Lemma]) -> list[Lemma]:
         text = f"{lemma.helpers}\n{lemma.proof}" if lemma.proved else ""
         return refers_to(text, other.name)
 
-    remaining, ordered = list(lemmas), []
-    while remaining:
-        ready = next(
-            (
-                lemma
-                for lemma in remaining
-                if not any(
-                    uses(lemma, other)
-                    for other in remaining
-                    if other is not lemma
-                )
-            ),
-            remaining[0],
-        )
-        remaining.remove(ready)
-        ordered.append(ready)
-    return ordered
+    return _in_order_of_use(lemmas, uses)
 
 
 def stub_listing(
@@ -300,16 +318,58 @@ def new_definitions(lemma: Lemma, shown: set[str]) -> list[str]:
     return blocks
 
 
-def carry_definitions(lemmas: list[Lemma], earlier: list[Lemma]) -> None:
-    """Give each of `lemmas` (a new sketch) the definition blocks of the
-    `earlier` sketch that its statement uses, with the blocks they use."""
-    blocks = list(
-        dict.fromkeys(block for other in earlier for block in other.definitions)
+def sketch_definitions(lemma_block: str) -> list[str]:
+    """The definition blocks that a sketch states among its lemmas."""
+    return [
+        text
+        for kind, _, text in split_declarations(lemma_block)
+        if kind in DEFINITION_KINDS
+    ]
+
+
+def definition_blocks(lemmas: list[Lemma]) -> list[str]:
+    """The definition blocks of `lemmas`, each once."""
+    return list(
+        dict.fromkeys(block for lemma in lemmas for block in lemma.definitions)
     )
+
+
+def definitions_changed(earlier: list[Lemma], lemmas: list[Lemma]) -> bool:
+    """Whether `lemmas` lack a definition block of `earlier` or add an
+    instance, so that a proof found under `earlier` may no longer hold. A
+    proof cannot name any other added block."""
+    before, after = set(definition_blocks(earlier)), set(
+        definition_blocks(lemmas)
+    )
+    return not before <= after or any(map(_is_instance, after - before))
+
+
+def _uses_block(text: str, block: str) -> bool:
+    return any(refers_to(text, name) for name in declared_names(block))
+
+
+def _is_instance(block: str) -> bool:
+    return any(kind == "instance" for kind, _, _ in split_declarations(block))
+
+
+def carry_definitions(
+    lemmas: list[Lemma], earlier: list[Lemma], new: list[str]
+) -> None:
+    """Give each of `lemmas` (a new sketch) the definition blocks of the
+    `earlier` sketch and the `new` ones that its statement uses, with the
+    blocks they use. Instances, which statements do not name, go to every
+    lemma. A `new` block replaces an earlier one of the same name."""
+    names = {name for block in new for name in declared_names(block)}
+    kept = [
+        block
+        for block in definition_blocks(earlier)
+        if not names & declared_names(block)
+    ]
+    blocks = _in_order_of_use(list(dict.fromkeys([*kept, *new])), _uses_block)
     for lemma in lemmas:
         used, text = [], lemma.statement
         for block in reversed(blocks):
-            if any(refers_to(text, name) for name in declared_names(block)):
+            if _is_instance(block) or _uses_block(text, block):
                 used.insert(0, block)
                 text += "\n" + block
         lemma.definitions = tuple(used)

@@ -6,7 +6,7 @@ decisions yields the latest durable state, so an interrupted run continues
 from its last completed step instead of from the beginning.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from . import cdcl, prompts
 from ..lean.text import file_scoped, normalize
@@ -15,6 +15,7 @@ from .structures import (
     Lemma,
     Sketch,
     carry_definitions,
+    definitions_changed,
     missing_lemmas,
     parse_statement,
     recorded_lemmas,
@@ -34,6 +35,7 @@ class ResumeState:
     sketch: Sketch | None = None
     replans_started: int = 0
     assembly_rounds: int = 0  # failed assemblies returned to the captain
+    lean_timeouts: int = 0  # each doubles the limits of recheck and assembly
     # Why assembly rejected a lemma's proof, until the captain answers.
     assembly_failures: dict[str, str] = field(default_factory=dict)
     replan_pending: bool = (
@@ -47,8 +49,9 @@ class ResumeState:
     previous_status: str | None = None
     restored_steps: int = 0
     # Proof per normalized statement: (helpers, proof, the normalized
-    # statement of each lemma of the sketch when it was proved).
-    proofs: dict[str, tuple[str, str, dict[str, str]]] = field(
+    # statement of each lemma of the sketch when it was proved, or None
+    # once a definition changed).
+    proofs: dict[str, tuple[str, str, dict[str, str] | None]] = field(
         default_factory=dict
     )
     # Last failed attempts per lemma of the current sketch: (errors, attempts).
@@ -71,6 +74,14 @@ class ResumeState:
     # record since the sketch was accepted (a proof kept by a replan after
     # a rewind); a resumed run records them as reused.
     unrecorded_proofs: list[str] = field(default_factory=list)
+    # Proofs per lemma name that a replan's changes leave unconfirmed; a
+    # resumed run keeps those that still compile.
+    # (`reuse_proofs`)
+    recheck: list[tuple[Lemma, Lemma, bool]] = field(default_factory=list)
+
+    def lean_limit(self, seconds: int) -> int:
+        """The time limit `seconds`, doubled by each Lean timeout so far."""
+        return seconds * 2**self.lean_timeouts
 
     def count_attempt(self, lemma: Lemma) -> None:
         """Count a failed attempt on `lemma`'s statement."""
@@ -256,8 +267,13 @@ def restore_state(document: dict) -> ResumeState:
             state.replan_pending = False
         elif event == "sketch_accepted":
             lemmas = recorded_lemmas(step["lemmas"])
-            if state.sketch is not None:
-                carry_definitions(lemmas, state.sketch.lemmas)
+            earlier = state.sketch.lemmas if state.sketch is not None else []
+            carry_definitions(lemmas, earlier, step.get("definitions", ()))
+            if definitions_changed(earlier, lemmas):
+                state.proofs = {
+                    key: (*proof[:2], None)
+                    for key, proof in state.proofs.items()
+                }
             state.sketch = Sketch(lemmas, step["main_proof"])
             statement_of = {lemma.name: lemma.statement for lemma in lemmas}
             recorded = set()
@@ -278,9 +294,12 @@ def restore_state(document: dict) -> ResumeState:
             state.reviewed_at[statement_key(lemma.statement)] = step[
                 "attempts"
             ]
-        elif event == "lemma_reused":
+        elif event == "lemma_reused" and "proof" not in step:
             recorded.add(step["lemma"])
-        elif event == "lemma_proved" and step["lemma"] in statement_of:
+        elif (
+            event in ("lemma_proved", "lemma_reused")
+            and step["lemma"] in statement_of
+        ):
             recorded.add(step["lemma"])
             state.proofs[normalize(statement_of[step["lemma"]])] = (
                 step["helpers"],
@@ -366,6 +385,10 @@ def restore_state(document: dict) -> ResumeState:
             state.knowledge.pop(target.name, None)
             target.statement = step["statement"]
             statement_of[target.name] = target.statement
+        elif event == "lemma_recheck_failed" and step["lemma"] in statement_of:
+            state.proofs.pop(normalize(statement_of[step["lemma"]]), None)
+        elif event == "lean_timed_out":
+            state.lean_timeouts += 1
         elif event == "assembly_rejected" and state.sketch is not None:
             state.assembly_rounds += 1
             for name, problem in step["lemmas"].items():
@@ -397,10 +420,11 @@ def restore_state(document: dict) -> ResumeState:
                 lemma.helpers, lemma.proof, proved_under = proof
                 # A proof kept across a replan needs the lemmas it used, with
                 # the statements they had when it was found.
-                lemma.proved = not missing_lemmas(
+                lemma.proved = proved_under is not None and not missing_lemmas(
                     lemma, names_seen, unchanged_names(proved_under, current)
                 )
                 if not lemma.proved:
+                    state.recheck.append((lemma, replace(lemma), True))
                     lemma.helpers = lemma.proof = ""
                 elif lemma.name not in recorded:
                     state.unrecorded_proofs.append(lemma.name)

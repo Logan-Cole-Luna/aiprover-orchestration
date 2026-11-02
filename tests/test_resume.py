@@ -208,6 +208,39 @@ class SketchChangesTest(unittest.TestCase):
         steps.append(decision("lemma_reused", lemma="b"))
         self.assertEqual(restore_state({"steps": steps}).unrecorded_proofs, [])
 
+    def test_a_changed_definition_leaves_proofs_for_a_recheck(self):
+        accepted = decision(
+            "sketch_accepted",
+            lemmas=["theorem a : f = 1"],
+            definitions=["def f := 1"],
+            main_proof="exact a",
+        )
+        proved = decision(
+            "lemma_proved",
+            lemma="a",
+            worker="1",
+            round=0,
+            helpers="",
+            proof="rfl",
+        )
+        replanned = {**accepted, "definitions": ["def f := 2"]}
+        steps = [accepted, proved, replanned]
+        state = restore_state({"steps": steps})
+        self.assertFalse(state.sketch.lemmas[0].proved)
+        self.assertEqual(state.recheck[0][1].proof, "rfl")
+        reused = decision("lemma_reused", lemma="a", helpers="", proof="rfl")
+        state = restore_state({"steps": steps + [reused]})
+        self.assertTrue(state.sketch.lemmas[0].proved)
+        self.assertEqual(state.recheck, [])
+        failed = decision("lemma_recheck_failed", lemma="a")
+        state = restore_state({"steps": steps + [failed]})
+        self.assertEqual(state.recheck, [])
+
+    def test_lean_timeouts_are_counted(self):
+        step = decision("lean_timed_out", check="final", timeout=300)
+        state = restore_state({"steps": [step, step]})
+        self.assertEqual(state.lean_timeouts, 2)
+
     def test_interrupted_job_is_resumable(self):
         steps = [
             SKETCH,

@@ -371,7 +371,7 @@ class LeanChecker:
         self.stop = stop
         self._slots = threading.Semaphore(max_parallel)
 
-    def check_file(self, path: Path) -> CheckResult:
+    def check_file(self, path: Path, timeout: int = 0) -> CheckResult:
         path = Path(path).resolve()
         constructs = executable_constructs(path.read_text())
         if constructs:
@@ -380,17 +380,20 @@ class LeanChecker:
             return _run(
                 lean_command(path),
                 self.workspace,
-                self.timeout,
+                timeout or self.timeout,
                 [path.parent],
                 self.stop,
             )
 
-    def check_text(self, lean_text: str, path: Path) -> CheckResult:
-        """Write `lean_text` to `path` and elaborate it."""
+    def check_text(
+        self, lean_text: str, path: Path, timeout: int = 0
+    ) -> CheckResult:
+        """Write `lean_text` to `path` and elaborate it, within `timeout`
+        seconds if given."""
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(lean_text)
-        result = self.check_file(path)
+        result = self.check_file(path, timeout)
         result.source = lean_text
         return result
 

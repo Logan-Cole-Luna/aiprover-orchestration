@@ -1,19 +1,33 @@
 """Failed assemblies: the lemmas responsible and the withdrawal of proofs."""
 
+import tempfile
 import unittest
+from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
-from aiprover_orchestration.orchestrator.stages.assemble import AssembleStage
+from aiprover_orchestration.agents.base import AgentCallError
+from aiprover_orchestration.orchestrator.resume import ResumeState
+from aiprover_orchestration.orchestrator.stages.assemble import (
+    AssembleStage,
+    checker,
+)
 from aiprover_orchestration.orchestrator.structures import Lemma, Sketch
 
 
 class Stage(AssembleStage):
-    def __init__(self, axioms: dict):
+    config = SimpleNamespace(lean_timeout=300)
+    state = ResumeState()
+
+    def __init__(self, axioms: dict, timed_out: bool = False):
         self.axioms = axioms
+        self.timed_out = timed_out
+        self.timeouts = []
         self.decisions = []
 
-    def _check(self, label, text, **fields):
-        return SimpleNamespace(axioms=self.axioms, timed_out=False)
+    def _check(self, label, text, timeout=0, **fields):
+        self.timeouts.append(timeout)
+        return SimpleNamespace(axioms=self.axioms, timed_out=self.timed_out)
 
     def _decision(self, event, **fields):
         self.decisions.append((event, fields))
@@ -31,6 +45,45 @@ def sketch() -> Sketch:
         ],
         "exact user",
     )
+
+
+class AssemblyTimeoutTest(unittest.TestCase):
+    def test_limit_grows_with_the_file(self):
+        stage = Stage({})
+        stage._assembly_check("final", "\n" * 39000)
+        self.assertEqual(stage.timeouts, [3900])
+        stage._assembly_check("final", "\n" * 100)
+        self.assertEqual(stage.timeouts[-1], 300)
+
+    def test_timeout_blames_no_lemma(self):
+        with self.assertRaises(AgentCallError):
+            Stage({}, timed_out=True).responsible_lemmas(sketch(), "text")
+
+    def test_limit_doubles_after_each_timeout(self):
+        stage = Stage({})
+        stage.state = ResumeState(lean_timeouts=2)
+        stage._assembly_check("final", "text")
+        self.assertEqual(stage.timeouts, [1200])
+
+    def test_module_build_timeout_stops_the_run(self):
+        stage = Stage({})
+        stage.slug = "slug"
+        stage.workspace = "workspace"
+        built = SimpleNamespace(ok=False, timed_out=True, output="")
+        with tempfile.TemporaryDirectory() as directory:
+            stage.result_dir = Path(directory)
+            with mock.patch.object(checker, "build", return_value=built):
+                with self.assertRaises(AgentCallError):
+                    stage._verify_modules(
+                        SimpleNamespace(
+                            definitions="",
+                            preamble="",
+                            statement="",
+                            theorem_name="target",
+                        ),
+                        "body",
+                    )
+        self.assertEqual(stage.decisions[-1][0], "lean_timed_out")
 
 
 class ResponsibleLemmasTest(unittest.TestCase):

@@ -29,7 +29,9 @@ Related published work (tags defined in docs/lit_review/lit_review.md §6):
 """
 
 import logging
+from concurrent.futures import ThreadPoolExecutor
 
+from ...agents.base import AgentCallError
 from ...lean.checker import forbidden_problems, nonstandard_axioms
 from ...lean.text import (
     declaration_names,
@@ -45,6 +47,9 @@ from ..structures import (
     Lemma,
     Sketch,
     carry_definitions,
+    declared_names,
+    definition_blocks,
+    definitions_changed,
     dependency_order,
     extract_tag,
     extract_tactics,
@@ -52,7 +57,9 @@ from ..structures import (
     missing_lemmas,
     new_definitions,
     parse_lemmas,
+    refers_to,
     reinstated,
+    sketch_definitions,
     statement_key,
     statements,
     stub_listing,
@@ -227,16 +234,29 @@ class SketchStage:
             lemma_block = drop_imports(extract_tag(reply, "lemmas"))
             main_proof = extract_tactics(reply, "main_proof")
             lemmas = parse_lemmas(lemma_block)
-            carry_definitions(lemmas, earlier)
+            definitions = sketch_definitions(lemma_block)
+            carry_definitions(lemmas, earlier, definitions)
             names = [lemma.name for lemma in lemmas]
             problems = [
                 f"lemma `{name}` must be stated with `:= by sorry`"
                 for kind, name, _ in split_declarations(lemma_block)
                 if kind in ("theorem", "lemma") and name not in names
             ]
+            used = set(definition_blocks(lemmas))
+            problems += [
+                f"the main proof uses `{name}`, which no lemma statement "
+                f"uses, so it is not in the file"
+                for block in definitions
+                if block not in used
+                for name in declared_names(block)
+                if refers_to(main_proof, name)
+            ]
             problems += forbidden_problems(main_proof, "main proof")
             problems += forbidden_problems(
                 lemma_block, "lemma statements", statements=True
+            )
+            problems += forbidden_problems(
+                "\n\n".join(definitions), "definitions"
             )
             if len(set(names)) != len(names) or {
                 MAIN_NAME,
@@ -254,6 +274,8 @@ class SketchStage:
                 f"{excluded[key]}; it cannot be part of the sketch"
                 for lemma in lemmas
                 if (key := statement_key(lemma.statement)) in (excluded or {})
+                # Under a new definition, the same text is a new proposition.
+                and set(lemma.definitions) <= set(definition_blocks(earlier))
             ]
             if not problems:
                 candidate = Sketch(lemmas, main_proof)
@@ -341,6 +363,7 @@ class SketchStage:
             "sketch_accepted",
             repair=repair,
             lemmas=[lemma.statement for lemma in sketch.lemmas],
+            definitions=definition_blocks(sketch.lemmas),
             main_proof=sketch.main_proof,
         )
         return sketch
@@ -461,18 +484,80 @@ class SketchStage:
             statements(sketch.lemmas), statements(new_sketch.lemmas)
         )
         old_names = {lemma.name for lemma in sketch.lemmas}
+        changed = definitions_changed(sketch.lemmas, new_sketch.lemmas)
+        reused = []
         for lemma in new_sketch.lemmas:
             previous = proofs.get(normalize(lemma.statement))
             if not previous:
                 continue
             missing = missing_lemmas(previous, old_names, kept)
-            if missing:
-                logger.info(
-                    f"{lemma.name}: proof not reused; it uses {missing}, "
-                    f"which the new sketch drops"
-                )
-                continue
-            lemma.helpers, lemma.proof = previous.helpers, previous.proof
-            lemma.proved = True
-            self._decision("lemma_reused", lemma=lemma.name)
+            reused.append((lemma, previous, changed or bool(missing)))
+        self.reuse_proofs(form, new_sketch, reused)
         return new_sketch
+
+    def reuse_proofs(
+        self,
+        form: Formalization,
+        sketch: Sketch,
+        proofs: list[tuple[Lemma, Lemma, bool]],
+    ) -> None:
+        """`_reuse_proof` of each of `proofs`, whose checks are independent.
+        A timeout is recorded once, however many checks reach it."""
+        with ThreadPoolExecutor(self.config.lean_parallel) as pool:
+            try:
+                list(
+                    pool.map(
+                        lambda proof: self._reuse_proof(form, sketch, *proof),
+                        proofs,
+                    )
+                )
+            except AgentCallError:
+                pool.shutdown(wait=False, cancel_futures=True)
+                self._decision("lean_timed_out", check="recheck")
+                raise
+
+    def _reuse_proof(
+        self,
+        form: Formalization,
+        sketch: Sketch,
+        lemma: Lemma,
+        previous: Lemma,
+        recheck: bool,
+    ) -> None:
+        """Give `lemma` the proof of `previous`, which must first compile on
+        `sketch` if `recheck`, so that a small change does not discard the
+        proofs that use it. A timeout stops the run: its resume repeats the
+        check with twice the limit, since the machine, not the proof, may
+        be the cause."""
+        if recheck:
+            result, problem = self._check_proof(
+                form,
+                stub_listing(
+                    [other for other in sketch.lemmas if other is not lemma],
+                    before=lemma,
+                ),
+                lemma,
+                previous.helpers,
+                previous.proof,
+                f"{lemma.name}_recheck",
+                timeout=self.state.lean_limit(self.config.lean_timeout),
+            )
+            if result.timed_out:
+                raise AgentCallError(
+                    f"Lean check of the kept proof of {lemma.name} timed out"
+                )
+            if problem:
+                logger.info(
+                    f"{lemma.name}: proof not reused; it fails on the new "
+                    f"sketch"
+                )
+                self._decision("lemma_recheck_failed", lemma=lemma.name)
+                return
+        lemma.helpers, lemma.proof = previous.helpers, previous.proof
+        lemma.proved = True
+        self._decision(
+            "lemma_reused",
+            lemma=lemma.name,
+            helpers=lemma.helpers,
+            proof=lemma.proof,
+        )
