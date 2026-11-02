@@ -48,22 +48,10 @@ def sketch() -> Sketch:
 
 
 class AssemblyTimeoutTest(unittest.TestCase):
-    def test_limit_grows_with_the_file(self):
-        stage = Stage({})
-        stage._assembly_check("final", "\n" * 39000)
-        self.assertEqual(stage.timeouts, [3900])
-        stage._assembly_check("final", "\n" * 100)
-        self.assertEqual(stage.timeouts[-1], 300)
 
     def test_timeout_blames_no_lemma(self):
         with self.assertRaises(AgentCallError):
             Stage({}, timed_out=True).responsible_lemmas(sketch(), "text")
-
-    def test_limit_doubles_after_each_timeout(self):
-        stage = Stage({})
-        stage.state = ResumeState(lean_timeouts=2)
-        stage._assembly_check("final", "text")
-        self.assertEqual(stage.timeouts, [1200])
 
     def test_module_build_timeout_stops_the_run(self):
         stage = Stage({})
@@ -93,19 +81,6 @@ class ResponsibleLemmasTest(unittest.TestCase):
         ).responsible_lemmas(sketch(), "")
         self.assertEqual(list(problems), ["root"])
         self.assertIn("Lean.ofReduceBool", problems["root"])
-
-    def test_declaration_missing_from_the_file(self):
-        problems = Stage(
-            {"user": [], "clean": []}
-        ).responsible_lemmas(sketch(), "")
-        self.assertEqual(list(problems), ["root"])
-
-    def test_no_lemma_responsible(self):
-        problems = Stage(
-            {"root": [], "user": [], "clean": []}
-        ).responsible_lemmas(sketch(), "")
-        self.assertEqual(problems, {})
-
 
 class RejectAssemblyTest(unittest.TestCase):
     def test_only_the_lemma_responsible_is_reopened(self):

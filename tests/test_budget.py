@@ -2,7 +2,12 @@
 a statement whose budget is spent is not stated again."""
 
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 
+from aiprover_orchestration.agents.base import BudgetExhausted
+from aiprover_orchestration.agents.pool import AgentPool, role_spec
 from aiprover_orchestration.orchestrator import cdcl
 from aiprover_orchestration.orchestrator.config import Config
 from aiprover_orchestration.orchestrator.structures import (
@@ -18,6 +23,27 @@ from tests.support import (
 )
 
 SPENT = "theorem a (n : Nat) : n = n"
+
+
+class ClaudeLimitTest(unittest.TestCase):
+    def test_a_run_stops_at_its_spend_limit(self):
+        with TemporaryDirectory() as directory:
+            pool = AgentPool(
+                {"captain": SimpleNamespace(hosted=True)},
+                Path(directory) / "calls.jsonl",
+                max_claude_usd=50,
+            )
+        pool.usage_by_model = {"model": {"cost_usd": 49.99}}
+        self.assertGreater(pool.claude_budget_left(), 0)
+        pool.usage_by_model = {"model": {"cost_usd": 50}}
+        self.assertEqual(pool.claude_budget_left(), 0)
+        with self.assertRaises(BudgetExhausted):
+            with pool._budget_reservation(pool.agents["captain"]):
+                pass
+
+    def test_a_sketch_call_has_a_spend_limit(self):
+        spec = role_spec("captain", {"backend": "claude"})
+        self.assertEqual(spec["phases"]["sketch"]["max_budget_usd"], 6.0)
 
 
 class BudgetTest(TemporaryDirectoryTest):

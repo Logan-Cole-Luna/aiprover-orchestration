@@ -8,11 +8,11 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=Fira+Mono:wght@400;500&display=swap">
-<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<link rel="stylesheet" href="/static/vendor/katex/katex.min.css">
 <link rel="stylesheet" href="/static/palette.css">
 <script src="/static/theme.js"></script>
-<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
-<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+<script defer src="/static/vendor/katex/katex.min.js"></script>
+<script defer src="/static/vendor/katex/auto-render.min.js"></script>
 <style>
 * { box-sizing: border-box; }
 body { margin: 0; color: var(--ink); background: var(--bg); font: 16px/1.5 var(--font-prose); }
@@ -51,6 +51,32 @@ button.plain { color: var(--ink); background: var(--surface); }
 .side .big { display: block; width: 100%; margin-bottom: 6px; padding: 6px; }
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 
+.plan-alert, .plan-callout { background: var(--warn-soft); border: 1px solid var(--warn); color: var(--ink); padding: 8px 12px; }
+.plan-alert { margin-bottom: 14px; }
+.review-count { background: var(--warn); color: var(--bg); font-size: .78rem; font-weight: 600; padding: 0 6px; margin-left: 5px; border-radius: 8px; }
+.plan-callout { margin: 10px 0; }
+.plan-tools { margin: 10px 0 8px; font-size: .92rem; }
+.plan-grid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 12px; align-items: start; }
+@media (max-width: 860px) { .plan-grid { grid-template-columns: minmax(0, 1fr); } }
+#plan-graph { height: 520px; border: 1px solid var(--line); background: var(--surface); min-width: 0; }
+.lemma-detail { margin: 0; overflow-wrap: anywhere; }
+.lemma-detail textarea, .plan-decision textarea { min-height: 70px; }
+.plan-label { display: block; font-size: .76rem; font-weight: 400; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); margin: 10px 0 2px; }
+.lemma-detail pre.lean { margin: 0; font: 12px/1.5 var(--font-mono); white-space: pre-wrap; }
+.chip { font-size: .78rem; padding: 0 7px; border: 1px solid var(--line); color: var(--muted); }
+.plan-links button { font: 12px var(--font-mono); padding: 0 6px; }
+.plan-item { display: grid; gap: 1px; width: 100%; text-align: left; color: var(--ink); background: none; border: 0; border-top: 1px solid var(--line); padding: 7px 2px; overflow-wrap: anywhere; }
+.plan-item:hover:not(:disabled) { color: var(--ink); background: var(--accent-soft); }
+.plan-decision { border-top: 2px solid var(--line); margin-top: 14px; padding-top: 6px; }
+.plan-decision .error { margin: 4px 0; min-height: 1.2em; font-size: .92rem; }
+.plan-choices { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; font-size: .86rem; color: var(--muted); }
+@media (max-width: 860px) { .plan-choices { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.plan-choices button { display: block; width: 100%; margin-bottom: 4px; padding: 4px; font-size: .95rem; }
+.plan-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; }
+@media (max-width: 760px) { .plan-metrics { grid-template-columns: minmax(0, 1fr); } }
+.plan-metrics .box td:first-child, .plan-lemmas td:first-child { white-space: normal; }
+.plan-lemmas { width: 100%; }
+.plan-bar { width: 26%; } .plan-bar span { display: block; height: 7px; background: var(--accent); }
 .seg { display: flex; }
 .seg button { color: var(--ink); background: var(--surface); margin-left: -1px; padding: 3px 18px; font-size: .93rem; }
 .seg button:first-child { margin-left: 0; }
@@ -183,6 +209,7 @@ figcaption { font-size: .9rem; line-height: 1.45; color: var(--caption); margin-
   <b>AIProver Orchestration</b>
   <input id="search" aria-label="Search runs" placeholder="Search runs">
   <a href="#runs" data-view="runs">Runs</a>
+  <span id="review-count" class="review-count hidden" title="Proof plans awaiting review"></span>
   <a href="#submit" data-view="submit">Submit</a>
   <a href="#guide" data-view="guide">Guide</a>
   <select id="theme" aria-label="Color theme"></select>
@@ -207,6 +234,7 @@ figcaption { font-size: .9rem; line-height: 1.45; color: var(--caption); margin-
             <select id="arrange" style="width:auto"><option value="date">Date</option><option value="group">Group</option></select>
           </label>
         </div>
+        <div id="review-alert" class="plan-alert hidden" role="status"></div>
         <div id="run-list"></div>
         <details style="margin-top:24px">
           <summary>Model servers</summary>
@@ -632,12 +660,16 @@ function actions(run) {
   if (["awaiting_approval", "queued", "running"].includes(run.state)) {
     buttons.push(`<button class="plain" data-cancel="${run.run_id}">Cancel</button>`);
   }
+  if (run.plan_review) buttons.push(`<button data-review-plan="${run.run_id}">Review proof plan</button>`);
   // A cancelled or unproved run continues from its trace.
   if (run.resumable) {
     buttons.push(`<button class="plain" data-resume="${run.run_id}">Resume</button>`);
   }
+  if (run.reportable) {
+    buttons.push(`<button class="plain" data-report="${run.run_id}">Generate documents</button>`);
+  }
   // Ended runs can be hidden from the list (nothing is deleted) and shown again.
-  if (["finished", "cancelled", "rejected"].includes(run.state)) {
+  if (["finished", "cancelled", "rejected", "plan_review"].includes(run.state)) {
     buttons.push(run.hidden
       ? `<button class="plain" data-unhide="${run.run_id}">Unhide</button>`
       : `<button class="plain" data-hide="${run.run_id}" title="Hide from the list">Hide</button>`);
@@ -649,11 +681,12 @@ function actions(run) {
 
 const OUTCOMES = {Proved: ["∎", "good"], Disproved: ["¬", "good"], "Lemmas unproved": ["○", "warn"],
                   Running: ["…", "live"], Queued: ["…", "live"], "Awaiting approval": ["…", "live"], Cancelling: ["…", "live"],
+                  "Awaiting plan review": ["◆", "warn"],
                   Cancelled: ["/", "quiet"], Rejected: ["/", "quiet"]};
 const capitalized = text => text[0].toUpperCase() + text.slice(1).replaceAll("_", " ");
-const resultOf = run => capitalized(run.state === "finished" ? run.status || "finished" : run.state);
-const SCOPES = {All: () => true, Proved: run => run.settled, Unfinished: run => !run.settled};
-const RUN_TABS = ["Progress", "Files", "Details"];
+const resultOf = run => run.plan_review ? "Awaiting plan review" : capitalized(run.state === "finished" ? run.status || "finished" : run.state);
+const SCOPES = {All: () => true, Review: run => run.plan_review, Proved: run => run.settled, Unfinished: run => !run.settled};
+const runTabs = run => ["Progress", ...(run.files.includes("blueprint.json") ? ["Blueprint"] : []), "Files", "Details"];
 
 // GPU time and cost of a run; nothing while its usage is not yet computed.
 function gpuRows(gpu) {
@@ -672,6 +705,7 @@ const FILES = {
   "trace_replay.html": ["Replay", "An animated account of the run, from the statement to the final proof."],
   "informal.tex": ["Informal proof (LaTeX)", "The source of the informal proof."],
   "report.tex": ["Report (LaTeX)", "The source of the report."],
+  "blueprint.tex": ["Blueprint (LaTeX)", "The proof plan in leanblueprint format, with its dependencies and proof status."],
 };
 const UNGROUPED = "Ungrouped";
 const groupName = run => run.group || UNGROUPED;
@@ -692,12 +726,14 @@ function elapsed(run) {
 }
 
 function runPanel(run) {
-  const tabs = RUN_TABS.map(name =>
+  if (!runTabs(run).includes(runTab)) runTab = "Progress";
+  const tabs = runTabs(run).map(name =>
     `<button type="button" aria-selected="${name === runTab}" data-run-tab="${name}">${name}</button>`).join("");
   const files = Object.keys(FILES).filter(name => run.files.includes(name))
     .map(name => `<tr><td>${fileLink(run, name, FILES[name][0])}</td><td>${FILES[name][1]}</td></tr>`).join("");
   const body = {
     Progress: `<pre class="box" id="log"></pre>`,
+    Blueprint: `<div id="blueprint" data-run="${run.run_id}" data-key="${run.run_id}:${run.plan_review}"></div>`,
     Files: `<div class="box"><table>${files}<tr><td><a href="/api/runs/${run.run_id}/export" download>Export (zip)</a></td>
       <td>Everything from the run in one folder: problem, Lean files, reports, trace, and logs.</td></tr></table></div>`,
     Details: `<div class="box"><table>
@@ -709,7 +745,8 @@ function runPanel(run) {
       ${run.cost_usd == null ? "" : `<tr><td>Cost</td><td>$${run.cost_usd.toFixed(run.cost_usd < 0.1 ? 3 : 2)} in hosted model usage</td></tr>`}
       ${gpuRows(run.gpu)}
       <tr><td>Models</td><td>${modelsHTML(run.agents)}</td></tr>
-      <tr><td>GPU group</td><td>${escapeHtml(run.gpu_group)}</td></tr></table></div>`,
+      <tr><td>GPU group</td><td>${escapeHtml(run.gpu_group)}</td></tr></table></div>
+      ${run.state === "finished" ? `<div id="metrics" data-run="${run.run_id}" data-key="${run.run_id}"></div>` : ""}`,
   };
   return `<div class="subtabs" role="tablist">${tabs}${actions(run)}</div>${body[runTab]}`;
 }
@@ -771,19 +808,238 @@ function renderRuns() {
   $("show-hidden-label").textContent = `Show hidden (${hiddenCount})`;
   // A repeated poll leaves the page alone, with its focus and scroll positions.
   if (page === shownRuns) return;
+  // A comment in progress waits for the next poll, which keeps its focus.
+  if ($("blueprint")?.contains(document.activeElement) && document.activeElement.matches("textarea, select")) return;
   shownRuns = page;
+  const held = ["blueprint", "metrics"].map($).filter(Boolean);
   $("run-list").innerHTML = page;
   if ($("log")) { $("log").textContent = logLines.join("\n"); $("log").scrollTop = $("log").scrollHeight; }
+  // The other rows change often: the open panels keep their graph and comments.
+  const kept = held.filter(element => element.firstChild && $(element.id)?.dataset.key === element.dataset.key);
+  kept.forEach(element => $(element.id).replaceWith(element));
+  planGraph?.resize();
+  const isKept = id => kept.some(element => element.id === id);
+  if (!isKept("blueprint")) mountBlueprint();
+  if (!isKept("metrics")) mountMetrics();
 }
 
 async function refreshRuns() {
   allRuns = await api("/api/runs" + PAGE_QUERY);
-  renderRuns();
+  renderRuns(); signalReviews(); refreshPlan();
 }
 
-function openRun(runId) {
+// Proof plan: the Blueprint and Details tabs, whose containers `renderRuns`
+// carries over a refresh, so that the graph and comments stay in place.
+const PLAN_STATUS = {planned: "Planned", proved: "Proved", refuted: "Refuted"};
+const shortLemma = name => name === "solution" ? "Main theorem" : name;
+const typesetMath = element => window.renderMathInElement?.(element, {delimiters: [{left: "$", right: "$", display: false}], throwOnError: false});
+let plan = null, planGraph = null, graphLibraries = null;
+
+const planRun = () => allRuns.find(entry => entry.run_id === plan?.runId);
+const commented = node => (plan.comments[node.name] || "").trim();
+// Most visits never open a plan, so the graph libraries load on first use.
+const loadGraph = () => graphLibraries ??= Promise.all(["cytoscape.min.js", "elk.bundled.js"].map(name => new Promise((resolve, reject) => {
+  const script = document.createElement("script");
+  script.src = `/static/vendor/${name}`;
+  script.onload = resolve; script.onerror = reject;
+  document.head.append(script);
+})));
+
+function dependents(name) { return plan.data.nodes.filter(node => node.uses.includes(name)).map(node => node.name); }
+function planNode(name) { return plan.data.nodes.find(node => node.name === name); }
+const planShape = data => `${data.version}:${data.nodes.map(node => node.name)}`;
+function planComments() {
+  const lemmas = Object.entries(plan.comments).filter(([, text]) => text.trim()).map(([name, text]) => `${name}: ${text.trim()}`);
+  return [plan.general.trim(), ...lemmas].filter(Boolean).join("\n");
+}
+function lemmaDetail() {
+  const node = planNode(plan.selected), link = name => `<button type="button" data-plan-pick="${escapeHtml(name)}">${escapeHtml(shortLemma(name))}</button>`;
+  const users = dependents(node.name), review = planRun()?.plan_review;
+  return `<div class="box lemma-detail">
+    <div class="row"><code>${escapeHtml(node.name)}</code><span class="chip" id="plan-chip">${PLAN_STATUS[node.status]}</span></div>
+    ${node.statement ? `<div class="plan-label">Statement</div><div>${escapeHtml(node.statement)}</div>` : ""}
+    ${node.idea ? `<div class="plan-label">Proof idea</div><div>${escapeHtml(node.idea)}</div>` : ""}
+    <div class="plan-label">Lean statement</div><pre class="lean">${escapeHtml(node.lean)}</pre>
+    ${node.uses.length ? `<div class="plan-label">Depends on</div><div class="row plan-links">${node.uses.map(link).join("")}</div>` : ""}
+    ${users.length ? `<div class="plan-label">Used by</div><div class="row plan-links">${users.map(link).join("")}</div>` : ""}
+    ${review ? `<label class="plan-label" for="plan-comment">Comment on this lemma</label><textarea id="plan-comment">${escapeHtml(plan.comments[node.name] || "")}</textarea>` : ""}
+  </div>`;
+}
+function planDecision(run) {
+  if (!run.plan_review) return "";
+  return `<section class="plan-decision"><h3>Decision on proof plan, version ${plan.data.version}</h3>
+    <label for="plan-general">General comments <small>required to approve with comments or to request a revision</small></label>
+    <textarea id="plan-general">${escapeHtml(plan.general)}</textarea>
+    <p class="error" id="plan-error"></p>
+    <div class="plan-choices">
+      <div><button type="button" data-plan-decide="approve">Approve</button>Commence proving this plan without changes.</div>
+      <div><button type="button" class="plain" data-plan-decide="comment">Approve with comments</button>Commence proving this plan. The orchestrator receives the comments as guidance.</div>
+      <div><button type="button" class="plain" data-plan-decide="revise">Request revision</button>The orchestrator revises the plan in light of the comments and returns it for review.</div>
+      <div><button type="button" class="plain bad" data-plan-decide="reject">Reject</button>Terminate the run before proving commences.</div>
+    </div></section>`;
+}
+function dropGraph() { planGraph?.destroy(); planGraph = null; }
+function renderPlan() {
+  const host = $("blueprint"), run = planRun();
+  dropGraph();
+  const {nodes, version, problems} = plan.data;
+  const shown = plan.filter === "All" ? nodes : nodes.filter(node => plan.filter === "Open" ? node.status !== "proved" : commented(node));
+  const modes = ["Graph", "Outline"].map(mode => `<button type="button" aria-pressed="${plan.mode === mode}" data-plan-mode="${mode}">${mode}</button>`).join("");
+  const proved = nodes.filter(node => node.status === "proved").length;
+  const left = plan.mode === "Graph"
+    ? `<div id="plan-graph" role="img" aria-label="Dependency graph of the proof plan; the outline lists the same lemmas."></div>`
+    : `<div>${shown.map(node => `<button type="button" class="plan-item" data-plan-pick="${escapeHtml(node.name)}"><code>${escapeHtml(node.name)}</code><span class="note">${PLAN_STATUS[node.status]}</span><span>${escapeHtml(node.statement)}</span></button>`).join("")}</div>`;
+  const body = `<div class="plan-grid">${left}<div id="plan-detail">${lemmaDetail()}</div></div>`;
+  host.innerHTML = `${run.plan_review ? `<div class="plan-callout"><b>Proving has not commenced.</b> Review the proof plan and record a decision below. The run holds no computing resources while it awaits review.${run.cost_usd == null ? "" : ` Cost to date: $${run.cost_usd.toFixed(2)}.`}</div>` : ""}
+    ${problems.length ? `<p class="warn">The natural-language text could not be generated; the Lean statements are shown.</p>` : ""}
+    <div class="row plan-tools"><span class="seg">${modes}</span>
+      ${plan.mode === "Outline" ? `<select id="plan-filter" style="width:auto" aria-label="Filter lemmas">${["All", "Open", "Commented"].map(name => `<option${name === plan.filter ? " selected" : ""}>${name}</option>`).join("")}</select>` : `<button type="button" class="plain" id="plan-fit">Fit graph</button>`}
+      <span class="note">Version ${version}; ${nodes.length - 1} lemmas; <span id="plan-tally">${proved}</span> of ${nodes.length} proved</span>
+      ${run.files.includes("blueprint.tex") ? fileLink(run, "blueprint.tex", "LaTeX source") : ""}</div>
+    ${body}${planDecision(run)}`;
+  typesetMath(host);
+  if (plan.mode === "Graph") drawPlan();
+}
+const cssColor = name => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+// ELK computes the layered layout (https://github.com/kieler/elkjs), and
+// Cytoscape.js displays it (https://js.cytoscape.org).
+async function drawPlan() {
+  const {nodes} = plan.data, runId = plan.runId;
+  if (!await loadGraph().catch(() => false)) {
+    if ($("plan-graph")) $("plan-graph").textContent = "The graph could not be loaded; the outline lists the same lemmas.";
+    return;
+  }
+  if (!plan.layout) {
+    const graph = await new ELK().layout({id: "plan", layoutOptions: {"elk.algorithm": "layered", "elk.direction": "DOWN", "elk.layered.spacing.nodeNodeBetweenLayers": "54", "elk.spacing.nodeNode": "22"},
+      children: nodes.map(node => ({id: node.name, width: 150, height: 36})),
+      edges: nodes.flatMap(node => node.uses.map(used => ({id: `${used}>${node.name}`, sources: [used], targets: [node.name]})))});
+    plan.layout = Object.fromEntries(graph.children.map(child => [child.id, {x: child.x + 75, y: child.y + 18}]));
+  }
+  const box = $("plan-graph");
+  if (!box || plan?.runId !== runId || planGraph) return;
+  planGraph = cytoscape({container: box, wheelSensitivity: .25, minZoom: .1, maxZoom: 2.4, autoungrabify: true, layout: {name: "preset"},
+    elements: [...nodes.map(node => ({data: {id: node.name, label: shortLemma(node.name)}, position: plan.layout[node.name]})),
+      ...nodes.flatMap(node => node.uses.map(used => ({data: {source: used, target: node.name}})))],
+    style: [
+      {selector: "node", style: {shape: "round-rectangle", width: 150, height: 36, label: "data(label)", "text-valign": "center", "text-wrap": "ellipsis", "text-max-width": 138, "font-family": "Fira Mono, monospace", "font-size": 10,
+        color: cssColor("--ink"), "background-color": cssColor("--surface"), "border-width": 1.5, "border-color": cssColor("--muted")}},
+      {selector: "edge", style: {width: 1.2, "line-color": cssColor("--line"), "target-arrow-color": cssColor("--muted"), "target-arrow-shape": "triangle", "arrow-scale": .8, "curve-style": "bezier"}},
+      {selector: ".proved", style: {"border-color": cssColor("--ok"), "background-color": cssColor("--ok-soft")}},
+      {selector: ".refuted", style: {"border-color": cssColor("--fail"), "background-color": cssColor("--fail-soft")}},
+      {selector: ".commented", style: {"border-color": cssColor("--accent"), "border-width": 3}},
+      {selector: ".dim", style: {opacity: .28}},
+      {selector: "edge.near", style: {"line-color": cssColor("--accent"), "target-arrow-color": cssColor("--accent"), width: 2}},
+    ]});
+  planGraph.on("tap", "node", event => pickLemma(event.target.id()));
+  paintPlan(); focusLemma(); planGraph.fit(undefined, 16);
+}
+function paintPlan() {
+  if ($("plan-tally")) $("plan-tally").textContent = plan.data.nodes.filter(node => node.status === "proved").length;
+  if ($("plan-chip")) $("plan-chip").textContent = PLAN_STATUS[planNode(plan.selected).status];
+  planGraph?.nodes().forEach(element => {
+    const node = planNode(element.id());
+    element.toggleClass("proved", node.status === "proved").toggleClass("refuted", node.status === "refuted").toggleClass("commented", !!commented(node));
+  });
+}
+function focusLemma() {
+  if (!planGraph) return;
+  const near = planGraph.getElementById(plan.selected).closedNeighborhood();
+  planGraph.elements().removeClass("dim near");
+  planGraph.elements().not(near).addClass("dim");
+  near.edges().addClass("near");
+}
+function pickLemma(name) {
+  plan.selected = name;
+  $("plan-detail").innerHTML = lemmaDetail();
+  typesetMath($("plan-detail"));
+  paintPlan(); focusLemma();
+}
+async function mountBlueprint() {
+  const host = $("blueprint");
+  if (!host) { dropGraph(); return; }
+  const runId = host.dataset.run;
+  const data = await api(`/api/runs/${runId}/files/blueprint.json`).catch(() => null);
+  if (!data || $("blueprint") !== host) return;
+  if (plan?.runId !== runId || planShape(plan.data) !== planShape(data)) {
+    plan = {runId, data, selected: "solution", mode: "Graph", filter: "All", comments: {}, general: "", layout: null};
+  }
+  plan.data = data;
+  renderPlan();
+}
+// A running run's proved lemmas, without disturbing the reviewer's view.
+async function refreshPlan() {
+  const run = planRun();
+  if (!$("blueprint") || run?.state !== "running") return;
+  const data = await api(`/api/runs/${run.run_id}/files/blueprint.json`).catch(() => null);
+  if (data && plan?.runId === run.run_id && planShape(data) === planShape(plan.data)) { plan.data = data; paintPlan(); }
+}
+async function decidePlan(decision) {
+  const comments = planComments(), runId = plan.runId;
+  if (["comment", "revise"].includes(decision) && !comments) {
+    $("plan-error").textContent = "This decision requires at least one comment.";
+    return;
+  }
+  if (decision === "reject" && !confirm(`Reject the proof plan of ${runId} and terminate the run?`)) return;
+  await api(`/api/runs/${runId}/plan`, {method: "POST", body: JSON.stringify({decision, comments})})
+    .then(() => { if (decision === "revise") plan = null; refreshRuns(); })
+    .catch(error => { $("plan-error").textContent = error.message; });
+}
+const number = value => value == null ? "n/r" : value.toLocaleString("en-US");
+const metricTable = rows => `<table>${rows.map(([name, value]) => `<tr><td>${name}</td><td>${value}</td></tr>`).join("")}</table>`;
+async function mountMetrics() {
+  const host = $("metrics");
+  if (!host) return;
+  const data = await api(`/api/runs/${host.dataset.run}/metrics`).catch(() => null);
+  if (!data || $("metrics") !== host) return;
+  const {checks, review, size, handbacks, benchmark, lemmas} = data, sessions = benchmark.sessions || {}, lean = benchmark.lean_checks || {};
+  const yes = value => value == null ? "n/r" : value ? "Yes" : "No", hours = seconds => number(Math.round((seconds || 0) / 360) / 10);
+  const rows = Object.entries(lemmas).sort((a, b) => b[1].lines - a[1].lines), longest = Math.max(1, ...rows.map(([, row]) => row.lines));
+  host.innerHTML = `<div class="plan-metrics">
+    <div class="box"><h4>Verification</h4>${metricTable([["Compiles", yes(checks.compiles)], ["Free of <code>sorry</code>", yes(checks.no_sorry)], ["Statement matches", yes(checks.statement_matches)], ["Final review", escapeHtml(review || "n/r")], ["Axioms", (checks.axioms || []).map(name => `<code>${escapeHtml(name)}</code>`).join(", ") || "n/r"]])}</div>
+    <div class="box"><h4>Proof size</h4>${metricTable([["Lean source", `${number(size.characters)} characters; ${number(size.lines)} non-blank lines`], ["Estimated tokens", number(size.tokens)], ["Informal proof", `${number(size.informal_characters)} characters`], ["Expansion factor", size.expansion == null ? "n/r" : `${size.expansion} Lean characters per informal character`]])}</div>
+    <div class="box"><h4>Effort</h4>${metricTable([["Wall time", `${hours(benchmark.wall_seconds)} h`], ["AIProver", `${number(sessions.jobs)} jobs; ${number(sessions.sessions)} sessions`], ["Hand-backs", number(handbacks)], ["Lean checks", `${number(lean.passed)} of ${number(lean.seconds?.count)} passed`]])}</div>
+    <div class="box"><h4>Output tokens</h4>${metricTable(Object.entries(benchmark.usage_by_model || {}).map(([model, usage]) => [escapeHtml(shortModel(model)), number(usage.output_tokens)]))}</div>
+  </div>
+  ${rows.length ? `<div class="box"><h4>Lemma proofs</h4><table class="plan-lemmas"><tr><th>Lemma</th><th>Lines</th><th>Characters</th><th>Proved by</th><th></th></tr>
+    ${rows.map(([name, row]) => `<tr><td><code>${escapeHtml(name)}</code></td><td>${row.lines}</td><td>${number(row.characters)}</td><td>${row.prover}</td><td class="plan-bar"><span style="width:${100 * row.lines / longest}%"></span></td></tr>`).join("")}</table></div>` : ""}`;
+}
+// The runs that await review, shown above the list and in the browser's tab.
+function signalReviews() {
+  const waiting = allRuns.filter(run => run.plan_review);
+  document.title = `${waiting.length ? `(${waiting.length}) ` : ""}AIProver Orchestration`;
+  $("review-count").textContent = waiting.length || "";
+  $("review-count").classList.toggle("hidden", !waiting.length);
+  $("review-alert").classList.toggle("hidden", !waiting.length);
+  $("review-alert").innerHTML = waiting.length ? `<b>${waiting.length === 1 ? "One proof plan awaits" : `${waiting.length} proof plans await`} review.</b>
+    ${waiting.map(run => `<a href="#" data-review="${run.run_id}">${escapeHtml(runTitle(run))}</a>`).join("; ")}` : "";
+}
+$("run-list").addEventListener("click", event => {
+  const target = event.target.closest("button");
+  if (!target || !plan) return;
+  const {planPick, planMode, planDecide} = target.dataset;
+  if (planPick) pickLemma(planPick);
+  if (planMode) { plan.mode = planMode; renderPlan(); }
+  if (planDecide) decidePlan(planDecide);
+  if (target.id === "plan-fit") planGraph?.fit(undefined, 16);
+});
+$("run-list").addEventListener("input", event => {
+  if (event.target.id === "plan-general") plan.general = event.target.value;
+  if (event.target.id === "plan-comment") { plan.comments[plan.selected] = event.target.value; paintPlan(); }
+});
+$("run-list").addEventListener("change", event => {
+  if (event.target.id === "plan-filter") { plan.filter = event.target.value; renderPlan(); }
+});
+$("review-alert").addEventListener("click", event => {
+  const runId = event.target.dataset.review;
+  if (!runId) return;
+  event.preventDefault();
+  if (selected !== runId) openRun(runId, "Blueprint"); else { runTab = "Blueprint"; renderRuns(); }
+});
+new MutationObserver(() => { if (planGraph) renderPlan(); }).observe(document.documentElement, {attributes: true, attributeFilter: ["data-theme"]});
+
+function openRun(runId, tab = "Progress") {
   if (stream) stream.close();
-  stream = null; logLines = []; runTab = "Progress";
+  stream = null; logLines = []; runTab = tab;
   selected = runId === selected ? null : runId;
   if (selected) {
     stream = new EventSource(`/api/runs/${runId}/progress`);
@@ -800,8 +1056,23 @@ function openRun(runId) {
   renderRuns();
 }
 
+// A run at its Claude limit would stop again at once: it needs a higher one.
+async function resumeRun(run) {
+  const request = limit => api(`/api/runs/${run.run_id}/resume`, {method: "POST", body: JSON.stringify({max_claude_usd: limit})});
+  await request(null).catch(async error => {
+    if (error.message !== "Claude spending limit reached") throw error;
+    const spent = run.cost_usd || 0;
+    const answer = prompt(`${run.run_id} reached its Claude spending limit at $${spent.toFixed(2)}. Enter a new limit in USD (0: unlimited).`, String(Math.ceil(spent) + 50));
+    if (answer === null) return;
+    const limit = answer.trim() ? Number(answer) : NaN;
+    if (!Number.isInteger(limit) || limit < 0 || (limit && limit <= spent)) throw new Error(`The limit must be a whole number above ${spent.toFixed(2)}, or 0.`);
+    await request(limit);
+  }).catch(error => alert(error.message));
+}
+
 $("run-list").addEventListener("click", async event => {
-  const {open, cancel, resume, approve, reject, hide, unhide, runTab: tab} = event.target.dataset;
+  const {open, cancel, resume, report, approve, reject, hide, unhide, runTab: tab, reviewPlan} = event.target.dataset;
+  if (reviewPlan) { runTab = "Blueprint"; renderRuns(); }
   const fold = event.target.closest("[data-fold]")?.dataset.fold;
   if (fold !== undefined) {
     if (!collapsed.delete(fold)) collapsed.add(fold);
@@ -813,7 +1084,7 @@ $("run-list").addEventListener("click", async event => {
       .catch(e => alert(e.message));
     refreshRuns();
   }
-  if (open) { event.preventDefault(); openRun(open); }
+  if (open) { event.preventDefault(); openRun(open, allRuns.find(run => run.run_id === open)?.plan_review ? "Blueprint" : "Progress"); }
   if (approve) {
     await api(`/api/runs/${approve}/approve`, {method: "POST"}).catch(e => alert(e.message));
     refreshRuns(); refreshHealth();
@@ -823,7 +1094,11 @@ $("run-list").addEventListener("click", async event => {
     refreshRuns();
   }
   if (resume && confirm(`Resume ${resume}?`)) {
-    await api(`/api/runs/${resume}/resume`, {method: "POST"}).catch(e => alert(e.message));
+    await resumeRun(allRuns.find(run => run.run_id === resume));
+    refreshRuns(); refreshHealth();
+  }
+  if (report && confirm(`Generate the report, informal proof, and blueprint of ${report}? The run enters the queue and retains its proof. The typical Claude cost is about $2.`)) {
+    await api(`/api/runs/${report}/report`, {method: "POST"}).catch(e => alert(e.message));
     refreshRuns(); refreshHealth();
   }
   if (cancel && confirm(`Cancel ${cancel}?`)) {
@@ -888,7 +1163,7 @@ function showView(view) {
     $("guide-text").innerHTML = GUIDE_HTML;
     $("guide-contents").innerHTML = [...$("guide-text").querySelectorAll("h2")].map(({id, firstChild, lastChild}) =>
       `<li><a href="#${id}">${firstChild.textContent}. ${lastChild.textContent}</a></li>`).join("");
-    window.renderMathInElement?.($("guide-text"), {delimiters: [{left: "$", right: "$", display: false}], throwOnError: false});
+    typesetMath($("guide-text"));
     setTheme(document.documentElement.dataset.theme);
   }
 }

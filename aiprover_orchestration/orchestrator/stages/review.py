@@ -18,9 +18,9 @@ from ...lean.text import split_declarations
 from .. import gpu_usage, libraries, prompts
 from ..benchmark import ACCOUNTING_ERRORS, run_costs
 from ..config import MAIN_NAME
-from ..reports import informal
+from ..reports import blueprint, informal
 from ..reports.report import ReportBuilder, escape
-from ..structures import Formalization, Sketch, extract_tag
+from ..structures import Formalization, Sketch, extract_tag, statement_key
 
 logger = logging.getLogger(__name__)
 
@@ -206,6 +206,8 @@ class ReviewStage:
         review: dict,
     ) -> dict:
         """LaTeX report and PDF in results/<run_id>/report."""
+        if not self.config.write_reports:
+            return {}
         earlier = self._earlier_document("report", standalone)
         if earlier:
             logger.info("report restored")
@@ -284,6 +286,58 @@ class ReviewStage:
         self._decision("report", solution_sha256=digest(standalone), **record)
         return record
 
+    def blueprint(
+        self, form: Formalization, sketch: Sketch, verified: bool = False
+    ) -> None:
+        """The plan in natural language and Lean, in
+        results/<run_id>/blueprint. The trace keeps the writer's text, so a
+        statement is described once. A failure leaves the Lean statements."""
+        texts = {}
+        for step in self.trace.document["steps"]:
+            if step.get("event") == "blueprint_text":
+                texts |= step["entries"]
+        lean = {MAIN_NAME: form.statement} | {
+            lemma.name: lemma.statement for lemma in sketch.lemmas
+        }
+        statements = {name: statement_key(text) for name, text in lean.items()}
+        missing = [n for n, key in statements.items() if key not in texts]
+        problems = []
+        if missing:
+            try:
+                reply = self._writer_or_reviewer(
+                    prompts.BLUEPRINT_TEMPLATE.format(
+                        informal_statement=self.row["informal_statement"],
+                        informal_proof=self.row["informal_proof"],
+                        definitions=form.definitions,
+                        main_name=MAIN_NAME,
+                        main_proof=sketch.main_proof,
+                        statements="\n\n".join(lean[name] for name in missing),
+                    ),
+                    "writer",
+                    "blueprint",
+                )
+                # The prompt states the theorem under its own name.
+                entries = blueprint.parse_reply(
+                    reply,
+                    statements
+                    | {form.theorem_name: statements[MAIN_NAME]},
+                )
+                self._decision("blueprint_text", entries=entries)
+                texts |= entries
+            except RuntimeError as error:
+                logger.warning(f"blueprint text not written: {error}")
+                problems.append(str(error))
+        version = sum(
+            step.get("event") == "sketch_accepted"
+            for step in self.trace.document["steps"]
+        )
+        blueprint.write(
+            self.result_dir / "blueprint",
+            version,
+            blueprint.plan_nodes(form, sketch, texts, verified),
+            problems,
+        )
+
     def informalize(
         self,
         form: Formalization,
@@ -296,6 +350,8 @@ class ReviewStage:
         file, from the sketch when lemmas remain unproved, or from the
         `refutation` file of a disproved claim. The document is optional: a
         failure is recorded, not raised."""
+        if not self.config.write_reports:
+            return {}
         verified_file = standalone is not None
         theorem_name = form.theorem_name
         lemmas = [(lemma.name, lemma.proved) for lemma in sketch.lemmas]
@@ -315,11 +371,7 @@ class ReviewStage:
         if earlier:
             logger.info("informalization restored")
             return earlier
-        if self.agents.max_claude_calls:
-            self.agents.max_claude_calls = max(
-                self.agents.max_claude_calls,
-                self.agents.claude_calls + self.config.informal_claude_calls,
-            )
+        self._lift_limits(self.config.informal_claude_calls)
         builder = informal.InformalBuilder(
             self.result_dir / "informal",
             self.slug,

@@ -139,6 +139,9 @@ class Config:
     lean_parallel: int = 6
     lean_timeout: int = 300
     max_claude_calls: int = 0  # Claude calls per run; 0 = unlimited
+    # USD of Claude calls per run at list prices, before the final review;
+    # 0 = unlimited. No recorded run above 34 USD reached a proof.
+    max_claude_usd: int = 50
     # AIProver lemma jobs in flight at once; 0 = all pending lemmas. Each job
     # runs `workers` sessions that share one model server.
     aiprover_lemma_concurrency: int = 0
@@ -205,6 +208,17 @@ class Config:
     # Claude calls added for the informalization (write, check, revise,
     # repairs).
     informal_claude_calls: int = 6
+    # Write the report and the informalization at the end of a run. A
+    # finished run writes them when resumed with this setting.
+    write_reports: bool = False
+    # Stop after the sketch for a reviewer's decision on the proof plan. The
+    # server records the decision: `sketch_feedback`, under a new
+    # `plan_revision`, requests a revised plan, and `sketch_guidance` joins
+    # the captain's later prompts.
+    sketch_approval: bool = False
+    sketch_feedback: str = ""
+    plan_revision: int = 0
+    sketch_guidance: str = ""
     # Library of verified results the run builds on (a Lean file; see
     # libraries.py); overrides the problem's `library` field. With
     # `extend_library`, a reviewed proof is appended to it.

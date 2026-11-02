@@ -38,8 +38,10 @@ import threading
 import time
 import urllib.request
 import zipfile
+from typing import Literal
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from functools import lru_cache
 from pathlib import Path, PurePosixPath
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
@@ -52,12 +54,13 @@ from fastapi.responses import (
 )
 from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from ..agents.claude_cli import get_account_status
 from ..library import api as library_api
 from ..orchestrator import gpu_usage, libraries
 from ..orchestrator.config import FILE_HEADER
+from ..orchestrator.reports import blueprint
 from ..orchestrator.reports.informal import RESULT_ROW_SUFFIX
 from ..orchestrator.trace import Trace
 from ..paths import (
@@ -76,6 +79,7 @@ from .jobs import (
     DATA_DIR,
     DATABASE,
     OPEN_STATES,
+    PLAN_REVIEW,
     PROBLEM_DIR,
     JobStore,
     Worker,
@@ -104,17 +108,20 @@ MAX_IMPORTS_PER_USER = 20
 LIBRARY_DIR = LIBRARIES_DIR
 LIBRARY_NAME = re.compile(r"^[A-Za-z0-9_.-]+\.lean$")
 RESULT_PAGES = ("trace.html", "trace_replay.html", "summary.json")
-# Files at the root of a run, by the name the page links them under.
+# Single files of a run, by the name the page links them under.
 ROOT_FILES = {
     "standalone.lean": "*_standalone.lean",
     "result.jsonl": f"*{RESULT_ROW_SUFFIX}",
+    "blueprint.tex": "blueprint/content.tex",
+    "blueprint.json": "blueprint/blueprint.json",
 }
 # Problem groups of this server, {"<start of a problem id>": "<group>"}. They
 # are specific to its users, so they lie in its state and not in the repository.
 GROUPS = STATE_DIR / "groups.json"
-TERMINAL_STATES = ("finished", "cancelled", "rejected")
+TERMINAL_STATES = ("finished", "cancelled", "rejected", PLAN_REVIEW)
 # Statuses of a finished run that settle its theorem; such a run is final.
 CONCLUSIVE = ("proved", "disproved")
+# Statuses from which Resume does not continue a run.
 
 LOGS_DIR.mkdir(exist_ok=True)
 logging.basicConfig(
@@ -139,11 +146,16 @@ app = FastAPI(title="AIProver orchestration", lifespan=lifespan)
 
 
 class RevalidatedFiles(StaticFiles):
-    """Static files that a browser checks for changes on each load."""
+    """Static files that a browser checks for changes on each load, except
+    the vendored libraries, which change only with their pinned versions."""
 
     async def get_response(self, path: str, scope) -> Response:
         response = await super().get_response(path, scope)
-        response.headers["Cache-Control"] = "no-cache"
+        response.headers["Cache-Control"] = (
+            "public, max-age=604800"
+            if path.startswith("vendor/")
+            else "no-cache"
+        )
         return response
 
 
@@ -969,25 +981,31 @@ def list_libraries(user: str = Depends(current_user)) -> list[dict]:
     ]
 
 
-def resumable(job: dict) -> bool:
-    """A cancelled run, or a finished one that neither proved nor disproved
-    its theorem, with a trace to continue from. An imported run needs its
-    problem and, having had no approval, a server without authentication; a
-    page refuses the Claude roles it may not run."""
-    ended = job["state"] == "cancelled" or (
-        job["state"] == "finished" and job["status"] not in CONCLUSIVE
-    )
+def may_continue(job: dict) -> bool:
+    """Whether this server may run the job further: a run of its own with a
+    trace to continue from, whose Claude roles its page may run. An imported
+    run needs its problem and, having had no approval, a server without
+    authentication."""
     return (
-        ended
-        and "home" not in job
+        "home" not in job
         and (run_dir(job, RESULTS_DIR) / "trace.json").exists()
+        and claude_allowed(
+            PAGES.get(job.get("page"), PAGES["dev"]), job_selection(job)
+        )
         and (
             not job.get("imported")
             or (job["imported"] == "resume" and not AUTH_REQUIRED)
         )
-        and claude_allowed(
-            PAGES.get(job.get("page"), PAGES["dev"]), job_selection(job)
-        )
+    )
+
+
+def resumable(job: dict) -> bool:
+    """An ended run without a theorem settled or a plan to decide, which can
+    continue."""
+    return (
+        job["state"] in ("cancelled", "finished")
+        and job["status"] not in CONCLUSIVE
+        and may_continue(job)
     )
 
 
@@ -1008,15 +1026,36 @@ def problem_group(job: dict) -> str:
     return next((name for p, name in groups if job["uuid"].startswith(p)), "")
 
 
-def describe(job: dict) -> dict:
-    result_dir = run_dir(job, RESULTS_DIR)
-    benchmark = result_dir / "benchmark.json"
-    costs = read_json(benchmark).get("costs", {}) if servable(job, benchmark) else {}
-    gpu = (
-        gpu_usage.usage_of(result_dir)
-        if servable(job, result_dir / gpu_usage.USAGE_FILE)
-        else {}
+def reportable(job: dict, files: list[str]) -> bool:
+    """A settled run of this server without its informal proof or blueprint."""
+    return (
+        job["state"] == "finished"
+        and job["status"] in CONCLUSIVE
+        and not job.get("imported")
+        and (
+            "informal.pdf" not in files
+            or (job["status"] == "proved" and "blueprint.tex" not in files)
+        )
+        and may_continue(job)
     )
+
+
+def spent_limit(job: dict) -> bool:
+    """Whether a run has spent its Claude limit, and so would stop at once.
+    The final review of a verified proof is exempt."""
+    result_dir = run_dir(job, RESULTS_DIR)
+    paths = result_dir / "summary.json", result_dir / "benchmark.json"
+    if job["status"] == "review_flagged" or not all(
+        servable(job, path) for path in paths
+    ):
+        return False
+    limit = read_json(paths[0]).get("config", {}).get("max_claude_usd")
+    cost = read_json(paths[1]).get("costs", {}).get("hosted_cost_usd")
+    return bool(limit and cost and cost >= limit)
+
+
+def run_files(result_dir: Path) -> list[str]:
+    """The names under which the page links a run's files."""
     files = [name for name in RESULT_PAGES if (result_dir / name).exists()]
     files += [
         name for name, pattern in ROOT_FILES.items()
@@ -1032,6 +1071,19 @@ def describe(job: dict) -> dict:
         for suffix in (".pdf", ".tex")
         if any((result_dir / "informal").glob(f"*_informal{suffix}"))
     ]
+    return files
+
+
+def describe(job: dict) -> dict:
+    result_dir = run_dir(job, RESULTS_DIR)
+    benchmark = result_dir / "benchmark.json"
+    costs = read_json(benchmark).get("costs", {}) if servable(job, benchmark) else {}
+    gpu = (
+        gpu_usage.usage_of(result_dir)
+        if servable(job, result_dir / gpu_usage.USAGE_FILE)
+        else {}
+    )
+    files = run_files(result_dir)
     return {
         key: job.get(key)
         for key in (
@@ -1057,6 +1109,8 @@ def describe(job: dict) -> dict:
         "group": problem_group(job),
         "hidden": bool(job.get("hidden")),
         "resumable": resumable(job),
+        "reportable": reportable(job, files),
+        "plan_review": job["state"] == PLAN_REVIEW,
         "settled": job.get("status") in CONCLUSIVE,
         "cost_usd": costs.get("hosted_cost_usd"),
         "gpu": gpu,
@@ -1105,17 +1159,120 @@ def cancel_run(job: dict = Depends(own_job)) -> dict:
     return describe(store.get(job["run_id"]))
 
 
-@app.post("/api/runs/{run_id}/resume")
-def resume_run(
-    job: dict = Depends(own_job), user: str = Depends(current_user)
-) -> dict:
-    """Queue an ended run again; it continues from its last completed step."""
-    if not resumable(job):
-        raise HTTPException(409, f"run is {job['state']}; it cannot resume")
-    check_capacity(user)
+def set_options(job: dict, **values) -> None:
+    """Add settings to the job's options, which its next start applies."""
+    options = json.loads(job.get("options") or "{}") | values
+    store.update(job["run_id"], options=json.dumps(options))
+
+
+def requeued(job: dict) -> dict:
+    """Queue an ended run again."""
     if not worker.resume(job["run_id"]):
         raise HTTPException(409, "run changed state; reload the list")
     return describe(store.get(job["run_id"]))
+
+
+# The page asks for a higher limit on this reply.
+SPEND_LIMIT_REACHED = "Claude spending limit reached"
+
+
+class Resumption(BaseModel):
+    max_claude_usd: int | None = None
+
+
+@app.post("/api/runs/{run_id}/resume")
+def resume_run(
+    body: Resumption = Resumption(),
+    job: dict = Depends(own_job),
+    user: str = Depends(current_user),
+) -> dict:
+    """Queue an ended run again; it continues from its last completed step.
+    A run that has spent its Claude limit needs a higher one."""
+    if not resumable(job):
+        raise HTTPException(409, f"run is {job['state']}; it cannot resume")
+    check_capacity(user)
+    if body.max_claude_usd is None and spent_limit(job):
+        raise HTTPException(409, SPEND_LIMIT_REACHED)
+    if body.max_claude_usd is not None:
+        try:
+            limit = settings.validate({"max_claude_usd": body.max_claude_usd})
+        except ValueError as error:
+            raise HTTPException(422, str(error)) from error
+        set_options(job, **limit)
+    return requeued(job)
+
+
+@app.post("/api/runs/{run_id}/report")
+def request_report(
+    job: dict = Depends(own_job), user: str = Depends(current_user)
+) -> dict:
+    """Queue a settled run to write its documents: resumed, it restores its
+    proof and review from the trace, and needs no model server."""
+    if not reportable(job, run_files(run_dir(job, RESULTS_DIR))):
+        raise HTTPException(409, "this run has no report to write")
+    check_capacity(user)
+    set_options(job, write_reports=True, documents_only=True)
+    return requeued(job)
+
+
+class PlanDecision(BaseModel):
+    decision: Literal["approve", "comment", "revise", "reject"]
+    comments: str = Field("", max_length=20000)
+
+
+@app.post("/api/runs/{run_id}/plan")
+def decide_plan(
+    body: PlanDecision,
+    job: dict = Depends(own_job),
+    user: str = Depends(current_user),
+) -> dict:
+    """Record the reviewer's decision on a proof plan. Each decision but a
+    rejection queues the run, which continues from its trace."""
+    if job["state"] != PLAN_REVIEW or not may_continue(job):
+        raise HTTPException(409, "this run is not awaiting review of its plan")
+    comments = body.comments.strip()
+    if body.decision in ("comment", "revise") and not comments:
+        raise HTTPException(422, "this decision requires comments")
+    if body.decision == "reject":
+        store.update(job["run_id"], state="rejected", approved_by=user)
+        return describe(store.get(job["run_id"]))
+    check_capacity(user)
+    options = json.loads(job.get("options") or "{}")
+    if body.decision == "revise":
+        set_options(
+            job,
+            sketch_feedback=comments,
+            plan_revision=options.get("plan_revision", 0) + 1,
+        )
+    else:
+        guidance = comments if body.decision == "comment" else ""
+        set_options(job, sketch_approval=False, sketch_guidance=guidance)
+    store.update(job["run_id"], approved_by=user)
+    return requeued(job)
+
+
+@lru_cache(maxsize=32)
+def cached_metrics(result_dir: Path, stamp: tuple) -> dict:
+    """`run_metrics` of a run whose files have the times `stamp`: a large
+    trace takes seconds to parse."""
+    return blueprint.run_metrics(result_dir)
+
+
+@app.get("/api/runs/{run_id}/metrics")
+def get_metrics(job: dict = Depends(owned_job)) -> dict:
+    """Verification, size, effort and cost of a run."""
+    result_dir = run_dir(job, RESULTS_DIR)
+    names = ("trace.json", "benchmark.json")
+    paths = [result_dir / name for name in names]
+    paths += result_dir.glob("*_standalone.lean")
+    paths = [path for path in paths if path.exists()]
+    if not servable(job, result_dir / "summary.json") or not all(
+        servable(job, path) for path in paths
+    ):
+        raise HTTPException(404, "no summary")
+    return cached_metrics(
+        result_dir, tuple(gpu_usage.modified(path) for path in paths)
+    )
 
 
 @app.post("/api/runs/{run_id}/hide")
@@ -1198,6 +1355,7 @@ STATUS_TEXT = {
     "proved": "proved; the Lean proof compiles and is verified",
     "disproved": "disproved; Lean accepts a proof of the statement's negation",
     "lemmas_unproved": "not proved; some lemmas have no Lean proof",
+    PLAN_REVIEW: "awaiting review of the proof plan",
     "failed": "not proved; the run stopped before a proof",
 }
 # Pipeline role names as the page names them.

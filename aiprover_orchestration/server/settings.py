@@ -86,6 +86,15 @@ SETTINGS = {
     "max_claude_calls": Setting(
         "Claude budget", "Claude calls per run (0: unlimited)", 0, 1000
     ),
+    "max_claude_usd": Setting(
+        "Claude budget", "Claude USD per run (0: unlimited)", 0, 100000
+    ),
+    "write_reports": Setting(
+        "Claude budget", "Generate the report, informal proof, and blueprint"
+    ),
+    "sketch_approval": Setting(
+        "Proof search", "Require review of the proof plan before proving"
+    ),
     "final_claude_calls": Setting(
         "Claude budget", "Calls added for the review and the report", 0, 50
     ),

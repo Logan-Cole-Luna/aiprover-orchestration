@@ -90,7 +90,9 @@ OPEN_STATES = ("awaiting_approval", "queued", "running", "cancelling")
 # builds on a library entry the other adds). `aiprover_timeout` replaces the
 # wall clock of the run's AIProver sessions, in seconds; 0 removes it, so a
 # session ends only at its turn limit.
-SERVER_OPTIONS = ("after", "aiprover_timeout", "captain_phases")
+SERVER_OPTIONS = ("after", "aiprover_timeout", "captain_phases", "documents_only")
+# The state of a run that stopped for a decision on its proof plan.
+PLAN_REVIEW = "plan_review"
 # A clock no session reaches: the harness scales its own time fences with it.
 NO_TIME_LIMIT = 30 * 24 * 3600
 
@@ -243,6 +245,8 @@ def job_selection(job: dict) -> dict:
 def job_checkpoint(job: dict) -> str | None:
     """Checkpoint the model server must serve for `job`; None if it needs none.
     The served config's solver uses the trained model."""
+    if json.loads(job.get("options") or "{}").get("documents_only"):
+        return None
     selection = job_selection(job)
     return (
         models.checkpoint_of(selection)
@@ -825,7 +829,8 @@ class Worker(threading.Thread):
         for name, value in json.loads(job.get("options") or "{}").items():
             if name in SERVER_OPTIONS:
                 continue
-            arguments += ["--" + name.replace("_", "-"), str(value)]
+            # One argument, since a reviewer's comment may start with a dash.
+            arguments.append(f"--{name.replace('_', '-')}={value}")
         if (RESULTS_DIR / run_id / "trace.json").exists():
             arguments.append("--resume")
             retire_summary(run_id)
@@ -902,8 +907,11 @@ class Worker(threading.Thread):
         if trace_path.exists():
             run_command(trace_pages_command(trace_path), timeout=300)
             run_command(benchmark_command(trace_path.parent), timeout=300)
-        state = "cancelled" if job["state"] == "cancelling" else "finished"
         status = summary.get("status") or "no_summary"
+        state = "cancelled" if job["state"] == "cancelling" else "finished"
+        # A plan written as a cancellation arrived still awaits a decision.
+        if status == PLAN_REVIEW:
+            state = PLAN_REVIEW
         self.store.update(
             run_id, state=state, status=status, pid=None, ended=time.time()
         )
@@ -919,8 +927,8 @@ class Worker(threading.Thread):
 
     def resume(self, run_id: str) -> bool:
         """Queue an ended run again; the worker continues it from its trace
-        (`--resume`). False if it is not cancelled or finished."""
-        for state in ("cancelled", "finished"):
+        (`--resume`). False if it has not ended."""
+        for state in ("cancelled", "finished", PLAN_REVIEW):
             if self.store.transition(
                 run_id, state, state="queued", status=None, ended=None, pid=None
             ):

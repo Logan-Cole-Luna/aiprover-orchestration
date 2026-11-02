@@ -3,7 +3,7 @@ Lean, and the replay of their decisions on resume."""
 
 import unittest
 
-from aiprover_orchestration.agents import Agent, AgentLimitReached, Completion
+from aiprover_orchestration.agents import AgentLimitReached
 from aiprover_orchestration.orchestrator.config import Config
 from aiprover_orchestration.orchestrator.resume import restore_state
 from aiprover_orchestration.orchestrator.structures import (

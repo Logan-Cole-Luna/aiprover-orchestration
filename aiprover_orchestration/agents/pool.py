@@ -92,6 +92,9 @@ BACKENDS = {
 # a direction is written from the job's inputs, as the prover sees them.
 TOOL_ROLES = ("captain",)
 TOOLLESS_PHASES = ("judge", "direction")
+# Spend limit of one sketch call, in USD: above the 4.81 of the costliest
+# sketch call of a proved run.
+SKETCH_BUDGET_USD = 6.0
 
 
 def role_spec(role: str, spec: dict) -> dict:
@@ -103,6 +106,10 @@ def role_spec(role: str, spec: dict) -> dict:
         phases = dict(spec.get("phases") or {})
         for prefix in TOOLLESS_PHASES:
             phases[prefix] = {"tools": False, **phases.get(prefix, {})}
+        phases["sketch"] = {
+            "max_budget_usd": SKETCH_BUDGET_USD,
+            **phases.get("sketch", {}),
+        }
         spec["phases"] = phases
     return spec
 
@@ -160,9 +167,11 @@ class AgentPool:
         trace=None,
         system_prompt_ids: dict[str, str] | None = None,
         max_claude_calls: int = 0,
+        max_claude_usd: int = 0,
     ):
         self.agents = agents
         self.max_claude_calls = max_claude_calls
+        self.max_claude_usd = max_claude_usd
         self.calls_path = Path(calls_path)
         self.calls_path.parent.mkdir(parents=True, exist_ok=True)
         self.trace = trace
@@ -305,13 +314,17 @@ class AgentPool:
     def _budget_reservation(self, agent: Agent):
         """Count a budgeted call from before it starts, so that concurrent
         calls cannot pass the budget together."""
-        if not (agent.hosted and self.max_claude_calls):
+        if not agent.hosted:
             yield
             return
         # Not an AgentCallError: the pipeline reports it as a budget stop,
         # which is not restarted automatically.
+        self.check_spend_limit()
         with self._lock:
-            if self._claude_calls_used() >= self.max_claude_calls:
+            if (
+                self.max_claude_calls
+                and self._claude_calls_used() >= self.max_claude_calls
+            ):
                 raise BudgetExhausted(
                     f"hosted model call budget of {self.max_claude_calls} "
                     f"exhausted"
@@ -323,15 +336,30 @@ class AgentPool:
             with self._lock:
                 self._claude_calls_reserved -= 1
 
+    def _claude_usd_spent(self) -> bool:
+        return bool(self.max_claude_usd) and self.max_claude_usd <= sum(
+            total["cost_usd"] for total in self.usage_by_model.values()
+        )
+
+    def check_spend_limit(self) -> None:
+        """Stop the run if it has spent its limit."""
+        with self._lock:
+            if self._claude_usd_spent():
+                raise BudgetExhausted(
+                    f"Claude spend limit of {self.max_claude_usd} USD reached"
+                )
+
     def _claude_calls_used(self) -> int:
         return self.claude_calls + self._claude_calls_reserved
 
     def claude_budget_left(self) -> int:
         """Billed calls to hosted models left in the run's budget (large if
         unlimited)."""
-        if not self.max_claude_calls:
-            return 1 << 30
         with self._lock:
+            if self._claude_usd_spent():
+                return 0
+            if not self.max_claude_calls:
+                return 1 << 30
             return self.max_claude_calls - self._claude_calls_used()
 
     def record(

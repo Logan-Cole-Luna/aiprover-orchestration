@@ -66,6 +66,9 @@ class ScriptedPool:
     def claude_budget_left(self) -> int:
         return self.budget
 
+    def check_spend_limit(self) -> None:
+        pass
+
     def record(self, *_, **__) -> None:
         pass
 

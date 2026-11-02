@@ -31,7 +31,7 @@ Related published work (tags defined in docs/lit_review/lit_review.md §6):
 import logging
 from concurrent.futures import ThreadPoolExecutor
 
-from ...agents.base import AgentCallError
+from ...agents.base import AgentCallError, AgentLimitReached
 from ...lean.checker import forbidden_problems, nonstandard_axioms
 from ...lean.text import (
     declaration_names,
@@ -193,16 +193,23 @@ class SketchStage:
         feedback = replan_feedback
         compiled = None
         for repair in range(self.config.max_repairs + 1):
-            reply = self._captain(
-                prompts.SKETCH_TEMPLATE.format(
-                    definitions=form.definitions,
-                    preamble=form.preamble,
-                    signature=form.signature,
-                    informal_proof=self.row["informal_proof"],
-                    feedback=feedback,
-                ),
-                phase=f"sketch{repair}",
-            )
+            try:
+                reply = self._captain(
+                    prompts.SKETCH_TEMPLATE.format(
+                        definitions=form.definitions,
+                        preamble=form.preamble,
+                        signature=form.signature,
+                        informal_proof=self.row["informal_proof"],
+                        feedback=feedback,
+                    ),
+                    phase=f"sketch{repair}",
+                )
+            except AgentLimitReached as error:
+                # The same prompt would reach the limit again.
+                self._decision(
+                    "sketch_rejected", repair=repair, problems=[str(error)]
+                )
+                break
             refutation = extract_tactics(reply, "refutation")
             if refutation:
                 text, problems = self._refutation(
@@ -325,6 +332,28 @@ class SketchStage:
         candidate, repair = compiled
         logger.info(f"accepting the sketch compiled in repair {repair}")
         return self._accept_sketch(candidate, repair)
+
+    def _revised_plan(self, form: Formalization, sketch: Sketch) -> Sketch:
+        """`sketch`, or its revision on a reviewer's unanswered request."""
+        revision = self.config.plan_revision
+        answered = any(
+            step.get("event") == "plan_revised"
+            and step.get("revision") == revision
+            for step in self.trace.document["steps"]
+        )
+        if not self.config.sketch_feedback or answered:
+            return sketch
+        revised = self.sketch(
+            form,
+            prompts.PLAN_REVISION_TEMPLATE.format(
+                lemmas=stub_listing(sketch.lemmas),
+                main_proof=sketch.main_proof,
+                comments=self.config.sketch_feedback,
+            ),
+            earlier=sketch.lemmas,
+        )
+        self._decision("plan_revised", revision=revision)
+        return revised
 
     def _excluded_statements(self, sketch: Sketch) -> dict[str, str]:
         """Statements a revision of `sketch` may not state again, with the
@@ -493,6 +522,8 @@ class SketchStage:
             missing = missing_lemmas(previous, old_names, kept)
             reused.append((lemma, previous, changed or bool(missing)))
         self.reuse_proofs(form, new_sketch, reused)
+        if (self.result_dir / "blueprint").exists():
+            self.blueprint(form, new_sketch)
         return new_sketch
 
     def reuse_proofs(

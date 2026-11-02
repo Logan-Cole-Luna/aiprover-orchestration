@@ -289,6 +289,9 @@ class AIProverStage:
         hand-back comes before the next job, so a lemma restored with enough
         failures (after a resume) goes to the captain first."""
         while not lemma.proved and not phase.stopped.is_set():
+            # At the limit no hand-back is made, so that further jobs would
+            # spend the statement's attempts without one.
+            self.agents.check_spend_limit()
             self._maybe_handback(phase, lemma)
             samples = not self._exhausted(lemma) and self._claim_sessions(
                 phase, lemma

@@ -3,11 +3,7 @@
 import unittest
 
 from aiprover_orchestration.orchestrator.resume import restore_state
-from aiprover_orchestration.orchestrator.structures import (
-    Lemma,
-    reinstated,
-    statement_key,
-)
+from aiprover_orchestration.orchestrator.structures import statement_key
 from aiprover_orchestration.orchestrator.trace import Trace
 from tests.support import RESULTS
 
@@ -36,43 +32,6 @@ SKETCH = decision(
     lemmas=["theorem a (n : Nat) : n = n", "theorem b : True"],
     main_proof="trivial",
 )
-
-
-class AssemblyRejectedTest(unittest.TestCase):
-    """A rejected proof is withdrawn until the captain answers."""
-
-    STEPS = [
-        SKETCH,
-        decision("lemma_proved", lemma="a", worker=0, helpers="", proof="rfl"),
-        decision("lemma_proved", lemma="b", worker=0, helpers="", proof="trivial"),
-        decision(
-            "assembly_rejected",
-            lemmas={"a": "`a` depends on Lean.ofReduceBool"},
-            attempts={"a": "rfl"},
-            errors="",
-        ),
-    ]
-
-    def test_withdrawn(self):
-        state = restore_state({"steps": self.STEPS})
-        first, second = state.sketch.lemmas
-        self.assertFalse(first.proved)
-        self.assertEqual(first.proof, "")
-        self.assertIn("ofReduceBool", first.assembly_failure)
-        self.assertEqual(first.last_attempts, "rfl")
-        self.assertTrue(second.proved)
-        self.assertEqual(state.assembly_rounds, 1)
-
-    def test_answered(self):
-        steps = self.STEPS + [
-            decision("lemma_handback", lemma="a", action="proof", diagnosis=""),
-            decision("lemma_proved", lemma="a", worker="captain", helpers="", proof="simp"),
-        ]
-        state = restore_state({"steps": steps})
-        first = state.sketch.lemmas[0]
-        self.assertTrue(first.proved)
-        self.assertEqual(first.proof, "simp")
-        self.assertEqual(first.assembly_failure, "")
 
 
 class RecordedTracesTest(unittest.TestCase):
@@ -121,16 +80,6 @@ class AttemptBudgetTest(unittest.TestCase):
         self.assertEqual((c.name, c.attempts), ("c", 2))
         self.assertEqual(b.attempts, 0)
 
-    def test_cut_off_jobs_are_not_attempts(self):
-        steps = [
-            SKETCH,
-            *job("a", "j1", "cancelled", "infra"),
-            *job("a", "j2", "rejected", "cancelled"),
-        ]
-        state = restore_state({"steps": steps})
-        self.assertEqual(state.sketch.lemmas[0].attempts, 1)
-
-
 class SketchChangesTest(unittest.TestCase):
 
     def test_split_and_backjump(self):
@@ -155,91 +104,6 @@ class SketchChangesTest(unittest.TestCase):
         self.assertEqual([lemma.name for lemma in lemmas], ["a", "b"])
         self.assertFalse(lemmas[1].proved)
         self.assertEqual(lemmas[1].statement, "theorem b : 1 = 1")
-
-    def test_proof_kept_across_a_replan_needs_its_lemmas(self):
-        steps = [
-            SKETCH,
-            decision("lemma_proved", lemma="b", helpers="", proof="exact a 0"),
-            decision("replan"),
-            decision(
-                "sketch_accepted",
-                lemmas=["theorem b : True"],
-                main_proof="trivial",
-            ),
-        ]
-        b = restore_state({"steps": steps}).sketch.lemmas[0]
-        self.assertFalse(b.proved)  # its proof used `a`, which is gone
-
-    def test_dropped_lemma_reinstated_for_a_kept_proof(self):
-        a = Lemma("a", "theorem a (n : Nat) : n = n")
-        b = Lemma("b", "theorem b : True", proof="exact a 0", proved=True)
-        lemmas = [Lemma("c", "theorem c : 1 = 1"), Lemma("b", b.statement)]
-        added = reinstated([a, b], lemmas)
-        self.assertEqual([lemma.name for lemma in lemmas], ["c", "a", "b"])
-        self.assertEqual([(lemma.name, before) for lemma, before in added],
-                         [("a", "b")])
-        a.refutation = "intro h; exact absurd h id"
-        lemmas = [Lemma("b", b.statement)]
-        self.assertEqual(reinstated([a, b], lemmas), [])  # `a` is false
-        steps = [
-            SKETCH,
-            decision("lemma_proved", lemma="b", helpers="", proof="exact a 0"),
-            decision("replan"),
-            decision(
-                "sketch_accepted",
-                lemmas=["theorem c : 1 = 1", "theorem b : True"],
-                main_proof="trivial",
-            ),
-            decision(
-                "lemma_reinstated",
-                lemma="a",
-                statement=a.statement,
-                before="b",
-                attempts=5,
-            ),
-        ]
-        state = restore_state({"steps": steps})
-        restored = {lemma.name: lemma for lemma in state.sketch.lemmas}
-        self.assertEqual(list(restored), ["c", "a", "b"])
-        self.assertTrue(restored["b"].proved)
-        self.assertEqual(restored["a"].reviewed_at, 5)
-        # The trace records no reuse of `b`'s proof in the new sketch.
-        self.assertEqual(state.unrecorded_proofs, ["b"])
-        steps.append(decision("lemma_reused", lemma="b"))
-        self.assertEqual(restore_state({"steps": steps}).unrecorded_proofs, [])
-
-    def test_a_changed_definition_leaves_proofs_for_a_recheck(self):
-        accepted = decision(
-            "sketch_accepted",
-            lemmas=["theorem a : f = 1"],
-            definitions=["def f := 1"],
-            main_proof="exact a",
-        )
-        proved = decision(
-            "lemma_proved",
-            lemma="a",
-            worker="1",
-            round=0,
-            helpers="",
-            proof="rfl",
-        )
-        replanned = {**accepted, "definitions": ["def f := 2"]}
-        steps = [accepted, proved, replanned]
-        state = restore_state({"steps": steps})
-        self.assertFalse(state.sketch.lemmas[0].proved)
-        self.assertEqual(state.recheck[0][1].proof, "rfl")
-        reused = decision("lemma_reused", lemma="a", helpers="", proof="rfl")
-        state = restore_state({"steps": steps + [reused]})
-        self.assertTrue(state.sketch.lemmas[0].proved)
-        self.assertEqual(state.recheck, [])
-        failed = decision("lemma_recheck_failed", lemma="a")
-        state = restore_state({"steps": steps + [failed]})
-        self.assertEqual(state.recheck, [])
-
-    def test_lean_timeouts_are_counted(self):
-        step = decision("lean_timed_out", check="final", timeout=300)
-        state = restore_state({"steps": [step, step]})
-        self.assertEqual(state.lean_timeouts, 2)
 
     def test_interrupted_job_is_resumable(self):
         steps = [

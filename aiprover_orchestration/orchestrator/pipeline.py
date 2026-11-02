@@ -47,6 +47,7 @@ from .config import (
     Config,
     slug_from_problem,
 )
+from .reports import blueprint
 from .resume import ResumeState, restore_state
 from .stages.aiprover import AIProverStage
 from .stages.assemble import AssembleStage
@@ -76,6 +77,10 @@ OUTCOME_FIELDS = (
     "usage_by_model",
     "lean_attempt_files",
 )
+
+
+# Captain phases that receive a reviewer's comments on an approved plan.
+GUIDED_PHASES = ("sketch", "direction", "handback", "conflict")
 
 
 class Orchestration(
@@ -172,6 +177,7 @@ class Orchestration(
                 text: key for key, text in system_prompts.items()
             },
             max_claude_calls=config.max_claude_calls,
+            max_claude_usd=config.max_claude_usd,
         )
         self.library_path = config.library or row.get("library", "")
         self.library = self._load_library()
@@ -185,6 +191,10 @@ class Orchestration(
     # Helpers shared by the stages ------------------------------------------
 
     def _captain(self, prompt: str, phase: str) -> str:
+        if self.config.sketch_guidance and phase.startswith(GUIDED_PHASES):
+            prompt += prompts.PLAN_GUIDANCE_TEMPLATE.format(
+                comments=self.config.sketch_guidance
+            )
         return self.agents.complete(
             prompt,
             role="captain",
@@ -259,6 +269,7 @@ class Orchestration(
             helpers=lemma.helpers,
             proof=lemma.proof,
         )
+        blueprint.record_proved(self.result_dir / "blueprint", lemma.statement)
 
     def _for_captain(self, notes: str) -> str:
         """Session notes as the captain receives them: without another
@@ -427,6 +438,14 @@ class Orchestration(
                     self.reuse_proofs(form, sketch, state.recheck)
                     if state.replan_pending:
                         sketch = self.replan(form, sketch, resumed=True)
+            if self.config.sketch_approval and not sketch.refutation:
+                with self._timed("sketch"):
+                    sketch = self._revised_plan(form, sketch)
+                    if not sketch.refutation:
+                        self.blueprint(form, sketch)
+                        self._decision("plan_review_requested")
+                        summary["status"] = "plan_review"
+                        return summary
             while True:
                 if sketch.refutation:
                     summary["status"] = "disproved"
@@ -500,11 +519,7 @@ class Orchestration(
             # A verified proof stands even if the review or the report cannot
             # be completed; its status then says so.
             summary["status"] = "review_flagged"
-            if self.agents.max_claude_calls:
-                self.agents.max_claude_calls = max(
-                    self.agents.max_claude_calls,
-                    self.agents.claude_calls + self.config.final_claude_calls,
-                )
+            self._lift_limits(self.config.final_claude_calls)
             with self._timed("review"):
                 review = self.final_review(form, standalone)
             summary["review"] = review
@@ -525,6 +540,12 @@ class Orchestration(
                 )
             with self._timed("informal"):
                 summary["informal"] = self.informalize(form, sketch, standalone)
+            # A plan shown for review ends with the statements the run proved.
+            blueprint_exists = (self.result_dir / "blueprint").exists()
+            if self.config.write_reports or blueprint_exists:
+                self.blueprint(
+                    form, sketch, verified=summary["status"] == "proved"
+                )
             return summary
         except AgentRefusal as error:
             # A resume would send the same prompt and be refused again.
@@ -557,6 +578,16 @@ class Orchestration(
                 benchmark.summarize(self.result_dir, self.trace.document)
             except benchmark.ACCOUNTING_ERRORS as error:
                 logger.warning(f"benchmark summary not written: {error}")
+
+    def _lift_limits(self, calls: int) -> None:
+        """Open the Claude limits for the review and documents of a result,
+        which need `calls` more."""
+        self.agents.max_claude_usd = 0
+        if self.agents.max_claude_calls:
+            self.agents.max_claude_calls = max(
+                self.agents.max_claude_calls,
+                self.agents.claude_calls + calls,
+            )
 
     def _extend_library(self, form: Formalization, standalone: str) -> dict:
         record = libraries.extend(

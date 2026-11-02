@@ -227,6 +227,29 @@ Results
 
 ## Decisions
 
+- Browser libraries (2026-11-02): KaTeX, Cytoscape.js, and elkjs lie in
+  `server/static/vendor/` at pinned versions, so that the page needs no external
+  script host. The graph libraries load when a plan first opens. Google Fonts
+  remain external, with local fallbacks.
+
+- Claude spend limits (2026-11-02): over 47 traced runs, 69 % of 915 USD went
+  to runs that did not reach a proof, and no run above 34 USD reached one.
+  Consequently, `max_claude_usd` defaults to 50, each sketch call is limited
+  to 6 USD, and `write_reports` defaults to off. The final review and the
+  documents of a run are exempt from the run limit.
+- Limits and documents on the server (2026-11-02): Resume requests a new limit
+  when a run has spent its limit. Generate documents resumes a settled run with
+  `write_reports`; the run restores its proof and review from the trace, and
+  needs no model server.
+- Proof plan review and blueprints (2026-11-02): with `sketch_approval`, a run
+  stops after the sketch in the state `plan_review` and holds no resources. The
+  reviewer approves, approves with comments, requests a revision, or rejects.
+  Each run writes `blueprint/content.tex` in leanblueprint format and
+  `blueprint/blueprint.json`. The server page draws the dependency graph with
+  Cytoscape.js and an ELK layout in the browser, since the leanblueprint web
+  build requires Graphviz on the server. The writer's text is kept in the
+  trace, so a statement is described once.
+
 - Reasoning in replays (2026-10-30): the model writes part of its reasoning
   into message content between `[THINK]` tags, so the rendered pages take
   each turn's reasoning from the proxy's record or the transcript
