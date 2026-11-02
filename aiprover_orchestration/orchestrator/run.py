@@ -24,7 +24,7 @@ from pathlib import Path
 from ..agents import stop_run
 from ..paths import CONFIG_DIR, DATA_DIR, LOGS_DIR, RESULTS_DIR, TEMP_DIR
 from ..utils.files import write_atomic
-from .config import Config
+from .config import LEAN_ENVIRONMENT, Config
 from .pipeline import Orchestration
 from .trace import Trace
 
@@ -181,6 +181,11 @@ def main() -> None:
         if trace is None:
             parser.error(f"no trace of run {args.run_id} in {RESULTS_DIR}")
         args.problem_uuid = trace["problem"]["uuid"]
+        recorded = trace.get("lean_environment", {}).get("toolchain")
+        if recorded not in (None, LEAN_ENVIRONMENT["toolchain"]):
+            parser.error(
+                f"{args.run_id} ran on {recorded}: set AIPROVER_LEAN_RELEASE"
+            )
     else:
         trace = None
     # A resumed run is self-contained: its trace records the config and the

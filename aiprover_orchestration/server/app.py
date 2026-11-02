@@ -33,16 +33,17 @@ import re
 import secrets
 import shutil
 import sqlite3
+import subprocess
 import tempfile
 import threading
 import time
 import urllib.request
 import zipfile
-from typing import Literal
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path, PurePosixPath
+from typing import Literal
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.exception_handlers import http_exception_handler
@@ -57,6 +58,7 @@ from starlette.background import BackgroundTask
 from pydantic import BaseModel, Field
 
 from ..agents.claude_cli import get_account_status
+from ..lean import releases
 from ..library import api as library_api
 from ..orchestrator import gpu_usage, libraries
 from ..orchestrator.config import FILE_HEADER
@@ -65,6 +67,7 @@ from ..orchestrator.reports.informal import RESULT_ROW_SUFFIX
 from ..orchestrator.trace import Trace
 from ..paths import (
     CONFIG_DIR,
+    DEFAULT_LEAN_RELEASE,
     HOME_DIR,
     LIBRARIES_DIR,
     LOGS_DIR,
@@ -607,6 +610,7 @@ class Submission(BaseModel):
     new_library: str = ""  # or a library this run starts, in libraries/
     after: str = ""  # a run that must end first
     settings: dict = {}  # orchestrator settings (settings.SETTINGS)
+    lean_release: str = ""  # an installed Lean release; by default the pin
     page: str = DEFAULT_PAGE  # the page submitting (PAGES)
 
 
@@ -710,6 +714,11 @@ def submit(body: Submission, user: str = Depends(current_user)) -> dict:
         run_settings = settings.validate(body.settings)
     except ValueError as error:
         raise HTTPException(400, str(error))
+    release = body.lean_release or DEFAULT_LEAN_RELEASE
+    if not releases.is_installed(release):
+        raise HTTPException(400, f"Lean {release} is not installed here")
+    if release != DEFAULT_LEAN_RELEASE:
+        run_settings["lean_release"] = release
     if page.versions is not None and not (
         models.checkpoint_names(selection) <= set(page.versions)
     ):
@@ -1275,6 +1284,68 @@ def get_metrics(job: dict = Depends(owned_job)) -> dict:
     )
 
 
+# Tags of the Lean packages, which change rarely: (time read, tag sets).
+release_tags = (float("-inf"), dict.fromkeys(releases.PACKAGES, frozenset()))
+
+
+def package_tags() -> dict:
+    """The package tags, read at most hourly. A failed read keeps the last
+    ones, so that the page still lists the releases."""
+    global release_tags
+    read, found = release_tags
+    if time.monotonic() - read > 3600:
+        try:
+            found = {
+                name: releases.tags(url)
+                for name, url in releases.PACKAGES.items()
+            }
+        except (OSError, subprocess.SubprocessError) as error:
+            logging.warning(f"Lean package tags not read: {error}")
+        release_tags = (time.monotonic(), found)
+    return found
+
+
+@app.get("/api/lean-releases")
+def lean_releases(user: str = Depends(current_user)) -> dict:
+    """The Lean releases of this server, and those it can install."""
+    offers = releases.offers(package_tags())
+    versions = offers.keys() | releases.installed_releases()
+    return {
+        "default": DEFAULT_LEAN_RELEASE,
+        "free_gb": releases.free_gb(),
+        "needed_gb": releases.NEEDED_GB,
+        "releases": [
+            {
+                "release": release,
+                "state": releases.state(release),
+                "packages": offers.get(release),
+            }
+            for release in sorted(versions, key=releases.key, reverse=True)
+        ],
+    }
+
+
+@app.post("/api/lean-releases/{release}/install")
+def install_lean_release(
+    release: str, user: str = Depends(current_user)
+) -> dict:
+    """Start the download of a Lean release with its matching packages."""
+    if not releases.matching_tags(release, package_tags()):
+        raise HTTPException(404, f"{release} is not available")
+    if releases.is_installed(release):
+        raise HTTPException(409, f"{release} is installed")
+    free = releases.free_gb()
+    if free < releases.NEEDED_GB:
+        raise HTTPException(
+            507,
+            f"{release} requires about {releases.NEEDED_GB} GB of disk space, "
+            f"and {free} GB are free",
+        )
+    if not releases.start_install(release):
+        raise HTTPException(409, "another Lean release is being installed")
+    return {"release": release}
+
+
 @app.post("/api/runs/{run_id}/hide")
 def hide_run(job: dict = Depends(own_job)) -> dict:
     """Leave a finished run out of the page's list; nothing is deleted."""
@@ -1409,9 +1480,14 @@ def restored_path(parts: tuple[str, ...]) -> Path | None:
     return Path(*parts)
 
 
-def export_readme(record: dict, trace_agents: dict, files: list[str]) -> str:
-    """A short guide to the exported folder; the models are those the trace
-    records."""
+def export_readme(
+    record: dict,
+    trace_agents: dict,
+    files: list[str],
+    release: str,
+) -> str:
+    """A short guide to the exported folder; the models and Lean `release`
+    are those the trace records."""
     root_files = [name for name in files if "/" not in name]
     folders = [
         folder
@@ -1474,7 +1550,7 @@ def export_readme(record: dict, trace_agents: dict, files: list[str]) -> str:
     if any(name.endswith("_standalone.lean") for name in root_files):
         lines += [
             "",
-            "The standalone file compiles with Lean v4.23.0 and Mathlib v4.23.0 in a Lake project:",
+            f"The standalone file compiles with Lean {release} and Mathlib {release} in a Lake project:",
             "`lake env lean <file>`.",
         ]
     return "\n".join(lines) + "\n"
@@ -1536,12 +1612,16 @@ def export_run(job: dict = Depends(owned_job)) -> FileResponse:
             if servable(job, trace_path)
             else {}
         )
-        trace_agents = trace.get("agents") or {}
     except (OSError, json.JSONDecodeError):
-        trace_agents = {}
+        trace = {}
+    trace_agents = trace.get("agents") or {}
+    toolchain = (trace.get("lean_environment") or {}).get("toolchain", "")
     entries = {
         "README.md": export_readme(
-            record, trace_agents, list(entries) + list(sources)
+            record,
+            trace_agents,
+            list(entries) + list(sources),
+            toolchain.rpartition(":")[2] or DEFAULT_LEAN_RELEASE,
         ),
         **entries,
     }

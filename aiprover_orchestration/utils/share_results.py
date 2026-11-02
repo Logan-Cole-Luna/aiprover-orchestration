@@ -79,7 +79,8 @@ python -m aiprover_orchestration.orchestrator.run --run-id <run_id> --resume \\
 ```
 
 Requirements: the aiprover_orchestration repository with its Lean workspace
-(Lean v4.23.0, Mathlib), a Claude API key, and an AIProver model endpoint. The
+(the release of each run's `lean_environment` in its `trace.json`), a Claude API
+key, and an AIProver model endpoint. The
 recorded config names our solver config (`agents.solver.config`); to use
 another endpoint, copy `config.json`, point `agents.solver.config` to an
 AIProver config of your own and pass it with `--config`. AIProver jobs that

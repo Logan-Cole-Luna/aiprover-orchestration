@@ -1,1 +1,1 @@
-Lean environment: Lean 4 v4.23.0 with Mathlib (v4.23.0), `import Mathlib` and `set_option autoImplicit false` are already in the file header. Do not write `import` lines.
+Lean environment: Lean 4 {lean_release} with Mathlib ({lean_release}), `import Mathlib` and `set_option autoImplicit false` are already in the file header. Do not write `import` lines.

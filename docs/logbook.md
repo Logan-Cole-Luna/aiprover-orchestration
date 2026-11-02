@@ -227,6 +227,17 @@ Results
 
 ## Decisions
 
+- Lean versions per run (2026-11-02): benchmarks and projects require different
+  Lean releases, so the release is a choice of each run and not a repository
+  pin. The server sets `AIPROVER_LEAN_RELEASE` for a run's process, since the
+  workspace path is fixed when a process starts. A release other than v4.23.0
+  lies in `lean_releases/<release>/`: the harness's Lean project with Lean,
+  Mathlib, REPL, and CSLib, and a workspace that links its packages. The form
+  offers a release that is not installed for download, subject to free disk
+  space (`lean/releases.py`). Mathlib must match the release exactly; REPL and
+  CSLib may use the latest tag of its minor version up to the release, since
+  they skip patch releases. One installation runs at a time, and a library on another release
+  fails its compile check when a run starts. Each semantic Mathlib index is still built for one release.
 - Browser libraries (2026-11-02): KaTeX, Cytoscape.js, and elkjs lie in
   `server/static/vendor/` at pinned versions, so that the page needs no external
   script host. The graph libraries load when a plan first opens. Google Fonts

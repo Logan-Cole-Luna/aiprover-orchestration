@@ -3,11 +3,17 @@
 import re
 from dataclasses import dataclass, field
 
+from ..paths import DEFAULT_LEAN_RELEASE, LEAN_RELEASE
+
 FILE_HEADER = "import Mathlib\nset_option autoImplicit false\n\n"
 MAIN_NAME = "solution"
 LEAN_ENVIRONMENT = {
-    "toolchain": "leanprover/lean4:v4.23.0",
-    "mathlib": "37df177aaa770670452312393d4e84aaad56e7b6",
+    "toolchain": f"leanprover/lean4:{LEAN_RELEASE}",
+    "mathlib": (
+        "37df177aaa770670452312393d4e84aaad56e7b6"
+        if LEAN_RELEASE == DEFAULT_LEAN_RELEASE
+        else LEAN_RELEASE
+    ),
     "file_header": FILE_HEADER,
 }
 

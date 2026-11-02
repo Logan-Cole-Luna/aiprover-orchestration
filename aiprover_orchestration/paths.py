@@ -15,7 +15,16 @@ HOME_DIR = Path(os.environ.get("AIPROVER_ORCHESTRATION_HOME") or ROOT).resolve()
 CONFIG_DIR = ROOT / "configs"
 DATA_DIR = ROOT / "data"  # problem datasets (JSONL)
 
-WORKSPACE = HOME_DIR / "orchestration_workspace"  # Lake project of all modules
+# The repository's Lean and Mathlib release, and the release of this process:
+# the server sets it per run (lean/releases.py).
+DEFAULT_LEAN_RELEASE = "v4.23.0"
+LEAN_RELEASE = os.environ.get("AIPROVER_LEAN_RELEASE") or DEFAULT_LEAN_RELEASE
+RELEASES_DIR = HOME_DIR / "lean_releases"
+WORKSPACE = (  # Lake project of all modules
+    HOME_DIR / "orchestration_workspace"
+    if LEAN_RELEASE == DEFAULT_LEAN_RELEASE
+    else RELEASES_DIR / LEAN_RELEASE / "workspace"
+)
 LIBRARIES_DIR = HOME_DIR / "libraries"  # single-file result libraries
 RESULTS_DIR = HOME_DIR / "results"  # per-run outputs
 LOGS_DIR = HOME_DIR / "logs"

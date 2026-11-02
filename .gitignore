@@ -42,6 +42,7 @@ logs/
 *.err
 results/
 libraries/
+lean_releases/
 data/*
 !data/openai_math.jsonl
 analysis/

@@ -16,6 +16,7 @@ import re
 from pathlib import Path
 
 from ... import roles
+from ...paths import LEAN_RELEASE
 
 PROMPT_DIR = Path(__file__).parent
 LEAN_ENVIRONMENT_MARKER = "{lean_environment}"
@@ -41,7 +42,11 @@ def auditor_system() -> str:
     return roles.load("auditor")
 
 
-LEAN_ENV_NOTE = (PROMPT_DIR / "system" / "lean_environment.md").read_text()
+LEAN_ENV_NOTE = (
+    (PROMPT_DIR / "system" / "lean_environment.md")
+    .read_text()
+    .replace("{lean_release}", LEAN_RELEASE)
+)
 
 CAPTAIN_SYSTEM = system_prompt("captain")
 SOLVER_SYSTEM = system_prompt("solver")

@@ -46,7 +46,9 @@ from ..paths import (
     ROOT,
     STATE_DIR,
     TEMP_DIR,
+    locate,
 )
+from ..lean import releases
 from ..utils.sqlite import SqliteStore
 from . import models, vista
 from .vista import run_command
@@ -90,7 +92,13 @@ OPEN_STATES = ("awaiting_approval", "queued", "running", "cancelling")
 # builds on a library entry the other adds). `aiprover_timeout` replaces the
 # wall clock of the run's AIProver sessions, in seconds; 0 removes it, so a
 # session ends only at its turn limit.
-SERVER_OPTIONS = ("after", "aiprover_timeout", "captain_phases", "documents_only")
+SERVER_OPTIONS = (
+    "after",
+    "aiprover_timeout",
+    "captain_phases",
+    "documents_only",
+    "lean_release",
+)
 # The state of a run that stopped for a decision on its proof plan.
 PLAN_REVIEW = "plan_review"
 # A clock no session reaches: the harness scales its own time fences with it.
@@ -240,6 +248,25 @@ def job_selection(job: dict) -> dict:
     """Models chosen for a job; empty for a job submitted before the choice
     existed, which runs with the served config."""
     return json.loads(job.get("agents") or "null") or {}
+
+
+def release_environment(
+    release: str, tunnel_config: Path | None, agents: dict
+) -> dict:
+    """Variables of a run on Lean `release`: its AIProver configs, in
+    `agents` and in the variables, use the release's Lean project. A group
+    without a server has no tunnel config."""
+    environment = {"AIPROVER_LEAN_RELEASE": release}
+    if tunnel_config:
+        environment["AIPROVER_CONFIG"] = str(
+            releases.harness_config(tunnel_config, release)
+        )
+    for spec in agents.values():
+        if spec.get("backend") == "aiprover":
+            spec["config"] = str(
+                releases.harness_config(locate(spec["config"]), release)
+            )
+    return environment
 
 
 def job_checkpoint(job: dict) -> str | None:
@@ -811,6 +838,14 @@ class Worker(threading.Thread):
                     **captain["phases"].get(prefix, {}),
                     **overrides,
                 }
+        environment = {"AIPROVER_CONFIG": str(group.tunnel_config)}
+        release = options.get("lean_release")
+        if release:
+            environment |= release_environment(
+                release,
+                group.tunnel_config,
+                config["agents"],
+            )
         config_path.write_text(json.dumps(config, indent=1))
         arguments = [
             sys.executable,
@@ -857,7 +892,7 @@ class Worker(threading.Thread):
                     env={
                         **os.environ,
                         "PYTHONPATH": str(ROOT),
-                        "AIPROVER_CONFIG": str(group.tunnel_config),
+                        **environment,
                     },
                     start_new_session=True,
                 )

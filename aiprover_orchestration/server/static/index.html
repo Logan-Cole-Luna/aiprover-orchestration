@@ -301,6 +301,9 @@ figcaption { font-size: .9rem; line-height: 1.45; color: var(--caption); margin-
           <label for="gpu-group">GPU group</label>
           <select id="gpu-group" style="max-width:240px"><option value="main">main</option></select>
           <small class="models-note" id="gpu-note">Each group has its own model server on Vista; runs of a group share it. Group <code>cpu</code> has none: every role, including the subagent, must use Claude or a hosted model.</small>
+          <label for="lean-release">Lean version</label>
+          <select id="lean-release" style="max-width:240px"></select>
+          <div id="lean-release-note" class="models-note"></div>
           <details open><summary>Orchestrator settings</summary>
             <div class="settings" id="settings"></div>
             <small class="models-note">An empty field keeps the value shown, which runs use by default. A resumed run keeps its settings.</small>
@@ -381,11 +384,12 @@ async function start() {
       $("gpu-group").innerHTML = (catalog.gpu_groups || ["main"]).map(g =>
         `<option value="${escapeHtml(g)}">${escapeHtml(g)}</option>`).join("");
       $("gpu-group").value = catalog.default_gpu_group || "main";
-      renderRuns();
+      renderRuns(); refreshReleases();
     }
     catch (e) { $("models-note").innerHTML = `<span class="error">Model choices unavailable: ${escapeHtml(e.message)}</span>`; }
   }
-  if (!timers) timers = [setInterval(whenVisible(refreshRuns), 10000), setInterval(whenVisible(refreshHealth), 60000)];
+  if (!timers) timers = [setInterval(whenVisible(refreshRuns), 10000), setInterval(whenVisible(refreshHealth), 60000),
+    setInterval(whenVisible(() => leanReleases?.releases.some(entry => entry.state === "installing") && refreshReleases()), 15000)];
 }
 
 // Provider choices: Claude (model and reasoning level follow), a hosted
@@ -1138,6 +1142,44 @@ $("import-file").onchange = async () => {
 
 const VIEWS = ["runs", "submit", "guide"];
 const NEW_GROUP = "__new_group__";
+// Lean versions. A version not yet on the server is offered for download with
+// the packages that match it; a run cannot start on it before that finishes.
+let leanReleases = null;
+const chosenRelease = () => leanReleases?.releases.find(entry => entry.release === $("lean-release").value);
+const releaseReady = () => !leanReleases || chosenRelease()?.state === "installed";
+function renderRelease() {
+  const entry = chosenRelease(), note = $("lean-release-note");
+  const {free_gb: free, needed_gb: needed} = leanReleases;
+  if (entry.state === "installed") {
+    note.textContent = entry.release === leanReleases.default ? "The default version." : "Installed on this server.";
+  } else if (entry.state === "installing") {
+    note.innerHTML = `<span class="live">Downloading and building Lean ${entry.release}. This may take an hour; runs on this version may be submitted once it finishes.</span>`;
+  } else {
+    const fits = free >= needed;
+    const packages = Object.entries(entry.packages).map(([name, tag]) => `${name} ${tag}`).join(", ");
+    note.innerHTML = `<div class="plan-callout"><b>Lean ${entry.release} is not installed on this server.</b> Installation downloads Lean ${entry.release} and the matching ${escapeHtml(packages)}, and requires about ${needed} GB of disk space; ${free} GB are free.
+      ${entry.state === "failed" ? `<br><span class="error">The previous installation failed.</span>` : ""}
+      ${fits ? `<div class="row" style="margin-top:6px"><button type="button" id="install-release">Download and install</button></div>` : `<br><span class="error">There is insufficient disk space for this installation.</span>`}</div>`;
+  }
+}
+async function refreshReleases() {
+  const selected = $("lean-release").value;
+  // A failed read keeps the last list, and with it the guard on submission.
+  leanReleases = await api("/api/lean-releases").catch(() => null) || leanReleases;
+  if (!leanReleases) return;
+  const label = entry => `${entry.release}${entry.release === leanReleases.default ? " (default)" : entry.state === "installed" ? "" : ` (${entry.state === "available" ? "not installed" : entry.state})`}`;
+  $("lean-release").innerHTML = leanReleases.releases.map(entry => `<option value="${entry.release}">${label(entry)}</option>`).join("");
+  $("lean-release").value = selected;
+  if (!$("lean-release").value) $("lean-release").value = leanReleases.default;
+  renderRelease(); summarizeIfShown();
+}
+$("lean-release").onchange = () => { renderRelease(); summarizeIfShown(); };
+$("lean-release-note").addEventListener("click", async event => {
+  if (event.target.id !== "install-release") return;
+  event.target.disabled = true;
+  await api(`/api/lean-releases/${$("lean-release").value}/install`, {method: "POST"}).catch(error => alert(error.message));
+  refreshReleases();
+});
 const STEPS = ["Problem", "Library", "Models and settings", "Review"];
 let step = 0;
 
@@ -1191,8 +1233,9 @@ function showStep(index) {
   $("step-next").classList.toggle("hidden", step === STEPS.length - 1);
   $("submit").classList.toggle("hidden", step !== STEPS.length - 1);
   $("submit-message").textContent = "";
-  if (step === STEPS.length - 1) summarizeRun();
+  summarizeIfShown();
 }
+const summarizeIfShown = () => { if (step === STEPS.length - 1) summarizeRun(); };
 
 // The last step lists the submission, and Submit waits for its problem.
 function summarizeRun() {
@@ -1207,10 +1250,11 @@ function summarizeRun() {
     ["Library", upload ? upload.name : $("library").value || (newLibrary ? `new: ${newLibrary}` : "none")],
     ["Models", ROLES.map(role => `${role}: ${modelLabel(selection(role))}`).join("; ")],
     ["GPU group", $("gpu-group").value],
+    ["Lean version", $("lean-release").value || "default"],
     ["Settings", changed ? `${changed} changed` : "defaults"],
   ];
   $("review").innerHTML = rows.map(([name, value]) => `<tr><td>${name}</td><td>${escapeHtml(value)}</td></tr>`).join("");
-  $("submit").disabled = textMode() && !statement;
+  $("submit").disabled = (textMode() && !statement) || !releaseReady();
 }
 
 $("steps").onclick = event => {
@@ -1238,6 +1282,7 @@ $("submit").onclick = async () => {
   body.group = chosenGroup();
   body.gpu_group = $("gpu-group").value;
   body.settings = chosenSettings();
+  body.lean_release = $("lean-release").value;
   body.page = PAGE;
   $("submit-message").textContent = "";
   try {

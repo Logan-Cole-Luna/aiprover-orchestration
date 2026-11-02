@@ -166,7 +166,9 @@ replace the derived limits.
 The page submits an informal statement and proof, or a problem of the open
 and OpenAI math datasets, and lists the proved OpenAI problems and the runs
 submitted from it with their Lean files, reports, and traces. Its Guide explains
-the page to readers new to Lean, and its theme also applies to the trace pages. A cancelled or
+the page to readers new to Lean, and its theme also applies to the trace pages. The form offers each Lean version; one that is not
+installed can be downloaded there with its matching Mathlib, REPL, and CSLib
+(`aiprover_orchestration/lean/releases.py`). A cancelled or
 unproved run has a Resume button that continues it from its trace, and asks
 for a higher limit if the run reached its Claude limit (50 USD by default). A
 proved run without documents has a Generate documents button. With the setting
