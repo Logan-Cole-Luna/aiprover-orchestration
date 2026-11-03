@@ -91,7 +91,7 @@ Results
   same loads as the Vista benchmark. Allocation `TG-CIS260432` holds 766
   SUs (expires 2027-03-16); the H100 charge rate per node-hour bounds the
   hours of server time this buys.
-- Generalize `server/vista.py` (control socket, host, submission script) to
+- Generalize `server/model_servers.py` (control socket, host, submission script) to
   a per-cluster setting so the query server can submit to Stampede3.
 
 - Runs on the OpenAI math bank (`data/openai_math.jsonl`), starting with
@@ -227,6 +227,37 @@ Results
 
 ## Decisions
 
+- Projects on the page (2026-11-02): a project must be reproducible from the
+  server page alone. Research and milestone planning share one task, a Claude
+  session and a referee, and differ only in the question, so the planner needs
+  no index of the paper; dependency order is then the model's reading, checked
+  by the user before launch. Claims record a person's decision and Claude's
+  verdict apart, since a project may have no expert, and neither is a proof.
+  Research sessions have no web tools, since a page could steer a session that
+  runs Python. Task files lie under the project, and `update` locks the project
+  file because the server and a task's process both write it. The Submit page
+  offers a single problem or a project, so that all work starts in one place.
+  The home page leads with one action and the run that most needs attention,
+  and per-user servers offer only groups `dgx` and `cpu`.
+- Model servers on the page (2026-11-02): a user adds an OpenAI-compatible
+  address as an AIProver or a general server, with its key in a private file
+  outside the trace. Adding one requires a local connection or a token, since
+  it redirects prompts.
+- Sign-in on submission (2026-11-02): a run that needs an unsigned service
+  opens that sign-in, and the home page asks nothing. A server runs the
+  unmodified `claude auth login` in a pseudo-terminal, and the sign-in code
+  passes from the page to its prompt without being stored or logged. Anthropic's
+  documentation does not address this case; confirming it with Anthropic is
+  open. Codex signs in by device code, so no code returns through the page.
+- Services on demand (2026-11-02): Claude and Codex install when a user first
+  signs in or runs a model, so that nobody installs a service they do not use.
+  Setup installs neither; `nix/tools.nix` carries `nodejs` for Codex's npm
+  package. Hosted providers are removed: a key reaches a service through its
+  own account, and any other model through a server added on the page. An imported run without a blueprint gets one from its recorded plan, in
+  Lean statements only, at no Claude cost.
+- Lean releases on per-user servers (2026-11-02): an account's
+  `lean_releases/<release>` holds its own workspace, and `project` links the
+  owner's installation, whose build files must be readable (`chmod -R go+rX`).
 - Lean versions per run (2026-11-02): benchmarks and projects require different
   Lean releases, so the release is a choice of each run and not a repository
   pin. The server sets `AIPROVER_LEAN_RELEASE` for a run's process, since the
@@ -274,7 +305,7 @@ Results
   by `since`, and apply on display. Consequently, a correction takes effect
   for every run. A run with under 90 % of its session time sampled reports
   lower bounds. Runs share only with groups on the same servers (`sharing_key`
-  in `server/vista.py`), since `open` and `main`/`openai` run separate servers
+  in `server/model_servers.py`), since `open` and `main`/`openai` run separate servers
   of one hardware type.
 - GPU accounting scope (2026-10-31): `gpu_usage.json` is the only record of
   GPU time, and `benchmark.json` holds none of it, since a later overlapping
@@ -735,7 +766,7 @@ Results
   approval. Tokens, per-user visibility and approval remain available with
   `QUERY_SERVER_AUTH=on` (`server/app.py`, `docs/server.md`).
 
-- GPU group `cpu` on the query server (`server/vista.py`): a group
+- GPU group `cpu` on the query server (`server/model_servers.py`): a group
   without a model server, for runs whose roles all use Claude or hosted
   models (for example Claude as captain and subagent). Submissions to it
   that select AIProver for any role are rejected; its runs have their own
@@ -1088,7 +1119,7 @@ Results
 ## 2026-10-16: DGX group of a cloned checkout
 
 - GPU group `dgx` resolves its harness configuration and proxy port in
-  `server/vista.py` (`dgx_configs`): `configs/aiprover/dgx.toml` and port
+  `server/model_servers.py` (`dgx_configs`): `configs/aiprover/dgx.toml` and port
   18566 for the deployment whose `work_root` it names; otherwise, after
   `./setup`, the checkout's `orchestration_plugin/aiprover.toml` and the
   `[proxy].listen` port of its `endpoint.toml`. `server/models.py` derives
@@ -2220,7 +2251,7 @@ Results
 ## 2026-10-03: Approval and on-demand Vista server
 
 - Submissions await approval by a token holder; approved runs queue.
-- `server/vista.py`: the worker submits a `gh-dev` model server job when an
+- `server/model_servers.py`: the worker submits a `gh-dev` model server job when an
   approved run waits and no `aiprover_srv` job is queued or running, and
   cancels the jobs it submitted after 15 min without runs.
 - A lost AIProver endpoint after a lemma attempt raises `AgentCallError`

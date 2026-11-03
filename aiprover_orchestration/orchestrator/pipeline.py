@@ -438,6 +438,17 @@ class Orchestration(
                     self.reuse_proofs(form, sketch, state.recheck)
                     if state.replan_pending:
                         sketch = self.replan(form, sketch, resumed=True)
+            if (
+                self._revision_requested()
+                and not self.config.sketch_approval
+                and not sketch.refutation
+            ):
+                if not (state and state.replan_pending):
+                    with self._timed("sketch"):
+                        sketch = self.replan(form, sketch)
+                self._decision(
+                    "plan_revised", revision=self.config.plan_revision
+                )
             if self.config.sketch_approval and not sketch.refutation:
                 with self._timed("sketch"):
                     sketch = self._revised_plan(form, sketch)

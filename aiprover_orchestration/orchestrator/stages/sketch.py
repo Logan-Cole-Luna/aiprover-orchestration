@@ -335,13 +335,7 @@ class SketchStage:
 
     def _revised_plan(self, form: Formalization, sketch: Sketch) -> Sketch:
         """`sketch`, or its revision on a reviewer's unanswered request."""
-        revision = self.config.plan_revision
-        answered = any(
-            step.get("event") == "plan_revised"
-            and step.get("revision") == revision
-            for step in self.trace.document["steps"]
-        )
-        if not self.config.sketch_feedback or answered:
+        if not self._revision_requested():
             return sketch
         revised = self.sketch(
             form,
@@ -352,8 +346,16 @@ class SketchStage:
             ),
             earlier=sketch.lemmas,
         )
-        self._decision("plan_revised", revision=revision)
+        self._decision("plan_revised", revision=self.config.plan_revision)
         return revised
+
+    def _revision_requested(self) -> bool:
+        """Whether a reviewer's request awaits its revision."""
+        return bool(self.config.sketch_feedback) and not any(
+            step.get("event") == "plan_revised"
+            and step.get("revision") == self.config.plan_revision
+            for step in self.trace.document["steps"]
+        )
 
     def _excluded_statements(self, sketch: Sketch) -> dict[str, str]:
         """Statements a revision of `sketch` may not state again, with the
@@ -485,6 +487,10 @@ class SketchStage:
         if assembly_failure:
             feedback += prompts.REPLAN_ASSEMBLY.format(
                 failure=assembly_failure
+            )
+        if self.config.sketch_feedback and not self.config.sketch_approval:
+            feedback += prompts.PLAN_FINDINGS_TEMPLATE.format(
+                findings=self.config.sketch_feedback
             )
         self._decision(
             "replan_resumed" if resumed else "replan",

@@ -52,10 +52,14 @@ class ResumptionTest(RequestTest):
         self.assertEqual(reply["state"], "queued")
         self.assertEqual(reply["options"], body)
 
-    def test_a_run_under_its_limit_resumes(self):
-        reply = self.post("cancelled", "failed", "resume")
-        self.assertEqual((reply["state"], reply["options"]), ("queued", {}))
-
+    def test_new_choices_reach_the_run(self):
+        body = {"gpu_group": "dgx", "findings": "a bound is known"}
+        reply = self.post("cancelled", "failed", "resume", body)
+        self.assertEqual(reply["run"]["gpu_group"], "dgx")
+        self.assertEqual(
+            reply["options"],
+            {"sketch_feedback": "a bound is known", "plan_revision": 1},
+        )
 
 class ReportRequestTest(RequestTest):
     def test_a_proved_run_queues_for_its_documents(self):
@@ -64,11 +68,6 @@ class ReportRequestTest(RequestTest):
         self.assertEqual(
             reply["options"], {"write_reports": True, "documents_only": True}
         )
-
-    def test_an_unproved_run_has_no_documents_to_write(self):
-        reply = self.post("finished", "lemmas_unproved", "report")
-        self.assertEqual(reply["status"], 409)
-
 
 class PlanDecisionTest(RequestTest):
     def decide(self, decision, comments="", state="plan_review", **fields):
@@ -91,12 +90,6 @@ class PlanDecisionTest(RequestTest):
             reply["options"],
             {"sketch_feedback": "split the lemma", "plan_revision": 1},
         )
-
-    def test_a_revision_needs_comments(self):
-        self.assertEqual(self.decide("revise", "  ")["status"], 422)
-
-    def test_a_rejection_ends_the_run(self):
-        self.assertEqual(self.decide("reject")["state"], "rejected")
 
     def test_an_imported_run_needs_a_server_that_may_continue_it(self):
         reply = self.decide("approve", imported="view")

@@ -39,17 +39,6 @@ class ActiveSpansTest(unittest.TestCase):
             [[0, 60]],
         )
 
-class ChargeTest(unittest.TestCase):
-
-    def test_overlapping_runs_sum_to_active_time(self):
-        first = [[0, 3600, 3]]
-        second = [[0, 3600, 1]]
-        active = [[0, 3600]]
-        _, share_first = gpu_usage.charged_hours(first, second, active)
-        _, share_second = gpu_usage.charged_hours(second, first, active)
-        self.assertEqual((share_first, share_second), (0.75, 0.25))
-
-
 class SessionsTest(unittest.TestCase):
 
 

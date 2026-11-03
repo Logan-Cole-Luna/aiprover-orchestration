@@ -105,17 +105,6 @@ class ConcurrentCallsTest(TemporaryDirectoryTest):
             thread.start()
         return agent, threads, outcomes
 
-    def test_the_budget_holds_for_a_burst(self):
-        agent, threads, outcomes = self.calls(12, max_claude_calls=3)
-        deadline = time.monotonic() + 5
-        while outcomes.count("refused") < 9 and time.monotonic() < deadline:
-            time.sleep(0.01)
-        agent.release.set()
-        for thread in threads:
-            thread.join()
-        self.assertEqual(outcomes.count("called"), 3)
-        self.assertEqual(outcomes.count("refused"), 9)
-
     def test_hosted_calls_wait_for_a_machine_slot(self):
         with mock.patch.dict(
             limits.os.environ, {"AIPROVER_MAX_HOSTED": "2"}

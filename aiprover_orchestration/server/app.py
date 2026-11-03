@@ -26,6 +26,7 @@ is the submitting user's own.
 """
 
 import asyncio
+import io
 import json
 import logging
 import os
@@ -34,8 +35,8 @@ import secrets
 import shutil
 import sqlite3
 import subprocess
+import sys
 import tempfile
-import threading
 import time
 import urllib.request
 import zipfile
@@ -50,6 +51,7 @@ from fastapi.exception_handlers import http_exception_handler
 from fastapi.responses import (
     FileResponse,
     HTMLResponse,
+    JSONResponse,
     RedirectResponse,
     StreamingResponse,
 )
@@ -57,11 +59,14 @@ from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
 from pydantic import BaseModel, Field
 
-from ..agents.claude_cli import get_account_status
 from ..lean import releases
 from ..library import api as library_api
 from ..orchestrator import gpu_usage, libraries
 from ..orchestrator.config import FILE_HEADER
+from ..agents.codex_cli import DEFAULT_CODEX_MODEL
+from ..orchestrator import project as project_file
+from ..orchestrator.project import PROJECTS_DIR
+from ..orchestrator.project_tasks import MILESTONE_NAME, ROLES, task_dir
 from ..orchestrator.reports import blueprint
 from ..orchestrator.reports.informal import RESULT_ROW_SUFFIX
 from ..orchestrator.trace import Trace
@@ -76,10 +81,11 @@ from ..paths import (
     TEMP_DIR,
 )
 
-from . import models, settings, vista
+from . import accounts, model_servers, models, settings
 from .jobs import (
     CONFIG,
     DATA_DIR,
+    ROOT,
     DATABASE,
     OPEN_STATES,
     PLAN_REVIEW,
@@ -89,7 +95,7 @@ from .jobs import (
     endpoint_status,
     job_selection,
 )
-from .vista import control_master_running
+from .model_servers import control_master_running
 
 TOKENS = CONFIG_DIR / "server" / "tokens.json"
 AUTH_REQUIRED = os.environ.get("QUERY_SERVER_AUTH", "off") == "on"
@@ -105,6 +111,8 @@ MAX_TEXT_CHARS = 1_000_000
 # Bounds on an imported run: the upload and its unpacked files.
 MAX_IMPORT_BYTES = 2**30
 MAX_UNPACKED_BYTES = 2**32
+MAX_SOURCE_BYTES = 2**28
+MAX_TASK_USD = 200
 MAX_IMPORTS_PER_USER = 20
 # Libraries a run may build on (orchestrator/libraries.py); uploads are kept
 # per run under uploads/.
@@ -409,13 +417,21 @@ class Page:
     user_servers: bool = False
 
 
+# A per-user server offers the groups any account can reach.
+PERSONAL_GROUPS = ("dgx", "cpu")
+ALL_GROUPS = tuple(
+    sorted(
+        model_servers.GPU_GROUPS,
+        key=lambda group: group != model_servers.DEFAULT_GROUP,
+    )
+)
 PAGES = {
     "dev": Page(
-        tuple(sorted(vista.GPU_GROUPS, key=lambda g: g != vista.DEFAULT_GROUP)),
+        PERSONAL_GROUPS if PER_USER else ALL_GROUPS,
         user_servers=True,
     ),
     "user": Page(
-        ("dgx",),
+        PERSONAL_GROUPS if PER_USER else ("dgx",),
         versions=("dgx",),
         datasets=("open_problems.jsonl", "openai_math.jsonl"),
         defaults={
@@ -463,21 +479,6 @@ def serve_page() -> FileResponse:
     return FileResponse(INDEX_PAGE)
 
 
-# The account of the server's Claude login, read at most every
-# ACCOUNT_SECONDS rather than by a CLI process on each page load.
-ACCOUNT_SECONDS = 300
-account_cache: dict = {"read": float("-inf"), "email": None}
-account_lock = threading.Lock()
-
-
-def claude_account() -> str | None:
-    with account_lock:
-        if time.monotonic() - account_cache["read"] > ACCOUNT_SECONDS:
-            account_cache["email"] = (get_account_status() or {}).get("email")
-            account_cache["read"] = time.monotonic()
-        return account_cache["email"]
-
-
 @app.get("/api/me")
 def me(request: Request, user: str = Depends(current_user)) -> dict:
     return {
@@ -487,11 +488,11 @@ def me(request: Request, user: str = Depends(current_user)) -> dict:
         # The Claude account of a per-user server, which is its user's own;
         # a shared server does not show its account.
         "per_user": PER_USER,
-        "claude_account": claude_account() if PER_USER else None,
+        "claude_account": accounts.account("claude") if PER_USER else None,
     }
 
 
-def proxy_pool(group: vista.GpuGroup) -> list[dict]:
+def proxy_pool(group: model_servers.GpuGroup) -> list[dict]:
     """The model servers behind the group's reasoning proxy, with their
     health and the requests in flight through it; empty if it is down."""
     url = f"http://127.0.0.1:{group.proxy_port}/upstreams"
@@ -508,13 +509,13 @@ def health(
 ) -> dict:
     running = store.in_states("running", "cancelling")
     groups = {}
-    for name, group in vista.GPU_GROUPS.items():
+    for name, group in model_servers.GPU_GROUPS.items():
         if group.serverless:
             continue
         endpoint_up, endpoint_message = endpoint_status(
             bring_up=False, group=group
         )
-        server_jobs = vista.server_job_details(group)
+        server_jobs = model_servers.server_job_details(group)
         groups[name] = {
             "endpoint_up": endpoint_up,
             "endpoint": endpoint_message,
@@ -530,13 +531,13 @@ def health(
             "borrows": list(group.borrows),
             "lent_to": [
                 other.name
-                for other in vista.GPU_GROUPS.values()
+                for other in model_servers.GPU_GROUPS.values()
                 if name in other.borrows
             ],
         }
     # A group whose own server is down is served while a server it
     # borrows answers.
-    for name, group in vista.GPU_GROUPS.items():
+    for name, group in model_servers.GPU_GROUPS.items():
         if group.serverless:
             continue
         lenders = [
@@ -545,7 +546,7 @@ def health(
         if lenders and not groups[name]["endpoint_up"]:
             groups[name]["endpoint_up"] = True
             groups[name]["endpoint"] += f"; served by {', '.join(lenders)}"
-    main = groups[vista.DEFAULT_GROUP]
+    main = groups[model_servers.DEFAULT_GROUP]
     return {
         "control_master": control_master_running(),
         "endpoint_up": main["endpoint_up"],
@@ -603,7 +604,7 @@ class Submission(BaseModel):
     writer: Selection | None = None
     subagent: Selection | None = None
     handback: Selection | None = None
-    gpu_group: str = vista.DEFAULT_GROUP
+    gpu_group: str = model_servers.DEFAULT_GROUP
     library: str = ""  # a file in libraries/
     library_text: str = ""  # or an uploaded library
     extend_library: bool = False
@@ -611,6 +612,7 @@ class Submission(BaseModel):
     after: str = ""  # a run that must end first
     settings: dict = {}  # orchestrator settings (settings.SETTINGS)
     lean_release: str = ""  # an installed Lean release; by default the pin
+    source_dir: str = ""  # a folder of data/ the captain may read
     page: str = DEFAULT_PAGE  # the page submitting (PAGES)
 
 
@@ -686,6 +688,48 @@ def check_capacity(user: str) -> None:
         raise HTTPException(503, "queue is full")
 
 
+def require_sign_in(selection: dict) -> None:
+    """Refuse a selection whose service is not signed in, naming it for the
+    page's prompt. A shared server's Claude is its owner's standing login."""
+    chosen = {
+        choice["provider"]
+        for role, choice in selection.items()
+        if role not in models.PHASE_ROLES
+    }
+    for service, info in accounts.SERVICES.items():
+        needed = service in chosen and (PER_USER or service == "codex")
+        if needed and not accounts.account(service):
+            raise HTTPException(
+                409,
+                {"sign_in": service, "message": f"Sign in to {info['label']}"},
+            )
+
+
+def check_group(name: str, selection: dict) -> None:
+    """Refuse a GPU group that cannot serve the selection."""
+    group = model_servers.GPU_GROUPS[name]
+    if group.serverless and models.checkpoint_names(selection):
+        raise HTTPException(
+            400,
+            f"group {name!r} has no model server: every role, "
+            "including the subagent, must use Claude or a hosted model",
+        )
+    if not group.job_name and models.checkpoint_of(selection) is not None:
+        # A persistent server serves its own version; a Vista checkpoint
+        # needs a group with Vista server jobs.
+        raise HTTPException(
+            400,
+            f"group {name!r} serves AIProver "
+            f"{', '.join(sorted(models.PERSISTENT_VERSIONS))} only",
+        )
+
+
+def in_data(path: str) -> bool:
+    """Whether a source lies in data/ or, as for imports, in users/."""
+    roots = (PROJECTS_DIR.parent, USERS_DIR)
+    return any(Path(path).resolve().is_relative_to(r.resolve()) for r in roots)
+
+
 @app.post("/api/runs", status_code=201)
 def submit(body: Submission, user: str = Depends(current_user)) -> dict:
     check_capacity(user)
@@ -725,23 +769,8 @@ def submit(body: Submission, user: str = Depends(current_user)) -> dict:
         raise HTTPException(
             400, f"this page offers AIProver {', '.join(page.versions)} only"
         )
-    if vista.GPU_GROUPS[body.gpu_group].serverless and (
-        models.checkpoint_names(selection)
-    ):
-        raise HTTPException(
-            400,
-            f"group {body.gpu_group!r} has no model server: every role, "
-            "including the subagent, must use Claude or a hosted model",
-        )
-    group = vista.GPU_GROUPS[body.gpu_group]
-    if not group.job_name and models.checkpoint_of(selection) is not None:
-        # A persistent server serves its own version; a Vista checkpoint
-        # needs a group with Vista server jobs.
-        raise HTTPException(
-            400,
-            f"group {body.gpu_group!r} serves AIProver "
-            f"{', '.join(sorted(models.PERSISTENT_VERSIONS))} only",
-        )
+    check_group(body.gpu_group, selection)
+    require_sign_in(selection)
 
     if body.uuid:
         row = read_dataset(page).get(body.uuid)
@@ -851,6 +880,11 @@ def read_run(unpacked: Path) -> dict:
     uuid = first_text("uuid", problem, summary) or "imported"
     statement = first_text("informal_statement", problem)
     status = first_text("status", summary, trace.get("outcome") or {})
+    # The run continues on the Lean release it began on.
+    toolchain = (trace.get("lean_environment") or {}).get("toolchain", "")
+    release = toolchain.rpartition(":")[2]
+    other = release and release != DEFAULT_LEAN_RELEASE
+    options = {"lean_release": release} if other else None
     return {
         "problem": problem | {"uuid": uuid},
         "original": first_text("run_id", trace, summary) or uuid,
@@ -858,6 +892,7 @@ def read_run(unpacked: Path) -> dict:
             "uuid": uuid,
             "title": statement_title(statement) or uuid,
             "status": status or "no_summary",
+            "options": json.dumps(options) if options else None,
             # The pipeline needs the problem to continue.
             "imported": "resume"
             if statement and first_text("uuid", problem)
@@ -876,6 +911,7 @@ def restore_run(upload, user: str, page: str) -> str:
             with zipfile.ZipFile(upload) as archive:
                 unpack_run(archive, unpacked)
             run = read_run(unpacked)
+            blueprint.from_summary(unpacked)
         # An archive is arbitrary data; any failure to read it is the upload's.
         except Exception as error:
             raise HTTPException(400, f"unreadable run archive: {error}")
@@ -971,6 +1007,10 @@ def library_options(body: Submission, run_id: str) -> dict:
         if store.get(body.after) is None:
             raise HTTPException(400, f"unknown run {body.after}")
         options["after"] = body.after
+    if body.source_dir:
+        if not in_data(body.source_dir):
+            raise HTTPException(400, "the source must lie in data/")
+        options["source_dir"] = body.source_dir
     if body.new_library:
         # Written once the submission is valid.
         libraries.resolve(options["library"]).write_text(FILE_HEADER)
@@ -1083,6 +1123,19 @@ def run_files(result_dir: Path) -> list[str]:
     return files
 
 
+@lru_cache(maxsize=1024)
+def recorded_stop(path: Path, stamp: float) -> str | None:
+    """Why a run stopped, from its summary written at `stamp`."""
+    return read_json(path).get("error_kind")
+
+
+def stop_of(job: dict, result_dir: Path) -> str | None:
+    path = result_dir / "summary.json"
+    if job.get("status") != "failed" or not servable(job, path):
+        return None
+    return recorded_stop(path, gpu_usage.modified(path))
+
+
 def describe(job: dict) -> dict:
     result_dir = run_dir(job, RESULTS_DIR)
     benchmark = result_dir / "benchmark.json"
@@ -1114,10 +1167,11 @@ def describe(job: dict) -> dict:
         "files": files,
         # An import's selection is for resuming; it did not produce the run.
         "agents": {} if job.get("imported") else job_selection(job),
-        "gpu_group": job.get("gpu_group") or vista.DEFAULT_GROUP,
+        "gpu_group": job.get("gpu_group") or model_servers.DEFAULT_GROUP,
         "group": problem_group(job),
         "hidden": bool(job.get("hidden")),
         "resumable": resumable(job),
+        "stop": stop_of(job, result_dir),
         "reportable": reportable(job, files),
         "plan_review": job["state"] == PLAN_REVIEW,
         "settled": job.get("status") in CONCLUSIVE,
@@ -1181,12 +1235,61 @@ def requeued(job: dict) -> dict:
     return describe(store.get(job["run_id"]))
 
 
-# The page asks for a higher limit on this reply.
-SPEND_LIMIT_REACHED = "Claude spending limit reached"
 
 
 class Resumption(BaseModel):
     max_claude_usd: int | None = None
+    orchestrator: Selection | None = None
+    gpu_group: str = ""
+    # A research report for a replan; one command-line argument of the run.
+    findings: str = Field("", max_length=60000)
+
+
+def resumption_settings(body: Resumption, job: dict) -> dict:
+    """The job's fields and options for a resumption with new choices. A run
+    keeps its reference material, which only its trace names for an import."""
+    fields, options = {}, {}
+    trace = read_json(run_dir(job, RESULTS_DIR) / "trace.json")
+    agents = trace.get("config", {}).get("agents", {})
+    source = agents.get("captain", {}).get("source_dir")
+    if source and Path(source).is_dir() and in_data(source):
+        options["source_dir"] = source
+    page = PAGES.get(job.get("page"), PAGES[DEFAULT_PAGE])
+    try:
+        # A run from before model choices keeps the served config.
+        selection = job_selection(job)
+        selection = selection and models.validate(selection)
+        if body.max_claude_usd is not None:
+            limit = {"max_claude_usd": body.max_claude_usd}
+            options |= settings.validate(limit)
+        if body.orchestrator:
+            choice = {
+                "orchestrator": body.orchestrator.model_dump(exclude_none=True)
+            }
+            selection = models.validate(selection | choice)
+            fields["agents"] = json.dumps(selection)
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
+    if not claude_allowed(page, selection):
+        raise HTTPException(400, "this page runs no Claude role")
+    if body.gpu_group:
+        if body.gpu_group not in page.gpu_groups:
+            raise HTTPException(422, f"unknown GPU group {body.gpu_group}")
+        check_group(body.gpu_group, selection)
+        fields["gpu_group"] = body.gpu_group
+    require_sign_in(selection)
+    if body.findings.strip():
+        recorded = json.loads(job.get("options") or "{}")
+        revisions = [
+            step.get("revision", 0)
+            for step in trace.get("steps", [])
+            if step.get("event") == "plan_revised"
+        ]
+        options["sketch_feedback"] = body.findings.strip()
+        options["plan_revision"] = (
+            max(revisions + [recorded.get("plan_revision", 0)]) + 1
+        )
+    return fields | {"options": options}
 
 
 @app.post("/api/runs/{run_id}/resume")
@@ -1201,13 +1304,11 @@ def resume_run(
         raise HTTPException(409, f"run is {job['state']}; it cannot resume")
     check_capacity(user)
     if body.max_claude_usd is None and spent_limit(job):
-        raise HTTPException(409, SPEND_LIMIT_REACHED)
-    if body.max_claude_usd is not None:
-        try:
-            limit = settings.validate({"max_claude_usd": body.max_claude_usd})
-        except ValueError as error:
-            raise HTTPException(422, str(error)) from error
-        set_options(job, **limit)
+        raise HTTPException(409, "Claude spending limit reached")
+    fields = resumption_settings(body, job)
+    set_options(job, **fields.pop("options"))
+    if fields:
+        store.update(job["run_id"], **fields)
     return requeued(job)
 
 
@@ -1255,9 +1356,473 @@ def decide_plan(
         )
     else:
         guidance = comments if body.decision == "comment" else ""
-        set_options(job, sketch_approval=False, sketch_guidance=guidance)
+        set_options(
+            job,
+            sketch_approval=False,
+            sketch_guidance=guidance,
+            sketch_feedback="",
+        )
     store.update(job["run_id"], approved_by=user)
     return requeued(job)
+
+
+def project_member(member: dict, account: str = "") -> dict:
+    """A project's member with its run and the lemmas of its plan."""
+    run = member.get("run")
+    job = find_job(f"{account}:{run}" if account else run) if run else None
+    if job is None:
+        return member | {"job": None, "lemmas": [0, 0]}
+    path = run_dir(job, RESULTS_DIR) / "summary.json"
+    summary = read_json(path) if servable(job, path) else {}
+    lemmas = (summary.get("sketch") or {}).get("lemmas", [])
+    proved = sum(bool(lemma.get("proved")) for lemma in lemmas)
+    return member | {"job": describe(job), "lemmas": [proved, len(lemmas)]}
+
+
+def task_state(task: dict) -> str:
+    """A task's state; one whose process died has failed."""
+    running = task["state"] == "running"
+    if running and not Path(f"/proc/{task['pid']}").exists():
+        return "failed"
+    return task["state"]
+
+
+def task_view(path: Path, task: dict) -> dict:
+    report = path.with_suffix("") / "tasks" / task["id"] / "report.md"
+    readable = report.exists() and not report.is_symlink()
+    text = report.read_text(errors="replace") if readable else ""
+    return task | {"state": task_state(task), "report": text}
+
+
+def source_files(project: dict, home: Path = HOME_DIR) -> list[str]:
+    """The source files of a project of the state folder `home`."""
+    root = project.get("source") or "/nonexistent"
+    if not Path(root).resolve().is_relative_to(home.resolve()):
+        return []
+    return sorted(
+        os.path.relpath(os.path.join(folder, file), root)
+        for folder, _, files in os.walk(root, followlinks=True)
+        for file in files
+    )
+
+
+def project_view(path: Path, account: str = "") -> dict:
+    """A project; one of an account's server is named `<account>:<name>` and
+    can only be read, like the runs of that server."""
+    project = project_file.load(path.stem, path.parent)
+    members = [project_member(m, account) for m in project["members"]]
+    tasks = [task_view(path, task) for task in project["tasks"]]
+    spent = sum(m["job"]["cost_usd"] or 0 for m in members if m["job"])
+    research = project.get("research_usd", 0) + sum(
+        task.get("cost_usd", 0) for task in tasks
+    )
+    return project | {
+        "members": members,
+        "tasks": tasks,
+        "research_usd": round(research, 2),
+        "paper": (path.parent / path.stem / f"{path.stem}_paper.pdf").exists(),
+        "source_files": source_files(project, path.parents[2]),
+        "spent_usd": round(spent + research, 2),
+    } | ({"name": f"{account}:{path.stem}", "owner": account} if account else {})
+
+
+class ModelServer(BaseModel):
+    name: str
+    url: str = Field(pattern=r"^https?://")
+    api_key: str = ""
+    model: str = ""
+    kind: Literal["aiprover", "general"] = "general"
+
+
+def server_admin(request: Request) -> str:
+    """Whoever may send prompts to a new address: a token's holder, or a
+    connection from this machine, which a per-user server's tunnel is."""
+    if request.client.host in ("127.0.0.1", "::1"):
+        return current_user(request)
+    return approver(request)
+
+
+def served_models(url: str, api_key: str) -> list[str]:
+    """The model ids a server reports, which also shows that it answers."""
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    call = urllib.request.Request(f"{url}/models", headers=headers)
+    try:
+        with urllib.request.urlopen(call, timeout=15) as reply:
+            return [entry["id"] for entry in json.load(reply)["data"]]
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        raise HTTPException(400, f"{url}/models: {error}") from error
+
+
+class Secret(BaseModel):
+    value: str = Field(min_length=1, max_length=2000)
+
+
+Service = Literal["claude", "codex"]
+
+
+@app.exception_handler(accounts.AccountError)
+async def refuse_sign_in(request: Request, error: accounts.AccountError):
+    return JSONResponse({"detail": str(error)}, 400)
+
+
+@app.get("/api/accounts/{service}")
+def read_account(service: Service, user: str = Depends(current_user)) -> dict:
+    return {"account": accounts.account(service, fresh=True)}
+
+
+@app.post("/api/accounts/{service}/sign-in")
+def start_sign_in(service: Service, user: str = Depends(server_admin)) -> dict:
+    """Start the service's own sign-in; the page shows where it continues."""
+    return accounts.start(service)
+
+
+@app.post("/api/accounts/claude/code")
+def finish_sign_in(body: Secret, user: str = Depends(server_admin)) -> dict:
+    accounts.finish(body.value)
+    return {"account": accounts.account("claude")}
+
+
+@app.post("/api/accounts/{service}/api-key")
+def set_api_key(
+    service: Service, body: Secret, user: str = Depends(server_admin)
+) -> dict:
+    accounts.set_api_key(service, body.value)
+    return {"account": accounts.account(service)}
+
+
+@app.post("/api/model-servers", status_code=201)
+def add_model_server(
+    body: ModelServer, user: str = Depends(server_admin)
+) -> dict:
+    """Add a server after checking that it answers."""
+    if not model_servers.SERVER_NAME.fullmatch(body.name):
+        raise HTTPException(400, "a name has letters, digits, - and _")
+    url = body.url.rstrip("/")
+    served = served_models(url, body.api_key)
+    model = body.model or next(iter(served), "")
+    if model not in served:
+        raise HTTPException(
+            400, f"the server offers {', '.join(served) or 'no model'}"
+        )
+    server = {"url": url, "model": model, "kind": body.kind}
+    model_servers.add_custom_server(body.name, server, body.api_key)
+    return {"name": body.name, "model": model}
+
+
+@app.delete("/api/model-servers/{name}")
+def remove_model_server(name: str, user: str = Depends(server_admin)) -> dict:
+    if name not in model_servers.custom_servers():
+        raise HTTPException(404, f"unknown model server {name}")
+    server = {"provider": "custom", "model": name, "effort": ""}
+    for job in store.in_states(*OPEN_STATES):
+        if server in job_selection(job).values():
+            raise HTTPException(409, f"an open run uses {name}")
+    model_servers.remove_custom_server(name)
+    return {"removed": name}
+
+
+@app.get("/api/projects")
+def list_projects(
+    user: str = Depends(current_user), page: Page = Depends(page_of)
+) -> list[dict]:
+    if page.own_runs and not PER_USER:
+        return []
+    projects = [project_view(p) for p in sorted(PROJECTS_DIR.glob("*.json"))]
+    for account in other_users():
+        folder = USERS_DIR / account / "data" / "projects"
+        projects += [
+            project_view(path, account)
+            for path in sorted(folder.glob("*.json"))
+        ]
+    return projects
+
+
+class NewProject(BaseModel):
+    title: str = Field(min_length=1, max_length=120)
+    goal: str = Field("", max_length=MAX_TEXT_CHARS)
+    gpu_group: str
+    lean_release: str = ""
+    subagent: Selection | None = None
+    service: Service = "claude"  # of the orchestrator and its reviewers
+
+
+@app.post("/api/projects", status_code=201)
+def create_project(
+    body: NewProject,
+    user: str = Depends(current_user),
+    page: Page = Depends(page_of),
+) -> dict:
+    """A project on a new library, named after its title."""
+    if page.own_runs and not PER_USER:
+        raise HTTPException(403, "this page has no projects")
+    name = re.sub(r"[^a-z0-9]+", "_", body.title.lower()).strip("_")
+    library = LIBRARY_DIR / f"{name}.lean"
+    if not name or (PROJECTS_DIR / f"{name}.json").exists() or library.exists():
+        raise HTTPException(400, f"project or library {name} exists")
+    if body.gpu_group not in page.gpu_groups:
+        raise HTTPException(400, f"unknown GPU group {body.gpu_group!r}")
+    if body.lean_release and not releases.is_installed(body.lean_release):
+        raise HTTPException(400, f"Lean {body.lean_release} is not installed")
+    selection = {"lean_release": body.lean_release} if body.lean_release else {}
+    if body.subagent:
+        selection["subagent"] = body.subagent.model_dump(exclude_none=True)
+        check_group(
+            body.gpu_group, models.validate({"subagent": selection["subagent"]})
+        )
+    if body.service == "codex":
+        choice = {
+            "provider": "codex",
+            "model": DEFAULT_CODEX_MODEL,
+            "effort": "high",
+        }
+        for role in ("orchestrator", "auditor", "reviewer", "writer"):
+            selection[role] = choice
+    LIBRARY_DIR.mkdir(exist_ok=True)
+    PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
+    library.write_text(FILE_HEADER)
+    project_file.save({
+        "name": name,
+        "title": body.title,
+        "goal": body.goal,
+        "library": library.name,
+        "gpu_group": body.gpu_group,
+        "service": body.service,
+        "selection": selection,
+        "members": [],
+    })
+    return {"name": name}
+
+
+def known_project(
+    name: str,
+    user: str = Depends(current_user),
+    page: Page = Depends(page_of),
+) -> str:
+    if (
+        (page.own_runs and not PER_USER)
+        or not re.fullmatch(r"[A-Za-z0-9_-]+", name)
+        or not (PROJECTS_DIR / f"{name}.json").exists()
+    ):
+        raise HTTPException(404, f"unknown project {name}")
+    return name
+
+
+def project_path(
+    name: str,
+    user: str = Depends(current_user),
+    page: Page = Depends(page_of),
+) -> Path:
+    """The file of a project this page may read."""
+    account, separator, local = name.rpartition(":")
+    if not separator:
+        return PROJECTS_DIR / f"{known_project(name, user, page)}.json"
+    path = USERS_DIR / account / "data" / "projects" / f"{local}.json"
+    if account not in other_users() or not path.exists():
+        raise HTTPException(404, f"unknown project {name}")
+    return path
+
+
+@app.post("/api/projects/{name}/source", status_code=201)
+async def upload_source(
+    file: str, request: Request, name: str = Depends(known_project)
+) -> dict:
+    """Add the body, a paper or a zip of its files, to the project's source."""
+    body = await request.body()
+    if len(body) > MAX_SOURCE_BYTES:
+        raise HTTPException(413, "source too large")
+    return await asyncio.to_thread(store_source, name, file, body)
+
+
+def store_source(name: str, file: str, body: bytes) -> dict:
+    target = PROJECTS_DIR / name / "source"
+    target.mkdir(parents=True, exist_ok=True)
+    if zipfile.is_zipfile(io.BytesIO(body)):
+        with zipfile.ZipFile(io.BytesIO(body)) as archive:
+            if sum(i.file_size for i in archive.infolist()) > MAX_UNPACKED_BYTES:
+                raise HTTPException(413, "source unpacks to too much data")
+            archive.extractall(target)
+    else:
+        (target / Path(file).name).write_bytes(body)
+    project_file.update(
+        name, lambda project: project.update(source=str(target))
+    )
+    return {"source": str(target)}
+
+
+class Member(BaseModel):
+    uuid: str = Field(pattern=rf"^{MILESTONE_NAME.pattern}$")
+    role: Literal[ROLES] = "main"
+    statement: str = Field("", max_length=MAX_TEXT_CHARS)
+    proof: str = Field("", max_length=MAX_TEXT_CHARS)
+    uses: list[str] = []
+
+
+@app.put("/api/projects/{name}/members")
+def set_members(
+    body: list[Member], name: str = Depends(known_project)
+) -> dict:
+    """Replace the members without a run: the plan the user edits."""
+    def change(project: dict) -> None:
+        started = [m for m in project["members"] if m.get("run")]
+        names = [m["uuid"] for m in started] + [m.uuid for m in body]
+        if len(set(names)) < len(names):
+            raise HTTPException(400, "each result needs its own name")
+        project["members"] = started + [m.model_dump() for m in body]
+
+    project_file.update(name, change)
+    return {"members": len(body)}
+
+
+class Task(BaseModel):
+    kind: Literal["research", "check", "paper"]
+    question: str = Field("", max_length=MAX_TEXT_CHARS)
+    max_usd: float = Field(20, gt=0, le=MAX_TASK_USD)
+
+
+def task_user(request: Request) -> str:
+    """Tasks spend without an approval, so they need one's token."""
+    return approver(request) if AUTH_REQUIRED else current_user(request)
+
+
+@app.post("/api/projects/{name}/tasks", status_code=201)
+def start_task(
+    body: Task,
+    name: str = Depends(known_project),
+    user: str = Depends(task_user),
+) -> dict:
+    """Start a task on the project's service, one at a time."""
+    project_service = project_file.load(name).get("service", "claude")
+    # A paper's writer is Claude on every project.
+    service = "claude" if body.kind == "paper" else project_service
+    require_sign_in({"orchestrator": {"provider": service}})
+    task_id = time.strftime("%Y%m%d_%H%M%S")
+    task = body.model_dump() | {
+        "id": task_id, "state": "running", "started": time.time(),
+    }
+
+    def change(project: dict) -> None:
+        if any(task_state(other) == "running" for other in project["tasks"]):
+            raise HTTPException(409, "a task of this project is running")
+        folder = task_dir(name, task_id)
+        folder.mkdir(parents=True)
+        task["pid"] = subprocess.Popen(
+            [sys.executable, "-m",
+             "aiprover_orchestration.orchestrator.project_tasks",
+             name, task_id],
+            cwd=folder,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            env={
+                **os.environ,
+                **accounts.environment(),
+                "PYTHONPATH": str(ROOT),
+            },
+            start_new_session=True,
+        ).pid
+        project["tasks"].append(task)
+
+    project_file.update(name, change)
+    return task
+
+
+class Decision(BaseModel):
+    decision: Literal["confirmed", "rejected"]
+    note: str = Field("", max_length=4000)
+
+
+@app.post("/api/projects/{name}/reviews/{index}")
+def decide_review(
+    index: int,
+    body: Decision,
+    name: str = Depends(known_project),
+    user: str = Depends(current_user),
+) -> dict:
+    """Record a person's decision on a claim."""
+    def change(project: dict) -> None:
+        if not 0 <= index < len(project["reviews"]):
+            raise HTTPException(404, "unknown claim")
+        project["reviews"][index] |= body.model_dump() | {"by": user}
+
+    project_file.update(name, change)
+    return {"decision": body.decision}
+
+
+@app.get("/api/projects/{name}/blueprint")
+def project_blueprint(path: Path = Depends(project_path)) -> dict:
+    """The project's results as a plan whose lemmas are its members."""
+    account = path.parents[2].name if path.is_relative_to(USERS_DIR) else ""
+    project = project_file.load(path.stem, path.parent)
+    members = [project_member(m, account) for m in project["members"]]
+    known = {member["uuid"] for member in members}
+    complete = all(member.get("statement") for member in members)
+    rows = {} if complete else read_dataset()
+
+    def node(member: dict) -> dict:
+        uuid, job = member["uuid"], member["job"]
+        proved, total = member["lemmas"]
+        settled = job and job["status"] in ("proved", "verified_in_lean")
+        row = rows.get(uuid, {})
+        return {
+            "name": uuid,
+            "lean": "",
+            "statement": member.get("statement")
+            or row.get("informal_statement", ""),
+            "idea": f"{proved} of {total} lemmas proved" if total else "",
+            "uses": [used for used in member.get("uses", []) if used in known],
+            "status": "proved" if settled else "planned",
+            "run": job["run_id"] if job else "",
+        }
+
+    return {"version": 1, "nodes": [*map(node, members)], "problems": []}
+
+
+@app.get("/api/projects/{name}/library")
+def project_library(path: Path = Depends(project_path)) -> FileResponse:
+    library = project_file.load(path.stem, path.parent)["library"]
+    if not LIBRARY_NAME.match(library):
+        raise HTTPException(404, "unknown library")
+    return FileResponse(
+        path.parents[2] / "libraries" / library,
+        media_type="text/plain; charset=utf-8",
+    )
+
+
+@app.get("/api/projects/{name}/source/{path:path}")
+def project_source(
+    path: str, project_file_path: Path = Depends(project_path)
+) -> FileResponse:
+    project = project_file.load(project_file_path.stem, project_file_path.parent)
+    if path not in source_files(project, project_file_path.parents[2]):
+        raise HTTPException(404, "unknown file")
+    pdf = path.endswith(".pdf")
+    return FileResponse(
+        Path(project["source"]) / path,
+        media_type="application/pdf" if pdf else "text/plain; charset=utf-8",
+    )
+
+
+@app.get("/api/projects/{name}/paper")
+def project_paper(name: str = Depends(known_project)) -> FileResponse:
+    pdf = PROJECTS_DIR / name / f"{name}_paper.pdf"
+    if not pdf.exists():
+        raise HTTPException(404, "no paper yet")
+    return FileResponse(pdf)
+
+
+@app.post("/api/projects/{name}/launch")
+def launch_project(
+    name: str = Depends(known_project),
+    user: str = Depends(current_user),
+    page: str = DEFAULT_PAGE,
+) -> dict:
+    """Queue the members without a run, each after the one before it."""
+    def start(project: dict) -> list[str]:
+        return project_file.launch(
+            project,
+            lambda body: submit(Submission(**body | {"page": page}), user),
+        )
+
+    return {"started": project_file.update(name, start)}
 
 
 @lru_cache(maxsize=32)

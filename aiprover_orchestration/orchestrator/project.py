@@ -9,33 +9,33 @@ a run to the query server, after the member before it, on the project's
 library, which each verified run extends; so every result can use the ones
 before it.
 
-    {"name": "...", "title": "...", "authors": "...",
+    {"name": "...", "title": "...", "authors": "...", "goal": "...",
      "library": "<file in libraries/>", "gpu_group": "dgx",
+     "source": "<folder of the source paper>",
      "selection": {"writer": {"provider": "claude", "model": "..."}},
      "members": [{"uuid": "...", "role": "background", "run": "..."},
-                 {"uuid": "...", "role": "main"}]}
+                 {"uuid": "...", "role": "main", "statement": "...",
+                  "proof": "...", "uses": ["..."]}],
+     "tasks": [...], "open": [...], "reviews": [...]}
+
+A member with a `statement` is its own problem; any other names a dataset row.
+`uses` names the members a member depends on, for the project's blueprint.
+`tasks`, `open`, and `reviews` belong to project_tasks.py.
 
 The paper is written from the members' informalizations, each already
 checked against its Lean proof: the writer composes one article, the
 reviewer checks it against the informalizations and the Lean statements of
 the members' theorems, and the writer corrects the discrepancies once.
-
-    python3 -m aiprover_orchestration.orchestrator.project launch <name>
-    python3 -m aiprover_orchestration.orchestrator.project status <name>
-    python3 -m aiprover_orchestration.orchestrator.project paper <name> \\
-        [--writer MODEL] [--reviewer MODEL]
 """
 
-import argparse
+import fcntl
 import json
-import os
 import re
-import urllib.error
-import urllib.request
 from pathlib import Path
 
 from ..agents import AgentPool, build_agent, role_spec
-from ..paths import DATA_DIR, LOGS_DIR, RESULTS_DIR
+from ..paths import HOME_DIR, LOGS_DIR, RESULTS_DIR
+from ..utils.files import write_atomic
 from . import prompts
 from .config import MAIN_NAME
 from .reports.informal import INFORMAL_PREAMBLE
@@ -49,8 +49,7 @@ from .reports.report import (
     unicode_declarations,
 )
 
-PROJECTS_DIR = DATA_DIR / "projects"
-SERVER = os.environ.get("AIPROVER_SERVER", "http://127.0.0.1:8443")
+PROJECTS_DIR = HOME_DIR / "data" / "projects"
 # Models of the paper's writer and reviewer unless the call names others.
 PAPER_AGENT = {
     "backend": "claude",
@@ -62,32 +61,28 @@ PAPER_AGENT = {
 PAPER_MODELS = {"writer": "claude-sonnet-5-5", "reviewer": "claude-opus-5-5"}
 
 
-def load(name: str) -> dict:
-    return json.loads((PROJECTS_DIR / f"{name}.json").read_text())
+def load(name: str, folder: Path = PROJECTS_DIR) -> dict:
+    path = folder / f"{name}.json"
+    return {"tasks": [], "open": [], "reviews": []} | json.loads(path.read_text())
 
 
 def save(project: dict) -> None:
     path = PROJECTS_DIR / f"{project['name']}.json"
-    path.write_text(json.dumps(project, indent=1) + "\n")
+    write_atomic(path, json.dumps(project, indent=1) + "\n")
 
 
-def request(method: str, path: str, body: dict | None = None) -> dict:
-    """A call to the query server's JSON API."""
-    data = json.dumps(body).encode() if body is not None else None
-    call = urllib.request.Request(
-        SERVER + path,
-        data=data,
-        method=method,
-        headers={"Content-Type": "application/json"},
-    )
-    try:
-        with urllib.request.urlopen(call, timeout=60) as reply:
-            return json.loads(reply.read())
-    except urllib.error.HTTPError as error:
-        raise SystemExit(f"{method} {path}: {error.code} {error.read().decode()}")
+def update(name: str, change):
+    """Apply `change` to a project and save it, under a lock: the server and
+    the project's tasks both write. Returns the result of `change`."""
+    with open(PROJECTS_DIR / f"{name}.lock", "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        project = load(name)
+        result = change(project)
+        save(project)
+        return result
 
 
-def launch(project: dict) -> list[str]:
+def launch(project: dict, submit) -> list[str]:
     """Submit the members without a run, each after the one before it, on
     the project's library; returns the new run ids."""
     started, previous = [], ""
@@ -95,47 +90,30 @@ def launch(project: dict) -> list[str]:
         if member.get("run"):
             previous = member["run"]
             continue
+        problem = (
+            {
+                "name": member["uuid"],
+                "statement": member["statement"],
+                "proof": member.get("proof", ""),
+            }
+            if member.get("statement")
+            else {"uuid": member["uuid"]}
+        )
         body = {
-            "uuid": member["uuid"],
-            "page": "dev",
+            **problem,
+            "group": project.get("title", ""),
+            "source_dir": project.get("source", ""),
             "gpu_group": project.get("gpu_group", "dgx"),
             "library": project["library"],
             "extend_library": True,
             "after": previous,
             **project.get("selection", {}),
         }
-        member["run"] = request("POST", "/api/runs", body)["run_id"]
+        member["run"] = submit(body)["run_id"]
         save(project)
         started.append(member["run"])
         previous = member["run"]
     return started
-
-
-def status(project: dict) -> list[dict]:
-    """Each member's run, its state on the server and its outcome."""
-    rows = []
-    for member in project["members"]:
-        run = member.get("run", "")
-        summary_path = RESULTS_DIR / run / "summary.json"
-        summary = (
-            json.loads(summary_path.read_text())
-            if run and summary_path.exists()
-            else {}
-        )
-        state = request("GET", f"/api/runs/{run}").get("state") if run else ""
-        rows.append(
-            {
-                "uuid": member["uuid"],
-                "role": member["role"],
-                "run": run,
-                "state": state,
-                "status": summary.get("status", ""),
-                "informal": (RESULTS_DIR / run / "informal").is_dir()
-                if run
-                else False,
-            }
-        )
-    return rows
 
 
 def member_result(member: dict) -> dict:
@@ -294,25 +272,6 @@ def paper(project: dict, models: dict[str, str]) -> dict:
             prompt, role=role, phase=phase, system_prompt=systems[role]
         )
 
-    return PaperBuilder(project, results).build(complete)
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("action", choices=("launch", "status", "paper"))
-    parser.add_argument("name")
-    for role, model in PAPER_MODELS.items():
-        parser.add_argument(f"--{role}", default=model)
-    arguments = parser.parse_args()
-    project = load(arguments.name)
-    if arguments.action == "launch":
-        print(json.dumps(launch(project), indent=1))
-    elif arguments.action == "status":
-        print(json.dumps(status(project), indent=1))
-    else:
-        models = {role: getattr(arguments, role) for role in PAPER_MODELS}
-        print(json.dumps(paper(project, models), indent=1))
-
-
-if __name__ == "__main__":
-    main()
+    record = PaperBuilder(project, results).build(complete)
+    cost = sum(total["cost_usd"] for total in pool.usage_by_model.values())
+    return record | {"cost_usd": cost}

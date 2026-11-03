@@ -14,7 +14,9 @@ from aiprover_orchestration.orchestrator.structures import (
 
 
 class Stage(SketchStage):
-    config = SimpleNamespace(lean_parallel=1, lean_timeout=300)
+    config = SimpleNamespace(
+        lean_parallel=1, lean_timeout=300, sketch_feedback=""
+    )
     state = ResumeState(lean_timeouts=1)
     result_dir = Path("/nonexistent")
 

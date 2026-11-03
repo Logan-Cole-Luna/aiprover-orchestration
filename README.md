@@ -167,6 +167,18 @@ The page submits an informal statement and proof, or a problem of the open
 and OpenAI math datasets, and lists the proved OpenAI problems and the runs
 submitted from it with their Lean files, reports, and traces. Its Guide explains
 the page to readers new to Lean, and its theme also applies to the trace pages. The form offers each Lean version; one that is not
+
+The Projects tab holds the results of one subject as a chain on a shared
+library. The Submit page offers one result or a project, which starts from a
+goal and optional source files. **Plan
+milestones** proposes the chain, which stays editable until it starts, and each
+result opens in place with its run. **Blueprint** shows the results as a graph,
+each with the blueprint of its lemmas, and the card links the shared library
+and source files. **Research** has one Claude session answer
+a question and a second referee the answer; the report adds open lemmas and
+claims without a Lean proof, and the Resume dialog replans a run on it. A claim
+may be confirmed or rejected by a person, checked by Claude, or added as a result
+to prove in Lean. Review is optional, and only the last settles a claim.
 installed can be downloaded there with its matching Mathlib, REPL, and CSLib
 (`aiprover_orchestration/lean/releases.py`). A cancelled or
 unproved run has a Resume button that continues it from its trace, and asks
@@ -249,14 +261,14 @@ for size. Slides on these results:
 
 ## 7. Configuration
 
-Each role of a run config names a backend: `claude`, `openai_compatible` (a
-local server or a hosted provider: `openai`, `huggingface`, `openrouter`),
-or `aiprover` (solver only). `claude` uses the subscription of the
+Each role of a run config names a backend: `claude`, `codex`,
+`openai_compatible` (any server with that API), or `aiprover` (solver only).
+Claude and Codex install on first use, when a user signs in or runs a model. `claude` uses the subscription of the
 logged-in `claude` CLI, or the Anthropic API when `ANTHROPIC_API_KEY` is
 set (`CLAUDE_AUTH=subscription|api` overrides).
 
 A GPU group names the model server that runs a run's AIProver jobs. Group
-`cpu` needs none (every role on Claude or a hosted model). The other groups
+`cpu` needs none (every role on Claude, Codex, or a server added on the page). The other groups
 use the endpoint written by `./setup --endpoint <URL>`
 (`orchestration_plugin/aiprover.toml`) and its reasoning proxy
 (`orchestration_plugin/setup.sh endpoint` restarts the proxy after a

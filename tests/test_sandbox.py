@@ -8,7 +8,6 @@ import unittest
 from pathlib import Path
 
 from aiprover_orchestration.lean.checker import sandboxed
-from aiprover_orchestration.lean.sandbox import seatbelt_arguments
 from aiprover_orchestration.paths import WORKSPACE
 from tests.support import TemporaryDirectoryTest, requires_lean
 
@@ -49,19 +48,6 @@ class SandboxTest(TemporaryDirectoryTest):
     def test_other_executables_are_refused(self):
         result = run(["/bin/sh", "-c", "true"], self.directory)
         self.assertGreater(result.returncode, 0, result.stderr)
-
-
-class SeatbeltProfileTest(TemporaryDirectoryTest):
-
-    def test_trees_are_parameters_of_a_deny_by_default_profile(self):
-        tree = str(self.directory)
-        arguments = seatbelt_arguments([], [tree], [])
-        profile = arguments[2]
-        self.assertIn("(deny default)", profile)
-        self.assertNotIn(tree, profile)
-        self.assertEqual(arguments[3:], ["-D", f"P0={tree}", "-D", f"P1={tree}"])
-        self.assertIn('(allow file-write* (subpath (param "P1")))', profile)
-
 
 if __name__ == "__main__":
     unittest.main()

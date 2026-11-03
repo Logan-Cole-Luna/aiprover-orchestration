@@ -77,6 +77,25 @@ button.plain { color: var(--ink); background: var(--surface); }
 .plan-metrics .box td:first-child, .plan-lemmas td:first-child { white-space: normal; }
 .plan-lemmas { width: 100%; }
 .plan-bar { width: 26%; } .plan-bar span { display: block; height: 7px; background: var(--accent); }
+dialog { width: min(640px, 92vw); color: var(--ink); background: var(--surface); border: 1px solid var(--line); }
+.project { background: var(--surface); border: 1px solid var(--line); padding: 10px 14px; margin-bottom: 14px; overflow-x: auto; }
+.project tr:has([data-run-slot]:empty) { display: none; }
+.report { white-space: pre-wrap; max-height: 420px; overflow: auto; }
+.project h2 { font-size: 1.1rem; margin: 0 0 2px; }
+.project table { width: 100%; margin-top: 8px; }
+.project th { text-align: left; font-weight: 600; color: var(--muted); }
+.project td, .project th { padding: 2px 12px 2px 0; }
+.brand { font-weight: 700; color: inherit; }
+.home-lead { max-width: 640px; margin: 28px 0 22px; }
+.home-lead h1 { margin: 0 0 8px; font-size: 1.7rem; }
+.home-lead .row { align-items: center; }
+.home-recent { display: block; color: var(--ink); background: var(--surface); border: 1px solid var(--line); padding: 10px 14px; margin-bottom: 14px; }
+.home-recent small, .home-recent span { display: block; color: var(--muted); }
+.home-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin-bottom: 18px; }
+.home-cards a { display: block; color: var(--ink); background: var(--surface); border: 1px solid var(--line); padding: 12px 14px; }
+.home-cards a:hover { border-color: var(--accent); text-decoration: none; }
+.home-cards b, .home-cards span, .home-cards small { display: block; }
+.home-cards small { color: var(--muted); margin-top: 6px; }
 .seg { display: flex; }
 .seg button { color: var(--ink); background: var(--surface); margin-left: -1px; padding: 3px 18px; font-size: .93rem; }
 .seg button:first-child { margin-left: 0; }
@@ -206,9 +225,10 @@ figcaption { font-size: .9rem; line-height: 1.45; color: var(--caption); margin-
 </head>
 <body>
 <div class="mast" id="mast">
-  <b>AIProver Orchestration</b>
+  <a href="#home" data-view="home" class="brand">AIProver Orchestration</a>
   <input id="search" aria-label="Search runs" placeholder="Search runs">
   <a href="#runs" data-view="runs">Runs</a>
+  <a href="#projects" data-view="projects">Projects</a>
   <span id="review-count" class="review-count hidden" title="Proof plans awaiting review"></span>
   <a href="#submit" data-view="submit">Submit</a>
   <a href="#guide" data-view="guide">Guide</a>
@@ -226,6 +246,22 @@ figcaption { font-size: .9rem; line-height: 1.45; color: var(--caption); margin-
   </section>
 
   <div id="app" class="hidden">
+    <div id="view-home" class="hidden">
+      <section class="home-lead">
+        <h1>Formal proofs from informal mathematics</h1>
+        <p>State a theorem in mathematical language, with a proof if you have one. Agents formalize it, plan the proof, and prove it lemma by lemma, and Lean verifies the result.</p>
+        <div class="row"><button class="big" data-view="submit">Submit a problem</button><a href="#guide" data-view="guide">Read the guide</a></div>
+      </section>
+      <div id="home-recent"></div>
+      <nav class="home-cards" aria-label="Sections">
+        <a href="#runs" data-view="runs"><b>Runs</b><span>Follow a proof attempt and read its results.</span><small id="home-runs"></small></a>
+        <a href="#projects" data-view="projects"><b>Projects</b><span>Connected results proved in order on one library.</span><small id="home-projects"></small></a>
+        <a href="#submit" data-view="submit"><b>Submit</b><span>Start a single problem or a project.</span></a>
+        <a href="#guide" data-view="guide"><b>Guide</b><span>Learn how runs work and how to read their results.</span></a>
+      </nav>
+      <p class="note">Lean verifies each proof against its formal statement. It cannot confirm that the formal statement expresses your theorem; the agents assess this, and the statement deserves your own reading.</p>
+    </div>
+
     <div id="view-runs" class="columns">
       <div>
         <div class="row" style="justify-content:space-between;margin-bottom:16px">
@@ -235,7 +271,7 @@ figcaption { font-size: .9rem; line-height: 1.45; color: var(--caption); margin-
           </label>
         </div>
         <div id="review-alert" class="plan-alert hidden" role="status"></div>
-        <div id="run-list"></div>
+        <div id="run-home"><div id="run-list"></div></div>
         <details style="margin-top:24px">
           <summary>Model servers</summary>
           <div id="vista" style="overflow-x:auto"></div>
@@ -261,7 +297,16 @@ figcaption { font-size: .9rem; line-height: 1.45; color: var(--caption); margin-
       </div>
     </div>
 
+    <div id="view-projects" class="hidden">
+      <p class="note"><a href="#submit" id="start-project">Start a project</a></p>
+      <div id="project-list"></div>
+    </div>
+
     <div id="view-submit" class="hidden">
+      <div class="seg" id="submit-kind" role="group" aria-label="What to submit" style="margin-bottom:14px">
+        <button type="button" data-kind="run" aria-pressed="true">Single problem</button>
+        <button type="button" data-kind="project" aria-pressed="false">Project</button>
+      </div>
       <div id="submission">
         <ol class="steps" id="steps"></ol>
         <div data-step="0">
@@ -300,7 +345,8 @@ figcaption { font-size: .9rem; line-height: 1.45; color: var(--caption); margin-
           <small class="models-note" id="models-note">Roles that use AIProver must use the same version.</small>
           <label for="gpu-group">GPU group</label>
           <select id="gpu-group" style="max-width:240px"><option value="main">main</option></select>
-          <small class="models-note" id="gpu-note">Each group has its own model server on Vista; runs of a group share it. Group <code>cpu</code> has none: every role, including the subagent, must use Claude or a hosted model.</small>
+          <button type="button" class="plain" data-add-server>Model servers</button>
+          <small class="models-note" id="gpu-note">Each group has its own model server; runs of a group share it. Group <code>cpu</code> has none: use it when every role runs on Claude, Codex, or your own server.</small>
           <label for="lean-release">Lean version</label>
           <select id="lean-release" style="max-width:240px"></select>
           <div id="lean-release-note" class="models-note"></div>
@@ -319,6 +365,27 @@ figcaption { font-size: .9rem; line-height: 1.45; color: var(--caption); margin-
           <span id="submit-message"></span>
         </div>
       </div>
+      <form id="project-form" class="hidden">
+        <p class="note">A project proves connected results in dependency order on one shared library.</p>
+        <label for="project-title">Title</label>
+        <input id="project-title" required maxlength="120">
+        <label for="project-goal">Goal <small>what the project should establish</small></label>
+        <textarea id="project-goal"></textarea>
+        <label for="project-source">Source files <small>optional: one file, or a zip of its files</small></label>
+        <input id="project-source" type="file">
+        <p class="note">Source files are unverified reference material, available to planning, research, and the orchestrator but not to the provers. LaTeX and other text files work best, PDF files are harder to search, and office documents should be converted first. They do not create results or add to the library, and a large upload slows every run.</p>
+        <label for="project-lean">Lean version</label>
+        <select id="project-lean"></select>
+        <label for="project-group">GPU group</label>
+        <select id="project-group"></select>
+        <label for="project-service">Orchestrator <small>plans, reviews, and researches</small></label>
+        <select id="project-service"><option value="claude">Claude</option><option value="codex">Codex</option></select>
+        <label for="project-prover">Prover <small>what proves the lemmas</small></label>
+        <select id="project-prover"></select>
+        <div class="row"><button type="button" class="plain" data-add-server>Model servers</button></div>
+        <p class="error" id="project-error"></p>
+        <div class="row"><button type="submit">Create project</button></div>
+      </form>
     </div>
 
     <div id="view-guide" class="columns hidden">
@@ -331,6 +398,85 @@ figcaption { font-size: .9rem; line-height: 1.45; color: var(--caption); margin-
   </div>
 </div>
 <script src="/static/guide.js"></script>
+<dialog id="task-dialog">
+  <form id="task-form">
+    <h3>Research</h3>
+    <label for="task-question">Question <small>a session answers, and a second referees the answer</small></label>
+    <textarea id="task-question" required></textarea>
+    <label for="task-limit">Claude limit in USD</label>
+    <input id="task-limit" type="number" min="1" max="200" step="1" value="20" required>
+    <div class="row"><button type="submit">Start</button><button type="button" class="plain" id="task-cancel">Cancel</button></div>
+  </form>
+</dialog>
+<dialog id="member-dialog">
+  <form id="member-form">
+    <h3>Result</h3>
+    <label for="member-name">Name</label>
+    <input id="member-name" required pattern="[A-Za-z0-9_-]+" maxlength="80">
+    <label for="member-role">Role</label>
+    <select id="member-role"><option>main</option><option>background</option></select>
+    <label for="member-statement">Statement</label>
+    <textarea id="member-statement"></textarea>
+    <label for="member-proof">Informal proof <small>optional</small></label>
+    <textarea id="member-proof"></textarea>
+    <label for="member-uses">Depends on <small>names of earlier results, separated by commas</small></label>
+    <input id="member-uses">
+    <div class="row"><button type="submit">Save</button><button type="button" class="plain" id="member-up">Move up</button><button type="button" class="plain" id="member-remove">Remove</button><button type="button" class="plain" id="member-cancel">Cancel</button></div>
+  </form>
+</dialog>
+<dialog id="account-dialog">
+  <h3 id="account-title"></h3>
+  <p class="note" id="account-wait">Preparing sign-in. The first use installs the service, which may take a minute.</p>
+  <div id="account-step" class="hidden">
+    <p>Open <a id="account-link" target="_blank" rel="noopener noreferrer">the sign-in page</a> and sign in.</p>
+    <p><code id="account-device"></code></p>
+    <div id="account-paste" class="hidden">
+      <label for="account-code">Paste the code it shows</label>
+      <input id="account-code" type="password" autocomplete="off">
+      <div class="row"><button type="button" id="account-finish">Finish sign-in</button></div>
+    </div>
+  </div>
+  <label for="account-key">Or use an API key</label>
+  <input id="account-key" type="password" autocomplete="off">
+  <div class="row"><button type="button" class="plain" id="account-save-key">Save key</button><button type="button" class="plain" id="account-cancel">Close</button></div>
+  <p class="error" id="account-error"></p>
+</dialog>
+<dialog id="server-dialog">
+  <form id="server-form">
+    <h3>Model servers</h3>
+    <ul id="server-list"></ul>
+    <p class="note">Add any server with an OpenAI-compatible API. It must answer from this machine.</p>
+    <label for="server-name">Name</label>
+    <input id="server-name" required pattern="[A-Za-z0-9_-]{1,40}">
+    <label for="server-url">Address <small>for example http://host:8000/v1</small></label>
+    <input id="server-url" required pattern="https?://.+">
+    <label for="server-kind">Kind</label>
+    <select id="server-kind"><option value="general">General model</option><option value="aiprover">AIProver</option></select>
+    <label for="server-model">Model <small>empty takes the first the server offers</small></label>
+    <input id="server-model">
+    <label for="server-key">API key <small>optional; never shown again</small></label>
+    <input id="server-key" type="password" autocomplete="off">
+    <p class="error" id="server-error"></p>
+    <div class="row"><button type="submit">Check and add</button><button type="button" class="plain" id="server-cancel">Close</button></div>
+  </form>
+</dialog>
+<dialog id="resume-dialog">
+  <form id="resume-form">
+    <h3 id="resume-title"></h3>
+    <label for="resume-limit">Claude limit in USD <small>empty keeps the limit; 0 is unlimited</small></label>
+    <input id="resume-limit" type="number" min="0" step="1">
+    <label for="resume-model">Orchestrator <small>empty keeps the model</small></label>
+    <select id="resume-model"></select>
+    <label for="resume-group">GPU group <small>empty keeps the group</small></label>
+    <select id="resume-group"></select>
+    <label for="resume-report">Project research</label>
+    <select id="resume-report"></select>
+    <label for="resume-findings">Research findings <small>a replan on these findings, keeping proved lemmas</small></label>
+    <textarea id="resume-findings" maxlength="60000"></textarea>
+    <p class="error" id="resume-error"></p>
+    <div class="row"><button type="submit">Resume</button><button type="button" class="plain" id="resume-cancel">Cancel</button></div>
+  </form>
+</dialog>
 <script>
 const $ = id => document.getElementById(id);
 // The user page (/user) offers the DGX, the open and OpenAI math problems and
@@ -347,7 +493,8 @@ async function api(path, options = {}) {
     headers: {"Content-Type": "application/json"}, ...options});
   if (response.status === 401) { showLogin(); throw new Error("signed out"); }
   const body = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(body.detail || response.statusText);
+  if (body.detail?.sign_in) openSignIn(body.detail.sign_in);
+  if (!response.ok) throw new Error(body.detail?.message || body.detail || response.statusText);
   return body;
 }
 
@@ -361,12 +508,13 @@ async function start() {
   $("logout").classList.toggle("hidden", !me.approver);
   $("claude-note").innerHTML = me.per_user
     ? (me.claude_account ? `Claude: ${escapeHtml(me.claude_account)} (your own login)`
-      : `<span class="error">Claude: not signed in; run <code>aiprover-server serve</code> again over SSH</span>`)
+      : `Claude: not signed in; a run that needs it will ask`)
     : PAGE === "user" ? `Runs use your own Claude login on a server of your own; see <a href="https://github.com/Logan-Cole-Luna/aiprover-orchestration#3-using-a-running-server" target="_blank">Per-user server</a>.` : "";
   $("approver-login").classList.toggle("hidden", me.approver || !me.auth_required);
   $("login").classList.add("hidden");
   $("app").classList.remove("hidden");
   // A section can be scrolled to only once the page shows, and again once the images above it have their height.
+  $("submit-kind").classList.toggle("hidden", PAGE === "user" && !me.per_user);
   route();
   Promise.allSettled([...document.querySelectorAll("#guide-text img")].map(image => image.decode()))
     .then(() => { if (location.hash.startsWith("#guide-")) route(); });
@@ -389,19 +537,18 @@ async function start() {
     catch (e) { $("models-note").innerHTML = `<span class="error">Model choices unavailable: ${escapeHtml(e.message)}</span>`; }
   }
   if (!timers) timers = [setInterval(whenVisible(refreshRuns), 10000), setInterval(whenVisible(refreshHealth), 60000),
+    setInterval(whenVisible(() => $("view-projects").classList.contains("hidden") || refreshProjects()), 10000),
     setInterval(whenVisible(() => leanReleases?.releases.some(entry => entry.state === "installing") && refreshReleases()), 15000)];
 }
 
-// Provider choices: Claude (model and reasoning level follow), a hosted
-// provider (model id follows) or an AIProver version.
-function providerOptions() {
-  return `<option value="claude">Claude</option>` + catalog.hosted.map(h =>
-    `<option value="${h.provider}">${escapeHtml(h.label)}</option>`).join("") +
-    catalog.aiprover.map(v =>
-    `<option value="aiprover:${v.model}">${escapeHtml(v.label)}</option>`).join("");
-}
+const optionList = entries => entries.map(([value, label]) => `<option value="${escapeHtml(value)}">${escapeHtml(label)}</option>`).join("");
+const aiproverEntries = () => catalog.aiprover.map(version => [`aiprover:${version.model}`, version.label]);
+const serverEntries = () => catalog.servers.map(server => [`custom:${server.name}`, server.name]);
+// Provider choices: a service (model and reasoning level follow), an AIProver
+// version, or a server of the user's own.
+const providerOptions = () => optionList([["claude", "Claude"], ["codex", "Codex"], ...aiproverEntries(), ...serverEntries()]);
 
-function isHosted(provider) { return catalog.hosted.some(h => h.provider === provider); }
+const isService = provider => ["claude", "codex"].includes(provider);
 
 function buildPickers() {
   ROLES = catalog.roles.map(r => r.role);
@@ -412,16 +559,14 @@ function buildPickers() {
     // A phase of the captain (the hand-back) runs on Claude only.
     const providers = catalog.phase_roles?.includes(role) ? `<option value="claude">Claude</option>` : providerOptions();
     box.innerHTML = `<select aria-label="${role} model" data-field="provider">${providers}</select>
-      <select aria-label="${role} Claude model" data-field="model">${catalog.claude.map(m =>
-        `<option value="${m.model}">${escapeHtml(m.label)}</option>`).join("")}</select>
-      <input aria-label="${role} model id" data-field="model-id" placeholder="model id">
+      <select aria-label="${role} model choice" data-field="model"></select>
       <select aria-label="${role} reasoning level" data-field="effort"></select>${toolPickers(role)}`;
     box.addEventListener("change", () => syncPicker(role));
     const wanted = catalog.default[role];
     box.querySelector('[data-field="provider"]').value =
-      wanted.provider === "aiprover" ? `aiprover:${wanted.model}` : wanted.provider;
-    if (wanted.provider === "claude") box.querySelector('[data-field="model"]').value = wanted.model;
-    if (isHosted(wanted.provider)) box.querySelector('[data-field="model-id"]').value = wanted.model;
+      ["aiprover", "custom"].includes(wanted.provider) ? `${wanted.provider}:${wanted.model}` : wanted.provider;
+    syncPicker(role);
+    if (isService(wanted.provider)) box.querySelector('[data-field="model"]').value = wanted.model;
     for (const field of ["tools", "judge_tools"]) {
       const pick = box.querySelector(`[data-field="${field}"]`);
       if (pick) pick.value = wanted[field] ? "on" : "off";
@@ -441,33 +586,32 @@ function toolPickers(role) {
     (role === "orchestrator" ? pick("judge_tools", "judges: Lean tools", "judges: no tools") : "");
 }
 
-// Show the Claude model and reasoning level only for Claude, and the model id
-// only for a hosted provider; a model without reasoning levels has no level
-// to choose.
+// Show the models and reasoning level of the chosen service; a model without
+// reasoning levels has no level to choose.
 function syncPicker(role, effort) {
   const box = $("pick-" + role);
   const provider = box.querySelector('[data-field="provider"]').value;
-  const claude = provider === "claude";
-  box.querySelector('[data-field="model-id"]').classList.toggle("hidden", !isHosted(provider));
+  const service = isService(provider);
   const model = box.querySelector('[data-field="model"]');
+  if (service && model.dataset.service !== provider) {
+    model.dataset.service = provider;
+    model.innerHTML = optionList(catalog[provider].map(m => [m.model, m.label]));
+  }
   const level = box.querySelector('[data-field="effort"]');
-  const efforts = claude ? catalog.claude.find(m => m.model === model.value).efforts : [];
+  const efforts = service ? catalog[provider].find(m => m.model === model.value).efforts : [];
   const keep = effort ?? level.value;
   level.innerHTML = `<option value="">default reasoning</option>` +
     efforts.map(e => `<option value="${e}">${e}</option>`).join("");
   level.value = efforts.includes(keep) ? keep : "";
-  model.classList.toggle("hidden", !claude);
+  model.classList.toggle("hidden", !service);
   level.classList.toggle("hidden", !efforts.length);
-  for (const pick of box.querySelectorAll('[data-field$="tools"]')) pick.classList.toggle("hidden", !claude);
+  for (const pick of box.querySelectorAll('[data-field$="tools"]')) pick.classList.toggle("hidden", !service);
 }
 
 function selection(role) {
   const box = $("pick-" + role);
   const [provider, version] = box.querySelector('[data-field="provider"]').value.split(":");
-  if (provider === "aiprover") return {provider, model: version, effort: ""};
-  if (isHosted(provider)) {
-    return {provider, model: box.querySelector('[data-field="model-id"]').value.trim(), effort: ""};
-  }
+  if (["aiprover", "custom"].includes(provider)) return {provider, model: version, effort: ""};
   const choice = {provider, model: box.querySelector('[data-field="model"]').value,
                   effort: box.querySelector('[data-field="effort"]').value};
   for (const pick of box.querySelectorAll('[data-field$="tools"]')) {
@@ -481,9 +625,8 @@ function modelLabel(choice) {
   if (choice.provider === "aiprover") {
     return (catalog?.aiprover.find(v => v.model === choice.model) || {label: `AIProver ${choice.model}`}).label;
   }
-  const hosted = catalog?.hosted.find(h => h.provider === choice.provider);
-  if (hosted) return `${hosted.label} ${choice.model}`;
-  const label = (catalog?.claude.find(m => m.model === choice.model) || {label: choice.model}).label;
+  if (choice.provider === "custom") return choice.model;
+  const label = ([...catalog?.claude || [], ...catalog?.codex || []].find(m => m.model === choice.model) || {label: choice.model}).label;
   const parts = [label, choice.effort, choice.tools && "Lean tools",
                  choice.judge_tools && "judges with tools"];
   return parts.filter(Boolean).join(", ");
@@ -685,10 +828,12 @@ function actions(run) {
 
 const OUTCOMES = {Proved: ["∎", "good"], Disproved: ["¬", "good"], "Lemmas unproved": ["○", "warn"],
                   Running: ["…", "live"], Queued: ["…", "live"], "Awaiting approval": ["…", "live"], Cancelling: ["…", "live"],
-                  "Awaiting plan review": ["◆", "warn"],
+                  "Awaiting plan review": ["◆", "warn"], "Verified in lean": ["∎", "good"],
+                  Interrupted: ["/", "quiet"], "Stopped at its Claude limit": ["○", "warn"],
                   Cancelled: ["/", "quiet"], Rejected: ["/", "quiet"]};
 const capitalized = text => text[0].toUpperCase() + text.slice(1).replaceAll("_", " ");
-const resultOf = run => run.plan_review ? "Awaiting plan review" : capitalized(run.state === "finished" ? run.status || "finished" : run.state);
+const STOPS = {interrupted: "Interrupted", budget: "Stopped at its Claude limit", infrastructure: "Server failure", stage_failed: "No plan compiled", refused: "Refused by the model"};
+const resultOf = run => run.plan_review ? "Awaiting plan review" : STOPS[run.stop] || capitalized(run.state === "finished" ? run.status || "finished" : run.state);
 const SCOPES = {All: () => true, Review: run => run.plan_review, Proved: run => run.settled, Unfinished: run => !run.settled};
 const runTabs = run => ["Progress", ...(run.files.includes("blueprint.json") ? ["Blueprint"] : []), "Files", "Details"];
 
@@ -798,7 +943,8 @@ function renderRuns() {
   const headings = groupBy(list, run => byGroup ? groupName(run) : DAY.format(run.submitted * 1000));
   const sections = byGroup ? [...headings].sort(([a], [b]) => (a === UNGROUPED) - (b === UNGROUPED) || a.localeCompare(b)) : [...headings];
   const counts = groupBy(shown, resultOf);
-  const page = sections.map(([heading, runs]) => {
+  const embedded = $("run-list").parentElement !== $("run-home");
+  const page = embedded ? `<dl>${allRuns.filter(run => run.run_id === selected).map(run => runEntry(run, numbers.get(run.run_id))).join("")}</dl>` : sections.map(([heading, runs]) => {
     const open = !collapsed.has(heading);
     return `<h2><button type="button" class="fold" data-fold="${escapeHtml(heading)}" aria-expanded="${open}"><i>${open ? "▾" : "▸"}</i>${escapeHtml(heading)} <small>(${runs.length} ${runs.length > 1 ? "runs" : "run"})</small></button></h2>
       ${open ? `<dl>${runs.map(run => runEntry(run, numbers.get(run.run_id))).join("")}</dl>` : ""}`;
@@ -829,8 +975,67 @@ function renderRuns() {
 
 async function refreshRuns() {
   allRuns = await api("/api/runs" + PAGE_QUERY);
-  renderRuns(); signalReviews(); refreshPlan();
+  renderRuns(); signalReviews(); refreshPlan(); renderHome();
 }
+
+// The home page leads with the run that most needs attention.
+function renderHome() {
+  const visible = allRuns.filter(run => !run.hidden).sort((a, b) => b.submitted - a.submitted);
+  const active = visible.filter(run => ["queued", "running"].includes(run.state));
+  const [label, run] = [["Awaiting your review", visible.find(run => run.plan_review)], ["In progress", active[0]], ["Most recent run", visible[0]]].find(([, found]) => found) || [];
+  $("home-recent").innerHTML = run ? `<a href="#runs" class="home-recent" data-recent="${run.run_id}"><small>${label}</small><b>${escapeHtml(runTitle(run))}</b><span>${escapeHtml(resultOf(run))}</span></a>` : "";
+  $("home-runs").textContent = `${visible.length} runs, ${active.length} active`;
+  $("home-projects").textContent = `${projects.length} ${projects.length === 1 ? "project" : "projects"}`;
+}
+// The sign-in of a service, which a refused submission opens.
+let signInPoll = null;
+function signedIn() {
+  clearInterval(signInPoll);
+  $("account-dialog").close();
+  start();
+}
+async function openSignIn(service) {
+  const form = $("account-dialog");
+  form.dataset.service = service;
+  $("account-title").textContent = `Sign in to ${{claude: "Claude", codex: "Codex"}[service]}`;
+  for (const id of ["account-error", "account-device"]) $(id).textContent = "";
+  $("account-paste").classList.add("hidden");
+  $("account-step").classList.add("hidden");
+  $("account-wait").classList.remove("hidden");
+  if (!form.open) form.showModal();
+  try {
+    const {url, code} = await api(`/api/accounts/${service}/sign-in`, {method: "POST"}).finally(() => $("account-wait").classList.add("hidden"));
+    $("account-link").href = url;
+    $("account-step").classList.remove("hidden");
+    if (!code) { $("account-paste").classList.remove("hidden"); return; }
+    $("account-device").textContent = code;
+    signInPoll = setInterval(async () => {
+      if ((await api(`/api/accounts/${service}`)).account) signedIn();
+    }, 3000);
+  } catch (error) { $("account-error").textContent = error.message; }
+}
+async function accountAction(action) {
+  $("account-error").textContent = "";
+  try { await action(); signedIn(); } catch (error) { $("account-error").textContent = error.message; }
+}
+$("account-finish").onclick = () => {
+  const code = $("account-code").value;
+  $("account-code").value = "";
+  accountAction(() => api("/api/accounts/claude/code", {method: "POST", body: JSON.stringify({value: code})}));
+};
+$("account-save-key").onclick = () => {
+  const key = $("account-key").value;
+  $("account-key").value = "";
+  accountAction(() => api(`/api/accounts/${$("account-dialog").dataset.service}/api-key`, {method: "POST", body: JSON.stringify({value: key})}));
+};
+$("account-dialog").addEventListener("close", () => clearInterval(signInPoll));
+$("home-recent").addEventListener("click", event => {
+  const link = event.target.closest("[data-recent]");
+  if (!link) return;
+  event.preventDefault();
+  go("runs");
+  if (selected !== link.dataset.recent) openRun(link.dataset.recent);
+});
 
 // Proof plan: the Blueprint and Details tabs, whose containers `renderRuns`
 // carries over a refresh, so that the graph and comments stay in place.
@@ -861,9 +1066,10 @@ function lemmaDetail() {
   const users = dependents(node.name), review = planRun()?.plan_review;
   return `<div class="box lemma-detail">
     <div class="row"><code>${escapeHtml(node.name)}</code><span class="chip" id="plan-chip">${PLAN_STATUS[node.status]}</span></div>
+    ${node.run ? `<button type="button" class="plain" data-project-run="${node.run}" data-run-tab="Blueprint">Open this result and its blueprint</button>` : ""}
     ${node.statement ? `<div class="plan-label">Statement</div><div>${escapeHtml(node.statement)}</div>` : ""}
     ${node.idea ? `<div class="plan-label">Proof idea</div><div>${escapeHtml(node.idea)}</div>` : ""}
-    <div class="plan-label">Lean statement</div><pre class="lean">${escapeHtml(node.lean)}</pre>
+    ${node.lean ? `<div class="plan-label">Lean statement</div><pre class="lean">${escapeHtml(node.lean)}</pre>` : ""}
     ${node.uses.length ? `<div class="plan-label">Depends on</div><div class="row plan-links">${node.uses.map(link).join("")}</div>` : ""}
     ${users.length ? `<div class="plan-label">Used by</div><div class="row plan-links">${users.map(link).join("")}</div>` : ""}
     ${review ? `<label class="plan-label" for="plan-comment">Comment on this lemma</label><textarea id="plan-comment">${escapeHtml(plan.comments[node.name] || "")}</textarea>` : ""}
@@ -884,7 +1090,7 @@ function planDecision(run) {
 }
 function dropGraph() { planGraph?.destroy(); planGraph = null; }
 function renderPlan() {
-  const host = $("blueprint"), run = planRun();
+  const host = $("blueprint"), run = planRun() || {files: []};
   dropGraph();
   const {nodes, version, problems} = plan.data;
   const shown = plan.filter === "All" ? nodes : nodes.filter(node => plan.filter === "Open" ? node.status !== "proved" : commented(node));
@@ -898,7 +1104,7 @@ function renderPlan() {
     ${problems.length ? `<p class="warn">The natural-language text could not be generated; the Lean statements are shown.</p>` : ""}
     <div class="row plan-tools"><span class="seg">${modes}</span>
       ${plan.mode === "Outline" ? `<select id="plan-filter" style="width:auto" aria-label="Filter lemmas">${["All", "Open", "Commented"].map(name => `<option${name === plan.filter ? " selected" : ""}>${name}</option>`).join("")}</select>` : `<button type="button" class="plain" id="plan-fit">Fit graph</button>`}
-      <span class="note">Version ${version}; ${nodes.length - 1} lemmas; <span id="plan-tally">${proved}</span> of ${nodes.length} proved</span>
+      <span class="note">Version ${version}; ${run.run_id ? `${nodes.length - 1} lemmas` : `${nodes.length} results`}; <span id="plan-tally">${proved}</span> of ${nodes.length} proved</span>
       ${run.files.includes("blueprint.tex") ? fileLink(run, "blueprint.tex", "LaTeX source") : ""}</div>
     ${body}${planDecision(run)}`;
   typesetMath(host);
@@ -961,11 +1167,12 @@ function pickLemma(name) {
 async function mountBlueprint() {
   const host = $("blueprint");
   if (!host) { dropGraph(); return; }
-  const runId = host.dataset.run;
-  const data = await api(`/api/runs/${runId}/files/blueprint.json`).catch(() => null);
+  const runId = host.dataset.run || `project:${host.dataset.project}`;
+  const url = host.dataset.run ? `/api/runs/${runId}/files/blueprint.json` : `/api/projects/${host.dataset.project}/blueprint${PAGE_QUERY}`;
+  const data = await api(url).catch(() => null);
   if (!data || $("blueprint") !== host) return;
   if (plan?.runId !== runId || planShape(plan.data) !== planShape(data)) {
-    plan = {runId, data, selected: "solution", mode: "Graph", filter: "All", comments: {}, general: "", layout: null};
+    plan = {runId, data, selected: data.nodes.at(-1).name, mode: "Graph", filter: "All", comments: {}, general: "", layout: null};
   }
   plan.data = data;
   renderPlan();
@@ -1017,8 +1224,8 @@ function signalReviews() {
   $("review-alert").innerHTML = waiting.length ? `<b>${waiting.length === 1 ? "One proof plan awaits" : `${waiting.length} proof plans await`} review.</b>
     ${waiting.map(run => `<a href="#" data-review="${run.run_id}">${escapeHtml(runTitle(run))}</a>`).join("; ")}` : "";
 }
-$("run-list").addEventListener("click", event => {
-  const target = event.target.closest("button");
+document.addEventListener("click", event => {
+  const target = event.target.closest("#blueprint button");
   if (!target || !plan) return;
   const {planPick, planMode, planDecide} = target.dataset;
   if (planPick) pickLemma(planPick);
@@ -1030,7 +1237,7 @@ $("run-list").addEventListener("input", event => {
   if (event.target.id === "plan-general") plan.general = event.target.value;
   if (event.target.id === "plan-comment") { plan.comments[plan.selected] = event.target.value; paintPlan(); }
 });
-$("run-list").addEventListener("change", event => {
+document.addEventListener("change", event => {
   if (event.target.id === "plan-filter") { plan.filter = event.target.value; renderPlan(); }
 });
 $("review-alert").addEventListener("click", event => {
@@ -1057,22 +1264,230 @@ function openRun(runId, tab = "Progress") {
     };
     stream.addEventListener("end", () => { stream.close(); refreshRuns(); });
   }
-  renderRuns();
+  placeRunList();
 }
 
-// A run at its Claude limit would stop again at once: it needs a higher one.
-async function resumeRun(run) {
-  const request = limit => api(`/api/runs/${run.run_id}/resume`, {method: "POST", body: JSON.stringify({max_claude_usd: limit})});
-  await request(null).catch(async error => {
-    if (error.message !== "Claude spending limit reached") throw error;
-    const spent = run.cost_usd || 0;
-    const answer = prompt(`${run.run_id} reached its Claude spending limit at $${spent.toFixed(2)}. Enter a new limit in USD (0: unlimited).`, String(Math.ceil(spent) + 50));
-    if (answer === null) return;
-    const limit = answer.trim() ? Number(answer) : NaN;
-    if (!Number.isInteger(limit) || limit < 0 || (limit && limit <= spent)) throw new Error(`The limit must be a whole number above ${spent.toFixed(2)}, or 0.`);
-    await request(limit);
-  }).catch(error => alert(error.message));
+// Resuming may change the limit, model, and group, or replan on findings.
+function openResume(run) {
+  $("resume-title").textContent = `Resume ${run.run_id}`;
+  $("resume-form").reset();
+  $("resume-form").dataset.run = run.run_id;
+  $("resume-error").textContent = "";
+  const keep = [["", "Keep"]];
+  $("resume-model").innerHTML = optionList([...keep, ...catalog.claude.map(entry => [entry.model, entry.label])]);
+  $("resume-group").innerHTML = optionList([...keep, ...catalog.gpu_groups.map(group => [group, group])]);
+  const reports = projects.find(project => project.members.some(member => member.run === run.run_id))?.tasks.filter(task => task.kind === "research" && task.report) || [];
+  $("resume-report").innerHTML = `<option value="">None</option>` + reports.map(task => `<option value="${task.id}">${escapeHtml(task.question.slice(0, 80))}</option>`).join("");
+  $("resume-report").onchange = () => { $("resume-findings").value = reports.find(task => task.id === $("resume-report").value)?.report.slice(0, 60000) || ""; };
+  $("resume-dialog").showModal();
 }
+for (const name of ["resume", "task", "member", "server", "account"]) $(`${name}-cancel`).onclick = () => $(`${name}-dialog`).close();
+$("resume-form").addEventListener("submit", async event => {
+  event.preventDefault();
+  const {value: limit} = $("resume-limit"), {value: model} = $("resume-model");
+  const body = {max_claude_usd: limit === "" ? null : Number(limit), gpu_group: $("resume-group").value, findings: $("resume-findings").value,
+                orchestrator: model ? {provider: "claude", model, effort: "high"} : null};
+  await api(`/api/runs/${event.target.dataset.run}/resume`, {method: "POST", body: JSON.stringify(body)})
+    .then(() => { $("resume-dialog").close(); refreshRuns(); refreshHealth(); })
+    .catch(error => { $("resume-error").textContent = error.message; });
+});
+
+// Projects: the runs of one subject as a chain, with what remains open.
+const PLAN_QUESTION = "Divide the goal into milestones that automated provers can formalize one at a time, in dependency order.";
+const MONEY = value => `$${value.toFixed(2)}`;
+let projects = [], shownProjects = "", editing = null, openPlan = null;
+const unstarted = project => project.members.filter(member => !member.run);
+
+function projectRow(project, member, index) {
+  const job = member.job, [proved, total] = member.lemmas;
+  const name = escapeHtml(member.uuid);
+  const link = job ? `<a href="#" data-project-run="${job.run_id}">${name}</a>`
+    : member.run || project.owner ? name : `<a href="#" data-edit data-project="${project.name}" data-index="${index}">${name}</a>`;
+  return `<tr><td>${index + 1}</td><td>${link}</td>
+    <td>${escapeHtml(member.role)}</td><td>${job ? escapeHtml(resultOf(job)) : "Not started"}</td>
+    <td>${total ? `${proved} of ${total}` : ""}</td><td>${job?.cost_usd == null ? "" : MONEY(job.cost_usd)}</td></tr>
+    <tr><td colspan="6" data-run-slot="${job?.run_id}"></td></tr>`;
+}
+function taskEntry(task) {
+  const cost = task.cost_usd ? `, ${MONEY(task.cost_usd)}` : "";
+  return `<details><summary>${escapeHtml(task.question.slice(0, 90) || task.kind)} <small>${task.state}${cost}</small></summary>
+    ${task.error ? `<p class="error">${escapeHtml(task.error)}</p>` : ""}<pre class="report">${escapeHtml(task.report)}</pre></details>`;
+}
+function reviewEntry(project, review, index) {
+  const data = `data-project="${project.name}" data-claim="${index}"`;
+  const decided = review.decision ? `${review.decision} by ${escapeHtml(review.by)}${review.note ? `: ${escapeHtml(review.note)}` : ""}` : "not reviewed";
+  const claude = review.claude ? `; Claude's check: ${escapeHtml(review.claude)}` : "";
+  return `<li>${escapeHtml(review.claim)}<div class="note">${decided}${claude}</div>
+    <div class="row${project.owner ? " hidden" : ""}"><button type="button" class="plain" data-decide="confirmed" ${data}>Confirm</button>
+    <button type="button" class="plain" data-decide="rejected" ${data}>Reject</button>
+    <button type="button" class="plain" data-ask ${data}>Ask Claude</button>
+    <button type="button" class="plain" data-formalize ${data}>Prove in Lean</button></div></li>`;
+}
+function projectCard(project) {
+  const data = `data-project="${project.name}"`, link = path => `/api/projects/${project.name}/${path}${PAGE_QUERY}`;
+  const idle = `${data} ${project.tasks.some(task => task.state === "running") ? "disabled" : ""}`;
+  const change = `class="plain${project.owner ? " hidden" : ""}"`;
+  return `<section class="project"><h2>${escapeHtml(project.title)}${project.owner ? ` <small>${escapeHtml(project.owner)}'s server, read only</small>` : ""}</h2>
+    <div class="note">${MONEY(project.spent_usd)} of Claude${project.research_usd ? `, of which ${MONEY(project.research_usd)} on research` : ""}</div>
+    ${project.goal ? `<p>${escapeHtml(project.goal)}</p>` : ""}
+    ${openPlan === project.name ? `<div id="blueprint" data-project="${project.name}"></div>` : ""}
+    <table><tr><th>#</th><th>Result</th><th>Role</th><th>Status</th><th>Lemmas</th><th>Claude</th></tr>${project.members.map((member, index) => projectRow(project, member, index)).join("")}</table>
+    <div class="row">
+      ${unstarted(project).length && !project.owner ? `<button type="button" data-launch ${data}>Start remaining results</button>` : ""}
+      <button type="button" ${change} data-edit ${data}>Add result</button>
+      <button type="button" ${change} data-task="${PLAN_QUESTION}" ${idle}>Plan milestones</button>
+      <button type="button" ${change} data-task="" ${idle}>Research</button>
+      <button type="button" ${change} data-paper ${idle}>Write paper</button>
+      ${project.members.length ? `<button type="button" class="plain" data-toggle-plan ${data} aria-pressed="${openPlan === project.name}">Blueprint</button>` : ""}
+      ${project.paper ? `<a href="${link("paper")}">paper</a>` : ""}
+    </div>
+    <h3>Shared by the results</h3>
+    <p class="note">Each result builds on the Lean library, and its orchestrator may read the source.</p>
+    <ul><li><a href="${link("library")}" target="_blank">Lean library: ${escapeHtml(project.library)}</a></li>
+    ${project.source_files.length ? `<li><details><summary>Source files (${project.source_files.length})</summary><ul>${project.source_files.map(file => `<li><a href="${link(`source/${encodeURI(file)}`)}" target="_blank">${escapeHtml(file)}</a></li>`).join("")}</ul></details></li>` : ""}</ul>
+    ${project.open.length ? `<h3>Open lemmas</h3><ul>${project.open.map(item => `<li><code>${escapeHtml(item.lemma)}</code>: ${escapeHtml(item.reason)}</li>`).join("")}</ul>` : ""}
+    ${project.reviews.length ? `<h3>Claims without a Lean proof</h3><p class="note">Review is optional. Without an expert, ask Claude for a second opinion, which is not a proof, or prove the claim in Lean.</p><ul>${project.reviews.map((review, index) => reviewEntry(project, review, index)).join("")}</ul>` : ""}
+    ${project.tasks.length ? `<h3>Research</h3>${project.tasks.map(taskEntry).join("")}` : ""}</section>`;
+}
+// The run list moves under its project's row, with its panels and handlers.
+function placeRunList() {
+  const slot = !$("view-projects").classList.contains("hidden") && document.querySelector(`[data-run-slot="${selected}"]`);
+  (slot || $("run-home")).append($("run-list"));
+  shownRuns = "";
+  renderRuns();
+}
+async function refreshProjects() {
+  projects = await api("/api/projects" + PAGE_QUERY).catch(() => []);
+  renderHome();
+  const page = projects.map(projectCard).join("") || "<p>No projects.</p>";
+  if (page === shownProjects) return;
+  shownProjects = page;
+  $("run-home").append($("run-list"));
+  $("project-list").innerHTML = page;
+  placeRunList();
+  if (openPlan) mountBlueprint();
+}
+const showProjectPlan = name => { openPlan = name; shownProjects = ""; return refreshProjects(); };
+const projectCall = (name, path, method, body) => api(`/api/projects/${name}/${path}${PAGE_QUERY}`, {method, body: JSON.stringify(body)})
+  .catch(error => alert(error.message)).then(refreshProjects);
+const startTask = (name, body) => projectCall(name, "tasks", "POST", body);
+
+$("project-list").addEventListener("click", async event => {
+  const {projectRun: run, runTab: tab, togglePlan, edit, index, project: name, task, launch, paper, claim, decide, ask, formalize} = event.target.dataset;
+  const project = projects.find(entry => entry.name === name);
+  if (run) {
+    event.preventDefault();
+    await refreshRuns();
+    await showProjectPlan(null);
+    openRun(run, tab && allRuns.find(entry => entry.run_id === run)?.files.includes("blueprint.json") ? tab : "Progress");
+  }
+  // One graph at a time: a run's panel and the project's blueprint share it.
+  if (togglePlan !== undefined) {
+    if (selected) openRun(selected);
+    showProjectPlan(openPlan === name ? null : name);
+  }
+  if (edit !== undefined) { event.preventDefault(); openMember(project, index); }
+  if (task !== undefined) { $("task-form").dataset.project = name; $("task-question").value = task; $("task-dialog").showModal(); }
+  if (launch !== undefined && confirm(`Queue the remaining results of ${project.title}? Each run spends Claude and GPU time.`)) projectCall(name, "launch", "POST");
+  if (paper !== undefined) startTask(name, {kind: "paper"});
+  const review = project?.reviews[claim];
+  if (decide) {
+    const note = prompt(decide === "confirmed" ? "Note (optional)" : "What is wrong with the claim?");
+    if (note !== null) projectCall(name, `reviews/${claim}`, "POST", {decision: decide, note});
+  }
+  if (ask !== undefined && confirm("Spend up to $10 of Claude on a check of this claim?")) startTask(name, {kind: "check", question: review.claim, max_usd: 10});
+  if (formalize !== undefined) projectCall(name, "members", "PUT", [...unstarted(project), {uuid: `claim_${Number(claim) + 1}`, role: "main", statement: review.claim}]);
+});
+
+$("task-form").addEventListener("submit", event => {
+  event.preventDefault();
+  $("task-dialog").close();
+  startTask($("task-form").dataset.project, {kind: "research", question: $("task-question").value, max_usd: Number($("task-limit").value)});
+});
+
+// Only results without a run can change.
+function openMember(project, index) {
+  const member = project.members[index] || {uuid: "", role: "main", statement: "", proof: ""};
+  editing = {project, member};
+  $("member-name").value = member.uuid;
+  $("member-name").disabled = Boolean(index);
+  $("member-role").value = member.role;
+  $("member-statement").value = member.statement || "";
+  $("member-uses").value = (member.uses || []).join(", ");
+  $("member-proof").value = member.proof || "";
+  $("member-dialog").showModal();
+}
+function saveMember(change) {
+  const {project, member} = editing, members = unstarted(project), place = members.indexOf(member);
+  const edited = {uuid: $("member-name").value, role: $("member-role").value, statement: $("member-statement").value, proof: $("member-proof").value, uses: $("member-uses").value.split(",").map(name => name.trim()).filter(Boolean)};
+  change(members, place < 0 ? members.length : place, edited);
+  $("member-dialog").close();
+  projectCall(project.name, "members", "PUT", members);
+}
+$("member-form").addEventListener("submit", event => { event.preventDefault(); saveMember((members, place, edited) => members.splice(place, 1, edited)); });
+$("member-up").onclick = () => saveMember((members, place, edited) => { members.splice(place, 1); members.splice(Math.max(place - 1, 0), 0, edited); });
+$("member-remove").onclick = () => saveMember((members, place) => members.splice(place, 1));
+
+async function setSubmitKind(kind) {
+  for (const button of $("submit-kind").children) button.setAttribute("aria-pressed", button.dataset.kind === kind);
+  $("submission").classList.toggle("hidden", kind === "project");
+  $("project-form").classList.toggle("hidden", kind !== "project");
+  if (kind !== "project") return;
+  await refreshReleases();
+  const same = values => values.map(value => [value, value]);
+  $("project-group").innerHTML = optionList(same(catalog.gpu_groups));
+  $("project-group").value = catalog.default_gpu_group;
+  const group = (label, entries) => entries.length ? `<optgroup label="${label}">${optionList(entries)}</optgroup>` : "";
+  const service = name => catalog[name].map(entry => [`${name}:${entry.model}`, entry.label]);
+  $("project-prover").innerHTML = group("AIProver", aiproverEntries()) + group("Claude", service("claude")) + group("Codex", service("codex")) + group("Your servers", serverEntries());
+  $("project-prover").value = `aiprover:${catalog.default.subagent?.model}`;
+  $("project-lean").innerHTML = optionList(same(leanReleases.releases.filter(entry => entry.state === "installed").map(entry => entry.release)));
+  $("project-lean").value = leanReleases.default;
+}
+$("submit-kind").onclick = event => event.target.dataset.kind && setSubmitKind(event.target.dataset.kind);
+$("start-project").onclick = () => setSubmitKind("project");
+// Only AIProver versions need a group's model server.
+$("project-prover").onchange = () => {
+  const wanted = $("project-prover").value.startsWith("aiprover:") ? catalog.default_gpu_group : "cpu";
+  if (catalog.gpu_groups.includes(wanted)) $("project-group").value = wanted;
+};
+async function refreshCatalog() {
+  catalog = await api("/api/models" + PAGE_QUERY);
+  buildPickers();
+  if (!$("project-form").classList.contains("hidden")) await setSubmitKind("project");
+  $("server-list").innerHTML = catalog.servers.map(server => `<li><code>${escapeHtml(server.name)}</code> ${escapeHtml(server.kind)}, ${escapeHtml(server.model)} <button type="button" class="plain" data-remove-server="${escapeHtml(server.name)}">Remove</button></li>`).join("");
+}
+document.addEventListener("click", async event => {
+  const {removeServer} = event.target.dataset;
+  if (event.target.matches("[data-add-server]")) { await refreshCatalog(); $("server-dialog").showModal(); }
+  if (removeServer && confirm(`Remove ${removeServer}?`)) {
+    await api(`/api/model-servers/${removeServer}`, {method: "DELETE"}).catch(error => { $("server-error").textContent = error.message; });
+    refreshCatalog();
+  }
+});
+$("server-form").addEventListener("submit", async event => {
+  event.preventDefault();
+  const body = {name: $("server-name").value, url: $("server-url").value, kind: $("server-kind").value, model: $("server-model").value, api_key: $("server-key").value};
+  try {
+    await api("/api/model-servers", {method: "POST", body: JSON.stringify(body)});
+    $("server-form").reset();
+    $("server-error").textContent = "";
+    refreshCatalog();
+  } catch (error) { $("server-error").textContent = error.message; }
+});
+$("project-form").addEventListener("submit", async event => {
+  event.preventDefault();
+  try {
+    const [provider, model] = $("project-prover").value.split(":");
+    const {name} = await api("/api/projects" + PAGE_QUERY, {method: "POST", body: JSON.stringify({
+      service: $("project-service").value, title: $("project-title").value, goal: $("project-goal").value, gpu_group: $("project-group").value, lean_release: $("project-lean").value,
+      subagent: {provider, model, effort: ""}})});
+    const [file] = $("project-source").files;
+    if (file) await api(`/api/projects/${name}/source${PAGE_QUERY}&file=${encodeURIComponent(file.name)}`, {method: "POST", body: file});
+    $("project-form").reset();
+    go("projects");
+  } catch (error) { $("project-error").textContent = error.message; }
+});
 
 $("run-list").addEventListener("click", async event => {
   const {open, cancel, resume, report, approve, reject, hide, unhide, runTab: tab, reviewPlan} = event.target.dataset;
@@ -1097,10 +1512,7 @@ $("run-list").addEventListener("click", async event => {
     await api(`/api/runs/${reject}/reject`, {method: "POST"}).catch(e => alert(e.message));
     refreshRuns();
   }
-  if (resume && confirm(`Resume ${resume}?`)) {
-    await resumeRun(allRuns.find(run => run.run_id === resume));
-    refreshRuns(); refreshHealth();
-  }
+  if (resume) openResume(allRuns.find(run => run.run_id === resume));
   if (report && confirm(`Generate the report, informal proof, and blueprint of ${report}? The run enters the queue and retains its proof. The typical Claude cost is about $2.`)) {
     await api(`/api/runs/${report}/report`, {method: "POST"}).catch(e => alert(e.message));
     refreshRuns(); refreshHealth();
@@ -1140,7 +1552,7 @@ $("import-file").onchange = async () => {
 
 // Views, and the steps of a submission --------------------------------------
 
-const VIEWS = ["runs", "submit", "guide"];
+const VIEWS = ["home", "projects", "runs", "submit", "guide"];
 const NEW_GROUP = "__new_group__";
 // Lean versions. A version not yet on the server is offered for download with
 // the packages that match it; a run cannot start on it before that finishes.
@@ -1187,9 +1599,10 @@ let step = 0;
 // (#guide-<id>), so that Back, reloads, and links lead to it.
 function route() {
   const target = location.hash.slice(1);
-  showView(target.startsWith("guide") ? "guide" : VIEWS.includes(target) ? target : "runs");
+  showView(target.startsWith("guide") ? "guide" : VIEWS.includes(target) ? target : "home");
   if (target.startsWith("guide-")) $(target)?.scrollIntoView();
   else window.scrollTo(0, 0);
+  if (["", "home", "projects"].includes(target)) refreshProjects();
 }
 
 function go(view) {
@@ -1200,6 +1613,7 @@ function go(view) {
 function showView(view) {
   for (const name of VIEWS) $(`view-${name}`).classList.toggle("hidden", name !== view);
   document.body.classList.toggle("reading", view === "guide");
+  placeRunList();
   if (view === "submit") showStep(step);
   if (view === "guide" && !$("guide-text").innerHTML) {
     $("guide-text").innerHTML = GUIDE_HTML;

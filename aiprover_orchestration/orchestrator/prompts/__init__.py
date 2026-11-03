@@ -69,6 +69,12 @@ SKETCH_JUDGE_TEMPLATE = template("sketch_judge")
 BLUEPRINT_TEMPLATE = template("blueprint")
 PLAN_REVISION_TEMPLATE = template("plan_revision")
 PLAN_GUIDANCE_TEMPLATE = template("plan_guidance")
+PLAN_FINDINGS_TEMPLATE = template("plan_findings")
+
+# Project tasks.
+RESEARCH_TEMPLATE = template("research")
+RESEARCH_CRITIC_TEMPLATE = template("research_critic")
+CLAIM_CHECK_TEMPLATE = template("claim_check")
 REFUTATION_REPAIR_TEMPLATE = template("refutation_repair")
 REPLAN_FEEDBACK_TEMPLATE = template("replan_feedback")
 HANDBACK_TEMPLATE = template("handback")

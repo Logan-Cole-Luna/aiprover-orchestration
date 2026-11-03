@@ -3,6 +3,7 @@
 import unittest
 
 from aiprover_orchestration.orchestrator.project import PaperBuilder
+from aiprover_orchestration.orchestrator.project_tasks import absorb
 from aiprover_orchestration.orchestrator.reports.report import ReportText
 
 RESULTS = [
@@ -34,3 +35,23 @@ class PaperContractTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReportAbsorptionTest(unittest.TestCase):
+
+    def test_a_report_adds_each_finding_once(self):
+        report = """<claim>Every word is finite.</claim>
+        <open name="bound">No proof is known.</open>
+        <milestone name="base"><role>background</role><uses>a, b</uses>
+        <statement>S</statement><proof>P</proof></milestone>"""
+        project = {"open": [], "reviews": [], "members": []}
+        absorb(project, report)
+        absorb(project, report)
+        self.assertEqual(project["reviews"], [{"claim": "Every word is finite."}])
+        self.assertEqual(
+            project["open"], [{"lemma": "bound", "reason": "No proof is known."}]
+        )
+        self.assertEqual(project["members"], [{
+            "uuid": "base", "role": "background", "statement": "S", "proof": "P",
+            "uses": ["a", "b"],
+        }])

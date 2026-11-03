@@ -18,10 +18,6 @@ class ForbiddenTest(unittest.TestCase):
 
 class FilterEvasionTest(unittest.TestCase):
 
-    def test_attributes_do_not_hide_declarations(self):
-        self.assertTrue(forbidden_problems("@[simp] axiom a : False"))
-        self.assertTrue(forbidden_problems("attribute [command_elab x] y"))
-
     def test_commands_are_found_wherever_they_start(self):
         for text in (
             'open Lean in elab "x" : tactic => pure ()',

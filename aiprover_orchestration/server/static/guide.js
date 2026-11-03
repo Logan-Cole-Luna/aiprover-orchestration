@@ -33,6 +33,12 @@ const PIPELINE = diagram(190, "Stages of a run",
   + arrow("M186 97V122H58V98", "loop") + label(122, 138, "revise")
   + arrow("M442 97V122H314V98", "loop") + label(378, 138, "replan")
   + arrow("M698 97V160H314V98", "loop") + label(506, 176, "replan"));
+const PROJECT = diagram(210, "Blueprint of an example project",
+  box(0, 8, 200, 58, "proved", "Bezout", "2 of 2 lemmas")
+  + box(0, 142, 200, 58, "proved", "PrimeFactorization", "3 of 3 lemmas")
+  + box(330, 8, 200, 58, "proved", "EuclidLemma", "1 of 1 lemmas")
+  + box(660, 75, 240, 58, "", "UniqueFactorization", "Interrupted at 4 of 7")
+  + arrow("M201 37H329") + arrow("M531 37H600V90H659") + arrow("M201 171H600V118H659"));
 const GUIDE_HTML = `
 <h1>User guide</h1>
 <p class="lede">This system formalizes mathematical results stated in natural language and verifies their proofs in the Lean 4 proof assistant. Its use requires no programming experience and no prior knowledge of Lean.</p>
@@ -52,8 +58,8 @@ ${diagramFigure(PIPELINE, 2, "Stages of a run. A report is produced only after t
 <p class="callout"><b>Scope of verification.</b> Lean establishes that the proof is correct for the formal statement. It cannot establish that the formal statement expresses the intended theorem; the agents assess this correspondence, and their assessment may be mistaken. Consequently, the formal statement in the report should be read directly before a result is relied upon.</p>
 
 <h2 id="guide-submission"><span>2</span>Submitting a problem</h2>
-<p>The main page lists all runs, with the most recent first. Figure 3 identifies its principal elements.</p>
-${figure("runs.png", 3, "The main page.<br><b>1</b> Submit a problem.<br><b>2</b> Filter runs by outcome.<br><b>3</b> Search by name.<br><b>4</b> Name of a run, which opens its record.<br><b>5</b> Result of the run.")}
+<p>The home page leads to each section and shows the run that most needs attention. The <b>Runs</b> page lists all runs, with the most recent first. Figure 3 identifies its principal elements.</p>
+${figure("runs.png", 3, "The Runs page.<br><b>1</b> Submit a problem.<br><b>2</b> Filter runs by outcome.<br><b>3</b> Search by name.<br><b>4</b> Name of a run, which opens its record.<br><b>5</b> Result of the run.")}
 <h3>Step 1: Problem</h3>
 <p>Select <b>Submit a problem</b>, then enter the statement and, where available, an informal proof. LaTeX notation is accepted, as Figure 4 illustrates. The run name is optional and serves to identify the run later.</p>
 <div class="example"><p><b>Run name:</b> sum_of_odd_numbers</p>
@@ -114,7 +120,40 @@ ${figure("files.png", 7, "The Files tab of a proved run.")}
 ${figure("replay.png", 10, "The replay.<br><b>1</b> Completed tree.<br><b>2</b> <b>Successful only</b> omits failed attempts.<br><b>3</b> <b>Play</b> reconstructs the tree step by step.<br><b>4</b> Description of the current step.")}
 <p>Selecting any node displays the full record of that step.</p>
 
-<h2 id="guide-incomplete"><span>8</span>Incomplete runs</h2>
+<h2 id="guide-blueprint"><span>8</span>Blueprints</h2>
+<p>A blueprint presents a proof plan as a graph of statements, in which an arrow leads from each result to the results that use it. The <b>Blueprint</b> tab of a run shows the lemmas of its plan and marks each as planned, proved, or refuted. Selecting a lemma displays its statement in mathematical language, the idea of its proof, its Lean statement, and the lemmas that depend on it. <b>Outline</b> lists the same lemmas as text, and the blueprint can be downloaded in the LaTeX format of the leanblueprint package.</p>
+<p>A blueprint is updated as lemmas are proved. A plan is regarded as sound when each open lemma is plausible and its dependencies are appropriate, irrespective of how many lemmas have yet been proved.</p>
+<p>The setting <b>Require review of the proof plan before proving</b> pauses a run before proving commences, so that a reader may approve the plan, approve it with comments, request a revision, or reject it. The run holds no computing resources during this pause.</p>
+<p>A run imported from elsewhere may show Lean statements alone, since its natural-language text was not recorded.</p>
+
+<h2 id="guide-projects"><span>9</span>Projects</h2>
+<p>A run addresses one result. A project addresses a body of connected results: the results are proved in dependency order on one shared Lean library, so that each may use those before it. A single theorem belongs in a run; a paper, or a theorem that requires several substantial preliminaries, belongs in a project.</p>
+<h3>Starting a project</h3>
+<p>Select <b>Submit a problem</b>, then <b>Project</b> in place of <b>Single problem</b>. Enter a title, the goal, and the Lean version, GPU group, and prover that its runs will use. The orchestrator may be Claude or Codex, and the prover may be AIProver, Claude, Codex, or a server of your own. The project receives a new, empty library.</p>
+<h3>Signing in</h3>
+<p>A submission that uses Claude or Codex without a login opens that service's sign-in, which links to its own site. Claude shows a code to paste back into this page, and Codex shows a code here to enter on OpenAI's site. An API key is the alternative to either. The login stays in your own account on that machine, and this page does not keep a sign-in code.</p>
+<h3>Your own model server</h3>
+<p><b>Model servers</b>, on the Submit page, adds any server with an OpenAI-compatible API. Enter its address, an API key if it needs one, and its kind: <b>AIProver</b> runs the AIProver harness on the server, and <b>General model</b> treats it as a chat model for any role. The server is checked before it is added, and it must answer from the machine that runs this page. Choose group <code>cpu</code> for a run that needs no shared model server. A key is stored on that machine and is never shown again.</p>
+<h3>Source files</h3>
+<p>A paper or notes may be attached as one file or as a zip of its files. LaTeX and other text files serve best, PDF files are harder to search, and office documents should first be converted to PDF or text. A short table of contents helps a large collection. An upload may hold up to 256 MB.</p>
+<p>Source files are unverified reference material. <b>Plan milestones</b>, <b>Research</b>, and <b>Ask Claude</b> read them, and the orchestrator of each run may open them. The solvers do not receive them, and <b>Write paper</b> uses only verified results. The orchestrator decides whether to read a file, so text that a run must use belongs in the goal or in the statement of a result. Uploaded files neither create results nor add to the library, and a Lean file among them cannot be imported by a run. Each file may be read from the project's <b>Shared by the results</b> section.</p>
+<p>As an example, consider a project with the goal of proving that every integer greater than 1 factors uniquely into primes. The sections below follow this project.</p>
+<h3>Planning the results</h3>
+<p><b>Plan milestones</b> asks Claude to divide the goal into results, using the source if one is attached, and a second session referees the proposal. The example might receive four results: Bezout's identity, Euclid's lemma, the existence of a prime factorization, and uniqueness. <b>Background</b> marks an established result on which the others build, and <b>main</b> marks a contribution of the project.</p>
+<p>Nothing runs until <b>Start remaining results</b> is selected. Until then, each result may be selected and its name, statement, informal proof, and dependencies edited; it may also be moved or removed. <b>Add result</b> writes one by hand. The dependency order deserves particular care, since it reflects the model's reading of the source.</p>
+<h3>Following the project</h3>
+<p>The table lists each result with its status, lemmas, and cost. Selecting a result opens the record of its run in place, with the tabs of Section 4. The <b>Blueprint</b> button shows the project as a graph of its results, as Figure 11 shows. Each result that has a run offers its own blueprint of lemmas, so that the project may be read at either level.</p>
+${diagramFigure(PROJECT, 11, "Blueprint of the example project. Green results are proved. A result may use those from which an arrow leads to it.")}
+<p><b>Shared by the results</b> lists what the runs have in common: the Lean library, which grows as each result is verified, and the source files.</p>
+<h3>Research on open lemmas</h3>
+<p>When a result stalls, <b>Research</b> puts a question to Claude within a spending limit, and a second session referees the answer. The report may add <b>open lemmas</b>, which remain unproved, and <b>claims</b>, on which the project relies without a Lean proof. To use a report, select <b>Resume</b> on the stalled run and choose the report under <b>Project research</b>; the run then replans with the findings and retains its proved lemmas.</p>
+<p class="callout"><b>Reports are not proofs.</b> A research report guides the plan, and every result must still pass Lean. An open lemma is never assumed.</p>
+<h3>Reviewing claims</h3>
+<p>Review of a claim is optional, and a project does not require an expert. <b>Confirm</b> and <b>Reject</b> record a person's decision. <b>Ask Claude</b> records an independent opinion, which is not a proof and is shown apart from any person's decision. <b>Prove in Lean</b> adds the claim to the project as a result, and is the only choice that settles it.</p>
+<h3>Writing the paper</h3>
+<p>Once each result has its documents, which <b>Generate documents</b> on a run produces, <b>Write paper</b> composes one article from them and checks it against the Lean statements.</p>
+
+<h2 id="guide-incomplete"><span>10</span>Incomplete runs</h2>
 <p>An unfinished run retains its proved lemmas. <b>Resume</b>, at the right of the record's tabs, continues the run from the point at which it stopped. The replay identifies the lemmas that remain unproved, and the appropriate response depends on their content.</p>
 <ul>
 <li><b>A lemma appears to be false.</b> The statement may require an additional hypothesis; a corrected statement should be submitted as a new run.</li>
@@ -123,7 +162,7 @@ ${figure("replay.png", 10, "The replay.<br><b>1</b> Completed tree.<br><b>2</b> 
 </ul>
 <p>The <b>Unfinished</b> tab of the main page collects these runs.</p>
 
-<h2 id="guide-glossary"><span>9</span>Glossary</h2>
+<h2 id="guide-glossary"><span>11</span>Glossary</h2>
 <dl class="terms"><dt>Lean</dt><dd>A language and proof assistant in which mathematics is written so that a computer can verify it.</dd>
 <dt>Mathlib</dt><dd>The shared library of formalized mathematics on which these proofs build.</dd>
 <dt>Formal statement</dt><dd>A theorem as written in Lean.</dd>
@@ -132,4 +171,8 @@ ${figure("replay.png", 10, "The replay.<br><b>1</b> Completed tree.<br><b>2</b> 
 <dt>Auditor</dt><dd>The agent that checks a formalization without access to the source text.</dd>
 <dt>Solver</dt><dd>A model, AIProver, that proves individual lemmas.</dd>
 <dt>Sorry</dt><dd>Lean's placeholder for a missing proof. A proved run contains none.</dd>
-<dt>Hand-back</dt><dd>The return of a lemma from the solvers to the orchestrator after repeated failure.</dd></dl>`;
+<dt>Hand-back</dt><dd>The return of a lemma from the solvers to the orchestrator after repeated failure.</dd>
+<dt>Blueprint</dt><dd>A proof plan shown as a graph of statements and their dependencies.</dd>
+<dt>Project</dt><dd>Connected results proved in dependency order on one shared library.</dd>
+<dt>Milestone</dt><dd>One result of a project, proved by its own run.</dd>
+<dt>Claim</dt><dd>A statement on which a project relies without a Lean proof.</dd></dl>`;

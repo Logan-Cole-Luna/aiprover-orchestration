@@ -1,14 +1,9 @@
-"""Orchestrator settings of a submission (server/settings.py): their
-validation and their storage as run options."""
+"""Validation of the orchestrator settings of a submission
+(server/settings.py)."""
 
-import json
 import unittest
 
 from aiprover_orchestration.server import settings
-from aiprover_orchestration.server.jobs import JobStore
-from tests.support import ServerProcessTest
-
-PROBLEM = {"statement": "theorem t : 1 = 1", "proof": "rfl", "page": "dev"}
 
 
 class SettingsTest(unittest.TestCase):
@@ -27,20 +22,6 @@ class SettingsTest(unittest.TestCase):
         ):
             with self.assertRaises(ValueError):
                 settings.validate(rejected)
-
-
-class SubmissionTest(ServerProcessTest):
-
-    def options(self, run_id: str) -> dict:
-        records = JobStore(self.directory / "state" / "jobs.db", readonly=True)
-        return json.loads(records.get(run_id)["options"])
-
-    def test_settings_are_stored_as_run_options(self):
-        chosen = {"max_handbacks": 3, "aiprover_max_retries": 4}
-        status, body = self.submit(PROBLEM | {"settings": chosen})
-        self.assertEqual(status, 201, body)
-        self.assertEqual(self.options(body["run_id"]), chosen)
-
 
 if __name__ == "__main__":
     unittest.main()

@@ -9,6 +9,7 @@ The size measures of a run (`run_metrics`) serve the page's Details tab.
 import json
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 from ...utils.files import read_json, write_atomic
 from ..config import MAIN_NAME
@@ -133,6 +134,29 @@ def record_proved(directory: Path, statement: str) -> None:
                 if statement_key(node["lean"]) == key:
                     node["status"] = "proved"
             write_atomic(path, json.dumps(plan, ensure_ascii=False))
+
+
+def from_summary(result_dir: Path) -> None:
+    """Give a run without a blueprint one from its recorded plan, in Lean
+    statements only: an imported run may predate blueprints."""
+    summary = read_json(result_dir / "summary.json")
+    sketch = summary.get("sketch") or {}
+    if (result_dir / "blueprint").exists() or not sketch.get("lemmas"):
+        return
+    fields = summary["formalization"]
+    names = ("definitions", "preamble", "theorem_name", "signature")
+    blank = {"helpers": "", "proof": "", "refutation": ""}
+    plan = SimpleNamespace(
+        lemmas=[SimpleNamespace(**blank | lemma) for lemma in sketch["lemmas"]],
+        main_proof=sketch.get("main_proof", ""),
+    )
+    nodes = plan_nodes(
+        Formalization(*map(fields.get, names)),
+        plan,
+        {},
+        summary.get("status") in ("proved", "verified_in_lean"),
+    )
+    write(result_dir / "blueprint", 1, nodes, ["no text"])
 
 
 def run_metrics(result_dir: Path) -> dict:
