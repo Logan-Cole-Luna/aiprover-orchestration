@@ -1,12 +1,12 @@
 """Models a run may use for each of its roles.
 
 A selection is `{"provider": ..., "model": ..., "effort": ...}` with provider
-"claude", "aiprover", or a hosted provider (`HOSTED_PROVIDERS`).
-For Claude, `model` is a model id, `effort` a reasoning level the model
+"claude", "codex", "aiprover", or "custom" (a server added on the page, which
+`model` names).
+For Claude and Codex, `model` is a model id, `effort` a reasoning level the model
 accepts (empty = the model default) and `tools` whether the role has Lean
 tools (agents/claude_cli.py); the orchestrator's `judge_tools` covers its
-formalization and sketch judges. For a hosted provider, `model` is any
-model id the provider serves and `effort` is empty. For AIProver, `model` is a version, whose
+formalization and sketch judges. For AIProver, `model` is a version, whose
 checkpoint the Vista model server must serve, and `effort` is empty: the
 reasoning of the model is not configurable.
 
@@ -19,10 +19,16 @@ lemmas. A role absent from a stored selection keeps the served config's model.
 
 import json
 import os
-import re
 from pathlib import Path
 
-from .vista import CHECKPOINTS, GPU_GROUPS
+from .model_servers import (
+    CHECKPOINTS,
+    GPU_GROUPS,
+    custom_harness_config,
+    custom_servers,
+    key_file,
+    server_endpoint,
+)
 
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 CLAUDE_MODELS = {
@@ -30,12 +36,13 @@ CLAUDE_MODELS = {
     "claude-sonnet-5-5": {"label": "Sonnet 5.5", "efforts": EFFORTS},
     "claude-haiku-4-5-20251001": {"label": "Haiku 4.5", "efforts": ()},
 }
-HOSTED_PROVIDERS = {
-    "openai": "OpenAI",
-    "huggingface": "Hugging Face",
-    "openrouter": "OpenRouter",
+CODEX_MODELS = {
+    "gpt-6.1-sol": {"label": "GPT-6.1 Sol", "efforts": EFFORTS},
+    "gpt-6-astra": {"label": "GPT-6 Astra", "efforts": EFFORTS},
+    "gpt-6.1-terra": {"label": "GPT-6.1 Terra", "efforts": EFFORTS},
 }
-MODEL_ID_RE = re.compile(r"[\w.:/-]+")
+# Services with a sign-in, each with its models.
+SERVICE_MODELS = {"claude": CLAUDE_MODELS, "codex": CODEX_MODELS}
 AIPROVER_VERSIONS = {
     "trained": "AIProver trained (FP8, Vista)",
     "base": "AIProver base (bf16, Vista)",
@@ -108,21 +115,24 @@ SUBAGENT_TIMEOUT = 5400
 def catalog() -> dict:
     """What the page offers, for `GET /api/models`."""
     return {
-        "claude": [
-            {
-                "model": model,
-                "label": info["label"],
-                "efforts": list(info["efforts"]),
-            }
-            for model, info in CLAUDE_MODELS.items()
-        ],
+        **{
+            service: [
+                {
+                    "model": model,
+                    "label": info["label"],
+                    "efforts": list(info["efforts"]),
+                }
+                for model, info in service_models.items()
+            ]
+            for service, service_models in SERVICE_MODELS.items()
+        },
         "aiprover": [
             {"model": version, "label": label}
             for version, label in AIPROVER_VERSIONS.items()
         ],
-        "hosted": [
-            {"provider": provider, "label": label}
-            for provider, label in HOSTED_PROVIDERS.items()
+        "servers": [
+            {"name": name, "kind": server["kind"], "model": server["model"]}
+            for name, server in custom_servers().items()
         ],
         "roles": [
             {
@@ -147,22 +157,22 @@ def validate(selection: dict) -> dict:
         )
         if role in PHASE_ROLES and provider != "claude":
             raise ValueError(f"{role}: a phase of the captain uses Claude")
-        if provider == "claude":
-            if model not in CLAUDE_MODELS:
-                raise ValueError(f"{role}: unknown Claude model {model!r}")
-            efforts = CLAUDE_MODELS[model]["efforts"]
-            if effort and effort not in efforts:
+        if provider in SERVICE_MODELS:
+            service_models = SERVICE_MODELS[provider]
+            if model not in service_models:
+                raise ValueError(f"{role}: unknown {provider} model {model!r}")
+            if effort and effort not in service_models[model]["efforts"]:
                 raise ValueError(
-                    f"{role}: {CLAUDE_MODELS[model]['label']} has no "
+                    f"{role}: {service_models[model]['label']} has no "
                     f"reasoning level {effort!r}"
                 )
-        elif provider in HOSTED_PROVIDERS:
-            if not MODEL_ID_RE.fullmatch(model):
-                raise ValueError(f"{role}: invalid model id {model!r}")
-            effort = ""
         elif provider == "aiprover":
             if model not in AIPROVER_VERSIONS:
                 raise ValueError(f"{role}: unknown AIProver version {model!r}")
+            effort = ""
+        elif provider == "custom":
+            if model not in custom_servers():
+                raise ValueError(f"{role}: unknown model server {model!r}")
             effort = ""
         else:
             raise ValueError(f"{role}: unknown provider {provider!r}")
@@ -171,7 +181,7 @@ def validate(selection: dict) -> dict:
             "model": model,
             "effort": effort,
         }
-        if provider == "claude" and role != "subagent":
+        if provider in SERVICE_MODELS and role != "subagent":
             normalized[role] |= tool_choice(role, choice)
     versions = checkpoint_names(normalized)
     if len(versions) > 1:
@@ -236,13 +246,13 @@ def build_config(base_config: Path, selection: dict) -> dict:
         # The pipeline gives a reviewer or writer absent from the config the
         # captain's specification.
         spec = agents.get(ROLES[role]) or agents["captain"]
-        if choice["provider"] == "claude":
+        if choice["provider"] in SERVICE_MODELS:
             spec = {
                 key: value
                 for key, value in spec.items()
                 if key in ("timeout", "max_output_tokens")
             }
-            spec |= {"backend": "claude", "model": choice["model"]}
+            spec |= {"backend": choice["provider"], "model": choice["model"]}
             if choice["effort"]:
                 spec["effort"] = choice["effort"]
             if role != "subagent":
@@ -254,11 +264,20 @@ def build_config(base_config: Path, selection: dict) -> dict:
                     }
             if role == "subagent":
                 spec["timeout"] = SUBAGENT_TIMEOUT
-        elif choice["provider"] in HOSTED_PROVIDERS:
+        elif choice["provider"] == "custom":
+            name, server = choice["model"], custom_servers()[choice["model"]]
+            if role == "subagent" and server["kind"] == "aiprover":
+                agents["solver"] = {
+                    **agents["solver"],
+                    "config": custom_harness_config(name, server),
+                    "timeout": SOLVER_TIMEOUTS["dgx"],
+                }
+                continue
             spec = {
                 "backend": "openai_compatible",
-                "provider": choice["provider"],
-                "model": choice["model"],
+                "model": server["model"],
+                "base_url": server_endpoint(name, server),
+                "api_key_file": str(key_file(name)),
                 "timeout": spec.get("timeout", 2400),
                 "max_tokens": CHAT_REPLY_TOKENS,
             }
@@ -298,6 +317,6 @@ def build_config(base_config: Path, selection: dict) -> dict:
             phases[prefix] = {**phases.get(prefix, {}), **override}
     for version in checkpoint_names(selection):
         config |= VERSION_SETTINGS.get(version, {})
-    if selection.get("subagent", {}).get("provider") == "claude":
+    if selection.get("subagent", {}).get("provider") in SERVICE_MODELS:
         config["max_claude_calls"] = CLAUDE_SUBAGENT_CALL_LIMIT
     return config

@@ -1,5 +1,5 @@
 # systemd user unit for the reasoning proxy of GPU group "openai"
-# (aiprover_orchestration/server/vista.py GPU_GROUPS): listens on 18569 and
+# (aiprover_orchestration/server/model_servers.py GPU_GROUPS): listens on 18569 and
 # pools the group's tunnel on 18559 (configs/aiprover/vista_openai.toml) with
 # the tunnels of groups "main" (18555) and "open" (18558), whose servers the
 # group borrows.

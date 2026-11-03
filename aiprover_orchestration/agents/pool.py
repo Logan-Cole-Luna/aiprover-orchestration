@@ -16,9 +16,9 @@ built from a specification in the run configuration:
 `claude` calls Claude through the Anthropic API when `ANTHROPIC_API_KEY` is
 set, otherwise through the logged-in `claude` CLI (Claude subscription);
 `CLAUDE_AUTH=api` or `CLAUDE_AUTH=subscription` selects one explicitly.
+`codex` calls a Codex model through the logged-in `codex` CLI.
 `openai_compatible` covers any server that implements the OpenAI chat
-completions schema: a local vLLM server, or a hosted provider named by
-`provider` (`openai`, `huggingface`, `openrouter`). `aiprover` runs the AIProver
+completions schema, such as a local vLLM server. `aiprover` runs the AIProver
 harness (a full agentic Lean session per call; solver role only) with the
 model named in its own configuration. `python` loads a user-defined
 subclass of `Agent`, so a custom agent can replace any role without changes
@@ -60,6 +60,7 @@ from .base import (
 )
 from .claude import ClaudeAgent
 from .claude_cli import ClaudeCLIAgent
+from .codex_cli import CodexCLIAgent
 from .openai_compatible import OpenAICompatibleAgent
 
 logger = logging.getLogger(__name__)
@@ -82,6 +83,7 @@ def claude_agent(**options) -> Agent:
 
 BACKENDS = {
     "claude": claude_agent,
+    "codex": CodexCLIAgent,
     "openai_compatible": OpenAICompatibleAgent,
 }
 
@@ -98,8 +100,8 @@ SKETCH_BUDGET_USD = 6.0
 
 
 def role_spec(role: str, spec: dict) -> dict:
-    """`spec` with the default Lean tools of `role` for a Claude backend."""
-    if spec.get("backend") != "claude":
+    """`spec` with the default Lean tools of `role` for a CLI backend."""
+    if spec.get("backend") not in ("claude", "codex"):
         return spec
     spec = {"tools": role in TOOL_ROLES, **spec}
     if spec["tools"]:

@@ -1,8 +1,8 @@
 #!/bin/sh
 # aiprover-server: a query server of your own account, whose runs use your
-# own Claude login (`claude auth login`, once, through Anthropic's own flow).
+# own Claude or Codex login, made on the server's page when a run first needs it.
 #
-# From your own machine, one command signs in on first use, starts the server and holds the tunnel
+# From your own machine, one command starts the server and holds the tunnel
 # to its page (`aiprover-server ssh` prints it with your port):
 #   ssh -t -L PORT:127.0.0.1:PORT USER@VM /home/loganluna/workspace/aiprover_orchestration/scripts/user/aiprover-server serve
 #
@@ -90,21 +90,19 @@ login_rejected() {
   [ "$state" = 1 ]
 }
 
-# The unmodified `claude` binary, signed in to the user's own account. Without
-# an installation of the user's own, the owner's binary is used (no updates).
-sign_in() {
-  if ! command -v claude >/dev/null 2>&1; then
-    [ -x "$OWNER_HOME/.local/bin/claude" ] || die "claude not found; install it: curl -fsSL https://claude.ai/install.sh | bash"
-    ln -sf "$OWNER_HOME/.local/bin/claude" "$HOME_DIR/bin/claude"
-    export DISABLE_AUTOUPDATER=1
-    say "Using the shared claude binary; to install your own: curl -fsSL https://claude.ai/install.sh | bash"
-  fi
-  login_rejected || return 0
-  [ -t 0 ] || die "not signed in to Claude; sign in from a terminal (ssh -t)"
-  say "Sign in to Claude with your own account (the login is kept in ~/.claude)."
-  claude auth logout >/dev/null 2>&1 || true
-  claude auth login
-  ! login_rejected || die "not signed in to Claude"
+# The unmodified service programs. Without an installation of the user's own,
+# the owner's is used (no updates); with neither, the server installs a program
+# when its service is first needed. A login Claude rejects is removed, so that
+# the next run asks for a new sign-in.
+find_services() {
+  for program in claude codex; do
+    if ! command -v "$program" >/dev/null 2>&1 && [ -x "$OWNER_HOME/.local/bin/$program" ]; then
+      ln -sf "$OWNER_HOME/.local/bin/$program" "$HOME_DIR/bin/$program"
+      export DISABLE_AUTOUPDATER=1
+    fi
+  done
+  command -v claude >/dev/null 2>&1 || return 0
+  ! login_rejected || claude auth logout >/dev/null 2>&1 || true
 }
 
 # Runtime state: a Lake project on the shared Mathlib packages, an empty
@@ -157,7 +155,7 @@ launch() {
 }
 
 tunnel() {
-  say "On your own machine (signs in on first use, starts the server and holds the tunnel):"
+  say "On your own machine (starts the server and holds the tunnel):"
   say "  ssh -t -L $SERVER_PORT:127.0.0.1:$SERVER_PORT $(id -un)@$VM_ADDRESS $ROOT/scripts/user/aiprover-server serve"
   say "then open http://localhost:$SERVER_PORT/user"
 }
@@ -165,8 +163,8 @@ tunnel() {
 start() {
   mkdir -p "$HOME_DIR/bin" "$PIDS"
   export PATH="$HOME_DIR/bin:$HOME/.local/bin:$(dirname "$PYTHON"):$ELAN_HOME/bin:$PATH"
-  unset ANTHROPIC_API_KEY
-  sign_in
+  unset ANTHROPIC_API_KEY OPENAI_API_KEY
+  find_services
   check_ports
   prepare
   export AIPROVER_ORCHESTRATION_HOME="$HOME_DIR" \

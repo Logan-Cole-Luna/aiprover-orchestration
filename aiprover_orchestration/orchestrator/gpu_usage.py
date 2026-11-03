@@ -29,7 +29,7 @@ import sys
 from pathlib import Path
 
 from ..paths import CONFIG_DIR, ROOT
-from ..server.vista import GpuGroup, group_of_solver, sharing_key
+from ..server.model_servers import GpuGroup, group_of_solver, sharing_key
 from ..utils.files import read_json, read_jsonl, write_atomic
 from .trace import Trace
 

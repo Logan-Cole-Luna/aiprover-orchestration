@@ -18,6 +18,8 @@ pkgs.buildEnv {
     ]))
     jq
     ripgrep
+    # npm: the server installs Codex when a user first needs it.
+    nodejs
     git
     curl
     # No ssh: the system's own client is used, with the user's ~/.ssh/config, agent and

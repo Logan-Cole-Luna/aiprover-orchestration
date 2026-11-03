@@ -3,7 +3,7 @@
 Each job is one orchestration run, executed as a subprocess of the existing
 entry point (`python -m aiprover_orchestration.orchestrator.run`). A submitted job awaits approval;
 approved jobs start in submission order. Jobs belong to GPU groups
-(vista.GPU_GROUPS), each with its own model server; a group runs up to
+(model_servers.GPU_GROUPS), each with its own model server; a group runs up to
 MAX_CONCURRENT_RUNS of its jobs at once (environment QUERY_SERVER_MAX_RUNS),
 which share its server. Runs of the same problem may overlap (each writes and
 builds its Lean modules under the workspace's build lock).
@@ -50,8 +50,8 @@ from ..paths import (
 )
 from ..lean import releases
 from ..utils.sqlite import SqliteStore
-from . import models, vista
-from .vista import run_command
+from . import accounts, model_servers, models
+from .model_servers import run_command
 
 DATABASE = STATE_DIR / "jobs.db"
 PROBLEM_DIR = STATE_DIR / "problems"
@@ -98,6 +98,7 @@ SERVER_OPTIONS = (
     "captain_phases",
     "documents_only",
     "lean_release",
+    "source_dir",
 )
 # The state of a run that stopped for a decision on its proof plan.
 PLAN_REVIEW = "plan_review"
@@ -126,7 +127,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     stalled     INTEGER NOT NULL DEFAULT 0,  -- requeues in a row without progress
     options     TEXT,                        -- JSON {config field: value} for this run
     agents      TEXT,                        -- JSON models of the run, see models.py
-    gpu_group   TEXT,                        -- GPU group (vista.GPU_GROUPS); NULL = main
+    gpu_group   TEXT,                        -- GPU group (model_servers.GPU_GROUPS); NULL = main
     hidden      INTEGER NOT NULL DEFAULT 0,  -- 1: left out of the page's run list
     page        TEXT,                        -- page submitting (app.PAGES); NULL = dev
     problem_group TEXT,                      -- group named at submission; NULL = by dataset
@@ -158,7 +159,7 @@ MIGRATIONS = [
 ]
 
 
-def proxy_up(group: vista.GpuGroup) -> bool:
+def proxy_up(group: model_servers.GpuGroup) -> bool:
     """True if the group's reasoning proxy (server/reasoning_proxy.py) forwards
     to the model."""
     try:
@@ -172,7 +173,7 @@ def proxy_up(group: vista.GpuGroup) -> bool:
 
 def endpoint_status(
     bring_up: bool,
-    group: vista.GpuGroup = vista.GPU_GROUPS[vista.DEFAULT_GROUP],
+    group: model_servers.GpuGroup = model_servers.GPU_GROUPS[model_servers.DEFAULT_GROUP],
 ) -> tuple[bool, str]:
     """Probe the group's AIProver endpoint; with `bring_up`, open its tunnel
     first. Served runs reach the model through the reasoning proxy, so it is
@@ -192,7 +193,7 @@ def endpoint_status(
     return code == 0, message
 
 
-def tunnel_job(group: vista.GpuGroup) -> str | None:
+def tunnel_job(group: model_servers.GpuGroup) -> str | None:
     """Server job the group's open tunnel leads to (the harness records it
     in <work_root>/tunnel.json); None if no tunnel is recorded."""
     with open(group.tunnel_config, "rb") as config_file:
@@ -206,7 +207,7 @@ def tunnel_job(group: vista.GpuGroup) -> str | None:
     return match.group(1) if match else None
 
 
-def tunnel_down(group: vista.GpuGroup) -> None:
+def tunnel_down(group: model_servers.GpuGroup) -> None:
     run_command(
         [str(AIPROVER_CLI), "tunnel", "down"],
         timeout=60,
@@ -214,15 +215,15 @@ def tunnel_down(group: vista.GpuGroup) -> None:
     )
 
 
-def job_group(job: dict) -> vista.GpuGroup:
+def job_group(job: dict) -> model_servers.GpuGroup:
     """GPU group of a job; jobs without one belong to the default group."""
-    return vista.GPU_GROUPS.get(
-        job.get("gpu_group") or vista.DEFAULT_GROUP,
-        vista.GPU_GROUPS[vista.DEFAULT_GROUP],
+    return model_servers.GPU_GROUPS.get(
+        job.get("gpu_group") or model_servers.DEFAULT_GROUP,
+        model_servers.GPU_GROUPS[model_servers.DEFAULT_GROUP],
     )
 
 
-def group_config(config: dict, group: vista.GpuGroup) -> dict:
+def group_config(config: dict, group: model_servers.GpuGroup) -> dict:
     """A run config whose AIProver agents use the group's model server;
     agents of a persistent version keep their own server."""
     persistent = set(models.HARNESS_CONFIGS.values()) | set(
@@ -232,6 +233,9 @@ def group_config(config: dict, group: vista.GpuGroup) -> dict:
         if (
             spec.get("config") in persistent
             or spec.get("base_url") in persistent
+            or str(spec.get("config")).startswith(
+                str(model_servers.CUSTOM_DIR)
+            )
         ):
             continue
         if spec.get("backend") == "aiprover":
@@ -278,7 +282,7 @@ def job_checkpoint(job: dict) -> str | None:
     return (
         models.checkpoint_of(selection)
         if selection
-        else vista.CHECKPOINTS["trained"]
+        else model_servers.CHECKPOINTS["trained"]
     )
 
 
@@ -398,7 +402,7 @@ class JobStore(SqliteStore):
         rows = self._execute(
             "SELECT job_id, checkpoint FROM vista_jobs "
             "WHERE COALESCE(gpu_group, ?) = ?",
-            (vista.DEFAULT_GROUP, group),
+            (model_servers.DEFAULT_GROUP, group),
         )
         return {row["job_id"]: row["checkpoint"] for row in rows}
 
@@ -415,7 +419,7 @@ class JobStore(SqliteStore):
 
 class Worker(threading.Thread):
     """Runs approved jobs and manages the Vista model servers. Each GPU group
-    (vista.GPU_GROUPS) has its own model server and runs up to
+    (model_servers.GPU_GROUPS) has its own model server and runs up to
     MAX_CONCURRENT_RUNS of its jobs at once."""
 
     def __init__(self, store: JobStore):
@@ -462,7 +466,7 @@ class Worker(threading.Thread):
         # A group's servers are kept for its own runs; a group that only
         # lends them is idle.
         busy_groups = {job_group(job).name for job in queued + running}
-        for name, group in vista.GPU_GROUPS.items():
+        for name, group in model_servers.GPU_GROUPS.items():
             if name in busy_groups:
                 self.idle_since.pop(name, None)
             else:
@@ -586,7 +590,7 @@ class Worker(threading.Thread):
     # Vista servers --------------------------------------------------------
 
     def _serving(
-        self, checkpoint: str, group: vista.GpuGroup, own: bool = True
+        self, checkpoint: str, group: model_servers.GpuGroup, own: bool = True
     ) -> bool:
         """True if the group's model endpoint is up and serves `checkpoint`;
         otherwise bring the group's server in line with it: replace a server
@@ -599,7 +603,7 @@ class Worker(threading.Thread):
                 self.vista_messages[group.name] = message
                 return True
             self.serving.pop(group.name, None)
-        jobs = vista.server_jobs(group)
+        jobs = model_servers.server_jobs(group)
         if jobs is None:
             self.vista_messages[group.name] = (
                 "Vista unreachable: reopen the ControlMaster "
@@ -614,7 +618,7 @@ class Worker(threading.Thread):
         # A job the server did not submit has no recorded checkpoint: the
         # default.
         serves = {
-            job_id: checkpoints.get(job_id) or vista.CHECKPOINTS["trained"]
+            job_id: checkpoints.get(job_id) or model_servers.CHECKPOINTS["trained"]
             for job_id in jobs
         }
         for job_id in [
@@ -632,13 +636,13 @@ class Worker(threading.Thread):
                 f"cancelling server job {job_id} ({group.name}, serves {serves[job_id]}) "
                 f"for a run that needs {checkpoint}"
             )
-            if vista.cancel_server(job_id):
+            if model_servers.cancel_server(job_id):
                 self.store.remove_vista_job(job_id)
             del serves[job_id]
         if not serves:
             if not own:
                 return False
-            job_id = vista.submit_server(checkpoint, group)
+            job_id = model_servers.submit_server(checkpoint, group)
             if job_id:
                 self.store.add_vista_job(job_id, checkpoint, group.name)
                 self.vista_messages[group.name] = (
@@ -664,7 +668,7 @@ class Worker(threading.Thread):
         self.vista_messages[group.name] = f"waiting for server job {summary}"
         return False
 
-    def _tunnel_current(self, group: vista.GpuGroup, jobs: dict) -> bool:
+    def _tunnel_current(self, group: model_servers.GpuGroup, jobs: dict) -> bool:
         """Point the group's tunnel at the server job its handoff file names,
         once that job's server answers; False if the handoff names no
         running job. The handoff of an ended job still names its node, where
@@ -673,7 +677,7 @@ class Worker(threading.Thread):
         running = [
             job_id for job_id, state in jobs.items() if state == "RUNNING"
         ]
-        named = vista.handoff(group)
+        named = model_servers.handoff(group)
         current = tunnel_job(group)
         # An unreadable handoff (a failed remote read) leaves a tunnel to a
         # running job in place.
@@ -692,7 +696,7 @@ class Worker(threading.Thread):
             return False
         if current == named["job"]:
             return True
-        if current in running and not vista.server_answers(
+        if current in running and not model_servers.server_answers(
             named["node"], named["port"]
         ):
             return True  # the new job's server is loading; keep the old one
@@ -705,14 +709,14 @@ class Worker(threading.Thread):
                 "job"
             ] and job_id in self.store.vista_job_checkpoints(group.name):
                 logger.info(f"{group.name}: cancelling superseded job {job_id}")
-                if vista.cancel_server(job_id):
+                if model_servers.cancel_server(job_id):
                     self.store.remove_vista_job(job_id)
         return True
 
     def _keep_successor(
         self,
         checkpoint: str,
-        group: vista.GpuGroup,
+        group: model_servers.GpuGroup,
         jobs: dict,
         checkpoints: dict,
     ) -> None:
@@ -726,18 +730,18 @@ class Worker(threading.Thread):
         ):
             return
         self.successor_tried[group.name] = time.time()
-        job_id = vista.submit_server(checkpoint, group)
+        job_id = model_servers.submit_server(checkpoint, group)
         if job_id:
             logger.info(f"{group.name}: queued successor server job {job_id}")
             self.store.add_vista_job(job_id, checkpoint, group.name)
 
-    def _pool_serving(self, checkpoint: str, group: vista.GpuGroup) -> bool:
+    def _pool_serving(self, checkpoint: str, group: model_servers.GpuGroup) -> bool:
         """True if a model server of the group's pool serves `checkpoint`;
         every server of the pool is brought in line with it."""
         return any(
             [
                 self._serving(checkpoint, member, own=member is group)
-                for member in vista.server_pool(group)
+                for member in model_servers.server_pool(group)
             ]
         )
 
@@ -753,11 +757,11 @@ class Worker(threading.Thread):
             if checkpoint is None:
                 continue
             # Recheck the server jobs and handoffs, not the cached state.
-            for member in vista.server_pool(vista.GPU_GROUPS[group]):
+            for member in model_servers.server_pool(model_servers.GPU_GROUPS[group]):
                 self.serving.pop(member.name, None)
-            self._pool_serving(checkpoint, vista.GPU_GROUPS[group])
+            self._pool_serving(checkpoint, model_servers.GPU_GROUPS[group])
 
-    def _release_idle_servers(self, group: vista.GpuGroup) -> None:
+    def _release_idle_servers(self, group: model_servers.GpuGroup) -> None:
         """Cancel the server jobs this worker submitted for `group` after
         IDLE_SECONDS without queued or running jobs in the group."""
         managed = list(self.store.vista_job_checkpoints(group.name))
@@ -772,7 +776,7 @@ class Worker(threading.Thread):
                 f"{group.name}: no queued runs for {IDLE_SECONDS // 60} min; "
                 f"cancelling {job_id}"
             )
-            if vista.cancel_server(job_id):
+            if model_servers.cancel_server(job_id):
                 self.store.remove_vista_job(job_id)
         self.serving.pop(group.name, None)
         self.vista_messages[group.name] = (
@@ -821,6 +825,8 @@ class Worker(threading.Thread):
                 if spec.get("backend") == "aiprover":
                     spec["timeout"] = timeout
         captain = config["agents"]["captain"]
+        if "source_dir" in options and captain["backend"] in models.SERVICE_MODELS:
+            captain["source_dir"] = options["source_dir"]
         phases = options.get("captain_phases")
         if phases and captain["backend"] == "claude":
             # `true` selects the default phases, a name the file
@@ -892,6 +898,7 @@ class Worker(threading.Thread):
                     env={
                         **os.environ,
                         "PYTHONPATH": str(ROOT),
+                        **accounts.environment(),
                         **environment,
                     },
                     start_new_session=True,
