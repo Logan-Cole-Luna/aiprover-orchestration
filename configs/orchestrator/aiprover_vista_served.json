@@ -39,7 +39,7 @@
   "max_audit_rounds": 2,
   "lean_parallel": 4,
   "lean_timeout": 300,
-  "max_claude_calls": 60,
+  "max_claude_calls": 150,
   "aiprover_attempts_per_lemma": 5,
   "aiprover_session_slots": 8,
   "aiprover_job_sessions": 3,

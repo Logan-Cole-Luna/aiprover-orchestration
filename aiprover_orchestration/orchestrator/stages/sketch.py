@@ -30,6 +30,7 @@ Related published work (tags defined in docs/lit_review/lit_review.md §6):
 
 import logging
 
+from ...agents.base import AgentLimitReached
 from ...lean.checker import forbidden_problems, nonstandard_axioms
 from ...lean.text import (
     declaration_names,
@@ -45,6 +46,8 @@ from ..structures import (
     Lemma,
     Sketch,
     carry_definitions,
+    sketch_definitions,
+    declared_names,
     dependency_order,
     extract_tag,
     extract_tactics,
@@ -52,6 +55,7 @@ from ..structures import (
     missing_lemmas,
     new_definitions,
     parse_lemmas,
+    refers_to,
     reinstated,
     statement_key,
     statements,
@@ -186,16 +190,24 @@ class SketchStage:
         feedback = replan_feedback
         compiled = None
         for repair in range(self.config.max_repairs + 1):
-            reply = self._captain(
-                prompts.SKETCH_TEMPLATE.format(
-                    definitions=form.definitions,
-                    preamble=form.preamble,
-                    signature=form.signature,
-                    informal_proof=self.row["informal_proof"],
-                    feedback=feedback,
-                ),
-                phase=f"sketch{repair}",
-            )
+            if self._sketch_calls_spent():
+                break
+            try:
+                reply = self._captain(
+                    prompts.SKETCH_TEMPLATE.format(
+                        definitions=form.definitions,
+                        preamble=form.preamble,
+                        signature=form.signature,
+                        informal_proof=self.row["informal_proof"],
+                        feedback=feedback,
+                    ),
+                    phase=f"sketch{repair}",
+                )
+            except AgentLimitReached as error:
+                self._decision(
+                    "sketch_rejected", repair=repair, problems=[str(error)]
+                )
+                continue
             refutation = extract_tactics(reply, "refutation")
             if refutation:
                 text, problems = self._refutation(
@@ -227,12 +239,22 @@ class SketchStage:
             lemma_block = drop_imports(extract_tag(reply, "lemmas"))
             main_proof = extract_tactics(reply, "main_proof")
             lemmas = parse_lemmas(lemma_block)
-            carry_definitions(lemmas, earlier)
+            definitions = sketch_definitions(lemma_block)
+            carry_definitions(lemmas, earlier, definitions)
             names = [lemma.name for lemma in lemmas]
             problems = [
                 f"lemma `{name}` must be stated with `:= by sorry`"
                 for kind, name, _ in split_declarations(lemma_block)
                 if kind in ("theorem", "lemma") and name not in names
+            ]
+            used = {block for lemma in lemmas for block in lemma.definitions}
+            problems += [
+                f"the main proof uses `{name}`, which no lemma statement "
+                f"uses, so it is not in the file"
+                for block in definitions
+                if block not in used
+                for name in declared_names(block)
+                if refers_to(main_proof, name)
             ]
             problems += forbidden_problems(main_proof, "main proof")
             problems += forbidden_problems(
@@ -304,6 +326,17 @@ class SketchStage:
         logger.info(f"accepting the sketch compiled in repair {repair}")
         return self._accept_sketch(candidate, repair)
 
+    def _sketch_calls_spent(self) -> bool:
+        """Whether the run has made its billed sketch calls, including
+        those of the trace it resumes."""
+        limit = self.config.max_sketch_calls
+        return limit and limit <= sum(
+            step["kind"] == "model_call"
+            and step.get("label", "").startswith("sketch")
+            and bool(not step.get("error") or step.get("limited"))
+            for step in self.trace.document["steps"]
+        )
+
     def _excluded_statements(self, sketch: Sketch) -> dict[str, str]:
         """Statements a revision of `sketch` may not state again, with the
         reason: those refuted in this run (learned clauses outlive the
@@ -341,6 +374,13 @@ class SketchStage:
             "sketch_accepted",
             repair=repair,
             lemmas=[lemma.statement for lemma in sketch.lemmas],
+            definitions=list(
+                dict.fromkeys(
+                    block
+                    for lemma in sketch.lemmas
+                    for block in lemma.definitions
+                )
+            ),
             main_proof=sketch.main_proof,
         )
         return sketch
@@ -466,13 +506,35 @@ class SketchStage:
             if not previous:
                 continue
             missing = missing_lemmas(previous, old_names, kept)
-            if missing:
+            if missing and not self._proof_holds(
+                form, new_sketch, lemma, previous
+            ):
                 logger.info(
                     f"{lemma.name}: proof not reused; it uses {missing}, "
-                    f"which the new sketch drops"
+                    f"and fails on the new sketch"
                 )
                 continue
             lemma.helpers, lemma.proof = previous.helpers, previous.proof
             lemma.proved = True
-            self._decision("lemma_reused", lemma=lemma.name)
+            if missing:
+                self._record_proof(lemma, "recheck")
+            else:
+                self._decision("lemma_reused", lemma=lemma.name)
         return new_sketch
+
+    def _proof_holds(
+        self, form: Formalization, sketch: Sketch, lemma: Lemma, previous: Lemma
+    ) -> bool:
+        """Whether the proof of `previous` still compiles for `lemma` on the
+        lemmas before it in `sketch`, so that a small change to a lemma does
+        not discard the proofs that use it."""
+        earlier = sketch.lemmas[: sketch.lemmas.index(lemma)]
+        _, problem = self._check_proof(
+            form,
+            stub_listing(earlier, before=lemma),
+            lemma,
+            previous.helpers,
+            previous.proof,
+            f"{lemma.name}_recheck",
+        )
+        return not problem

@@ -180,6 +180,7 @@ def invoke_once(
     tools: bool = False,
     max_budget_usd: float = LEAN_TOOLS_BUDGET_USD,
     max_turns: int = 0,
+    source_dir: str = "",
 ) -> tuple[str, dict, str | None]:
     """One `claude -p` call. Returns (text, payload, error); error is None on success.
 
@@ -224,6 +225,8 @@ def invoke_once(
     if max_output_tokens:
         env["CLAUDE_CODE_MAX_OUTPUT_TOKENS"] = str(max_output_tokens)
     workdir = lean_scratch_project() if tools else CLI_WORKDIR
+    if tools and source_dir:
+        add_source(workdir, source_dir)
     workdir.mkdir(parents=True, exist_ok=True)
     if tools:
         # `lean-check` may wait for a Lean slot of the machine.
@@ -276,6 +279,12 @@ def invoke_once(
     return (payload.get("result") or "").strip(), payload, None
 
 
+def add_source(workdir: Path, source_dir: str) -> None:
+    """Copy reference material into a call's project as `source/`, for the
+    model to search. A copy, since the model can write in its project."""
+    shutil.copytree(source_dir, Path(workdir) / "source")
+
+
 def lean_scratch_project() -> Path:
     """A new Lake project with the workspace's toolchain and packages."""
     LEAN_TOOLS_DIR.mkdir(parents=True, exist_ok=True)
@@ -304,6 +313,7 @@ class ClaudeCLIAgent(Agent):
         tools: bool = False,
         max_budget_usd: float = LEAN_TOOLS_BUDGET_USD,
         max_turns: int = 0,
+        source_dir: str = "",
         **options,
     ):
         if get_account_status() is None:
@@ -323,6 +333,7 @@ class ClaudeCLIAgent(Agent):
         self.tools = tools
         self.max_budget_usd = max_budget_usd
         self.max_turns = max_turns
+        self.source_dir = source_dir
 
     def complete_once(self, prompt: str, system_prompt: str) -> Completion:
         text, payload, error = invoke_once(
@@ -335,6 +346,7 @@ class ClaudeCLIAgent(Agent):
             self.tools,
             self.max_budget_usd,
             self.max_turns,
+            self.source_dir,
         )
         usage = {
             model_id: {

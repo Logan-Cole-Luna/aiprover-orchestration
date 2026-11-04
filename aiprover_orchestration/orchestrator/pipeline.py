@@ -110,6 +110,8 @@ class Orchestration(
         )
         self.slug = slug_from_problem(row)
         self.auditor_system = prompts.auditor_system()
+        self.reference: Formalization | None = None
+        self.reference_attempted = False
         # The reviewer and the report writer default to fresh agents of the
         # captain's model, without its tools.
         captain = {
@@ -118,6 +120,9 @@ class Orchestration(
             if key != "tools"
         }
         specs = {"reviewer": captain, "writer": captain, **config.agents}
+        solver = specs.get("solver") or {}
+        if config.aiprover_offline and solver.get("backend") == "aiprover":
+            specs["solver"] = {**solver, "offline": True}
         agents = {
             role: build_agent(role_spec(role, spec))
             for role, spec in specs.items()
@@ -128,6 +133,8 @@ class Orchestration(
             "solver": prompts.SOLVER_SYSTEM,
             "reviewer": prompts.REVIEWER_SYSTEM,
             "writer": prompts.WRITER_SYSTEM,
+            "judge": prompts.JUDGE_SYSTEM,
+            "formalizer": prompts.CAPTAIN_SYSTEM,
         }
         trace_path = self.result_dir / "trace.json"
         previous = Trace.load(trace_path) if resume else None
@@ -172,6 +179,7 @@ class Orchestration(
                 text: key for key, text in system_prompts.items()
             },
             max_claude_calls=config.max_claude_calls,
+            max_claude_usd=config.max_claude_usd,
         )
         self.library_path = config.library or row.get("library", "")
         self.library = self._load_library()
@@ -198,14 +206,16 @@ class Orchestration(
             index = self._file_counter
         return self.temp_dir / f"{index:04d}_{label}.lean"
 
-    def _check(self, label: str, lean_text: str, **trace_fields):
+    def _check(
+        self, label: str, lean_text: str, timeout: int = 0, **trace_fields
+    ):
         """Elaborate a standalone file and record the check in the trace. A
         check ended by the run's termination raises Terminated, so that it
         is never read as a failed proof."""
         raise_if_stopping()
         path = self._attempt_path(label)
         start = time.time()
-        result = self.lean.check_text(lean_text, path)
+        result = self.lean.check_text(lean_text, path, timeout)
         raise_if_stopping()
         self.trace.add(
             "lean_check",
@@ -462,7 +472,10 @@ class Orchestration(
                     if problems:
                         logger.info(f"assembly failed: {sorted(problems)}")
                         continue
-                    if replans_used >= self.config.max_replans:
+                    if (
+                        replans_used >= self.config.max_replans
+                        or self._sketch_calls_spent()
+                    ):
                         return summary
                     logger.info("assembly failed in the sketch; replanning")
                     with self._timed("sketch"):
@@ -482,7 +495,9 @@ class Orchestration(
                 # A refuted lemma makes the sketch unprovable: its revision
                 # is not charged to the replan budget.
                 refuted = any(lemma.refutation for lemma in sketch.lemmas)
-                if replans_used >= self.config.max_replans and not refuted:
+                if self._sketch_calls_spent() or (
+                    replans_used >= self.config.max_replans and not refuted
+                ):
                     summary["status"] = "lemmas_unproved"
                     with self._timed("informal"):
                         summary["informal"] = self.informalize(
@@ -497,6 +512,7 @@ class Orchestration(
             # A verified proof stands even if the review or the report cannot
             # be completed; its status then says so.
             summary["status"] = "review_flagged"
+            self.agents.max_claude_usd = 0
             if self.agents.max_claude_calls:
                 self.agents.max_claude_calls = max(
                     self.agents.max_claude_calls,

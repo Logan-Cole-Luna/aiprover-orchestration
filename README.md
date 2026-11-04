@@ -210,9 +210,11 @@ flowchart LR
 
 *Figure 2. Architecture and pipeline.*
 
-The captain (Claude) formalizes the problem; a blind auditor translates the
-Lean back to mathematics for comparison with the source; the captain
-sketches the proof as lemmas, which AIProver jobs attempt in parallel; stuck
+The captain (Claude) formalizes the problem; Lean probes the statement for
+vacuity, triviality, and counterexamples; a blind auditor translates the Lean
+back to mathematics, and a judge panel compares it with the source, which can
+include a model other than the captain's and a Lean comparison with an
+independent formalization; the captain sketches the proof as lemmas, which AIProver jobs attempt in parallel; stuck
 lemmas return to the captain to prove, split or restate; the verified
 solution is assembled, reviewed independently and written up in LaTeX. Lean
 gates every stage.

@@ -206,6 +206,8 @@ class ReviewStage:
         review: dict,
     ) -> dict:
         """LaTeX report and PDF in results/<run_id>/report."""
+        if not self.config.write_reports:
+            return {}
         earlier = self._earlier_document("report", standalone)
         if earlier:
             logger.info("report restored")
@@ -296,6 +298,8 @@ class ReviewStage:
         file, from the sketch when lemmas remain unproved, or from the
         `refutation` file of a disproved claim. The document is optional: a
         failure is recorded, not raised."""
+        if not self.config.write_reports:
+            return {}
         verified_file = standalone is not None
         theorem_name = form.theorem_name
         lemmas = [(lemma.name, lemma.proved) for lemma in sketch.lemmas]

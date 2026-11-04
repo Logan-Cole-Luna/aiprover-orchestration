@@ -34,6 +34,7 @@ SYS_ADD_RULE = 445
 SYS_RESTRICT_SELF = 446
 CREATE_RULESET_VERSION = 1
 RULE_PATH_BENEATH = 1
+RULE_NET_PORT = 2
 PR_SET_NO_NEW_PRIVS = 38
 
 # Filesystem rights by ABI version.
@@ -98,6 +99,14 @@ class PathBeneathAttr(ctypes.Structure):
     ]
 
 
+class NetPortAttr(ctypes.Structure):
+    _pack_ = 1
+    _fields_ = [
+        ("allowed_access", ctypes.c_uint64),
+        ("port", ctypes.c_uint64),
+    ]
+
+
 libc = ctypes.CDLL(None, use_errno=True)
 libc.syscall.restype = ctypes.c_long
 
@@ -111,9 +120,14 @@ def abi_version() -> int:
 
 
 def restrict(
-    read: list[str], write: list[str], execute: list[str], abi: int
+    read: list[str],
+    write: list[str],
+    execute: list[str],
+    abi: int,
+    connect_ports: tuple[int, ...] = (),
 ) -> None:
-    """Confine this process and its future children to the given trees."""
+    """Confine this process and its future children to the given trees and
+    to TCP connections to `connect_ports`."""
     handled = EXECUTE | WRITE_FILE | READ | WRITE_TREE
     handled |= REFER if abi >= 2 else 0
     handled |= TRUNCATE if abi >= 3 else 0
@@ -144,6 +158,39 @@ def restrict(
         os.close(fd)
         if status < 0:
             raise OSError(ctypes.get_errno(), f"landlock_add_rule {path}")
+    for port in connect_ports:
+        rule = NetPortAttr(NET_CONNECT_TCP, port)
+        status = libc.syscall(
+            SYS_ADD_RULE, ruleset, RULE_NET_PORT, ctypes.byref(rule), 0
+        )
+        if status < 0:
+            raise OSError(ctypes.get_errno(), f"landlock_add_rule {port}")
+    if libc.prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0:
+        raise OSError(ctypes.get_errno(), "prctl(NO_NEW_PRIVS)")
+    if libc.syscall(SYS_RESTRICT_SELF, ruleset, 0) < 0:
+        raise OSError(ctypes.get_errno(), "landlock_restrict_self")
+    os.close(ruleset)
+
+
+def restrict_network(connect_ports: tuple[int, ...], abi: int) -> None:
+    """Confine this process and its future children to TCP connections to
+    `connect_ports`; files are left as they are."""
+    attr = RulesetAttr(0, NET_BIND_TCP | NET_CONNECT_TCP)
+    ruleset = libc.syscall(
+        SYS_CREATE_RULESET,
+        ctypes.byref(attr),
+        ctypes.c_size_t(ctypes.sizeof(RulesetAttr)),
+        0,
+    )
+    if ruleset < 0:
+        raise OSError(ctypes.get_errno(), "landlock_create_ruleset")
+    for port in connect_ports:
+        rule = NetPortAttr(NET_CONNECT_TCP, port)
+        status = libc.syscall(
+            SYS_ADD_RULE, ruleset, RULE_NET_PORT, ctypes.byref(rule), 0
+        )
+        if status < 0:
+            raise OSError(ctypes.get_errno(), f"landlock_add_rule {port}")
     if libc.prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0:
         raise OSError(ctypes.get_errno(), "prctl(NO_NEW_PRIVS)")
     if libc.syscall(SYS_RESTRICT_SELF, ruleset, 0) < 0:

@@ -256,8 +256,11 @@ def restore_state(document: dict) -> ResumeState:
             state.replan_pending = False
         elif event == "sketch_accepted":
             lemmas = recorded_lemmas(step["lemmas"])
-            if state.sketch is not None:
-                carry_definitions(lemmas, state.sketch.lemmas)
+            carry_definitions(
+                lemmas,
+                state.sketch.lemmas if state.sketch is not None else [],
+                tuple(step.get("definitions") or ()),
+            )
             state.sketch = Sketch(lemmas, step["main_proof"])
             statement_of = {lemma.name: lemma.statement for lemma in lemmas}
             recorded = set()

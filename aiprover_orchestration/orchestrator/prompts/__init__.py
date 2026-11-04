@@ -7,7 +7,8 @@ them are doubled. The auditor's system prompt is its role guide
 (`aiprover_orchestration/roles/auditor.md`), used verbatim.
 
 Captain: formalizes, judges read-backs, writes and revises proof sketches.
-Auditor: writes blind read-backs. Solver: proves one lemma under the
+Judge: judges read-backs independently of the captain. Formalizer: writes the
+reference formalization. Auditor: writes blind read-backs. Solver: proves one lemma under the
 library's gating rules. Reviewer: referees the verified result. Writer:
 writes the report and the informalization.
 """
@@ -16,6 +17,7 @@ import re
 from pathlib import Path
 
 from ... import roles
+from ..config import LEAN_RELEASE
 
 PROMPT_DIR = Path(__file__).parent
 LEAN_ENVIRONMENT_MARKER = "{lean_environment}"
@@ -41,11 +43,16 @@ def auditor_system() -> str:
     return roles.load("auditor")
 
 
-LEAN_ENV_NOTE = (PROMPT_DIR / "system" / "lean_environment.md").read_text()
+LEAN_ENV_NOTE = (
+    (PROMPT_DIR / "system" / "lean_environment.md")
+    .read_text()
+    .replace("v4.23.0", LEAN_RELEASE)
+)
 
 CAPTAIN_SYSTEM = system_prompt("captain")
 SOLVER_SYSTEM = system_prompt("solver")
 REVIEWER_SYSTEM = system_prompt("reviewer")
+JUDGE_SYSTEM = system_prompt("judge")
 WRITER_SYSTEM = system_prompt("writer")
 
 # Formalization and audit.

@@ -3,17 +3,23 @@
 import unittest
 from types import SimpleNamespace
 
+from aiprover_orchestration.agents.base import AgentCallError
 from aiprover_orchestration.orchestrator.stages.assemble import AssembleStage
 from aiprover_orchestration.orchestrator.structures import Lemma, Sketch
 
 
 class Stage(AssembleStage):
-    def __init__(self, axioms: dict):
+    config = SimpleNamespace(lean_timeout=300)
+
+    def __init__(self, axioms: dict, timed_out: bool = False):
         self.axioms = axioms
+        self.timed_out = timed_out
+        self.timeouts = []
         self.decisions = []
 
-    def _check(self, label, text, **fields):
-        return SimpleNamespace(axioms=self.axioms, timed_out=False)
+    def _check(self, label, text, timeout=0, **fields):
+        self.timeouts.append(timeout)
+        return SimpleNamespace(axioms=self.axioms, timed_out=self.timed_out)
 
     def _decision(self, event, **fields):
         self.decisions.append((event, fields))
@@ -31,6 +37,19 @@ def sketch() -> Sketch:
         ],
         "exact user",
     )
+
+
+class AssemblyTimeoutTest(unittest.TestCase):
+    def test_limit_grows_with_the_file(self):
+        stage = Stage({})
+        stage._assembly_check("final", "\n" * 39000)
+        self.assertEqual(stage.timeouts, [3900])
+        stage._assembly_check("final", "\n" * 100)
+        self.assertEqual(stage.timeouts[-1], 300)
+
+    def test_timeout_blames_no_lemma(self):
+        with self.assertRaises(AgentCallError):
+            Stage({}, timed_out=True).responsible_lemmas(sketch(), "text")
 
 
 class ResponsibleLemmasTest(unittest.TestCase):

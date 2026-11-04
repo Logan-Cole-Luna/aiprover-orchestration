@@ -65,3 +65,6 @@ docs/*
 
 # Runtime state of per-user servers (scripts/user/aiprover-server).
 users/
+
+# Records of benchmark runs
+benchmark/runs/

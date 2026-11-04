@@ -74,6 +74,9 @@ SETTINGS = {
         "sketch's comments, or none",
         choices=("captain", "sketch", ""),
     ),
+    "aiprover_offline": Setting(
+        "AIProver", "Keep AIProver sessions off the internet"
+    ),
     "aiprover_cite_lemmas": Setting(
         "AIProver", "Mark earlier lemmas as facts to cite"
     ),
@@ -86,6 +89,13 @@ SETTINGS = {
     "max_claude_calls": Setting(
         "Claude budget", "Claude calls per run (0: unlimited)", 0, 1000
     ),
+    "max_claude_usd": Setting(
+        "Claude budget", "Claude USD per run (0: unlimited)", 0, 100000
+    ),
+    "max_sketch_calls": Setting(
+        "Claude budget", "Sketch calls per run (0: unlimited)", 0, 50
+    ),
+    "write_reports": Setting("Claude budget", "Write the report and paper"),
     "final_claude_calls": Setting(
         "Claude budget", "Calls added for the review and the report", 0, 50
     ),

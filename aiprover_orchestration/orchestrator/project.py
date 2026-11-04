@@ -274,7 +274,11 @@ def paper(project: dict, models: dict[str, str]) -> dict:
         ).exists()
     ]
     if unfinished:
-        raise SystemExit(f"members without an informalization: {unfinished}")
+        raise SystemExit(
+            f"members without an informalization: {unfinished}; write each "
+            f"with python -m aiprover_orchestration.orchestrator.reports."
+            f"informal results/<run_id>"
+        )
     results = [member_result(member) for member in project["members"]]
     roles = {
         role: build_agent(role_spec(role, PAPER_AGENT | {"model": model}))

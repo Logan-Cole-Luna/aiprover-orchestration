@@ -1,9 +1,15 @@
 """Formalization and blind audit.
 
-The captain formalizes the informal result until it compiles; an auditor
-writes a read-back of the Lean code without seeing the source; the captain
-judges the read-back against the source. REVISE returns to formalization
-with the read-back and the captain's issues as feedback.
+The captain formalizes the informal result until it compiles; Lean probes
+the statement (fidelity.py), and a proof of `False` from its hypotheses
+returns to formalization at once. An auditor writes a read-back of the Lean
+code without seeing the source, and each judge compares the read-back and
+the Lean evidence with the source: first the `judge` role, a model other
+than the captain's when configured, then the captain. Every judge must
+return FAITHFUL. REVISE returns to formalization with the read-back and the
+issues as feedback. The optional `formalizer` role writes a reference
+formalization of the source, without seeing the captain's, which Lean
+compares with the statement.
 
 Related published work (tags defined in docs/lit_review/lit_review.md §6):
 - [Similar] Back-translation of formal statements checked against the
@@ -15,9 +21,11 @@ Related published work (tags defined in docs/lit_review/lit_review.md §6):
 
 import logging
 
+from ...agents.base import AgentLimitReached, BudgetExhausted
 from ...lean.checker import forbidden_problems
 from ...lean.text import drop_imports
-from .. import prompts
+from .. import fidelity, prompts
+from ..config import FILE_HEADER
 from ..structures import Formalization, extract_tag, parse_statement
 
 logger = logging.getLogger(__name__)
@@ -47,26 +55,26 @@ class FormalizeStage:
             lean_code = (
                 f"{form.definitions}\n\n{form.preamble}\n\n" f"{form.statement}"
             )
-            form.readback = self.agents.complete(
-                prompts.AUDITOR_TEMPLATE.format(
-                    theorem_name=form.theorem_name, lean_code=lean_code
-                ),
-                system_prompt=self.auditor_system,
-                role="auditor",
-                phase=f"audit{audit_round}",
-                round=audit_round,
-            )
-            reply = self._captain(
-                prompts.JUDGE_READBACK_TEMPLATE.format(
-                    informal_statement=self.row["informal_statement"],
-                    informal_proof=self.row["informal_proof"],
-                    lean_code=lean_code,
-                    readback=form.readback,
-                ),
-                phase=f"judge{audit_round}",
-            )
-            form.verdict = extract_tag(reply, "verdict").upper()
-            form.issues = extract_tag(reply, "issues")
+            evidence = self._fidelity_evidence(form)
+            form.evidence = evidence.report()
+            if evidence.vacuous:
+                form.readback = ""
+                form.verdict = "REVISE"
+                form.issues = (
+                    "Lean proved False from the statement's hypotheses, so "
+                    "the statement is vacuous."
+                )
+            else:
+                form.readback = self.agents.complete(
+                    prompts.AUDITOR_TEMPLATE.format(
+                        theorem_name=form.theorem_name, lean_code=lean_code
+                    ),
+                    system_prompt=self.auditor_system,
+                    role="auditor",
+                    phase=f"audit{audit_round}",
+                    round=audit_round,
+                )
+                self._judge(form, lean_code, audit_round)
             logger.info(f"audit round {audit_round}: verdict {form.verdict}")
             self._decision(
                 "audit_verdict",
@@ -74,6 +82,7 @@ class FormalizeStage:
                 verdict=form.verdict,
                 issues=form.issues,
                 readback=form.readback,
+                evidence=form.evidence,
             )
             if form.verdict.startswith("FAITHFUL"):
                 return form
@@ -88,14 +97,115 @@ class FormalizeStage:
             last_form, form = form, None
         return last_form
 
-    def _formalize_until_compiles(self, feedback: str) -> Formalization:
+    def _judge(
+        self, form: Formalization, lean_code: str, audit_round: int
+    ) -> None:
+        """Set the verdict of the panel: the `judge` role, if configured, and
+        the captain. The first REVISE decides, which spares the later judge."""
+        prompt = prompts.JUDGE_READBACK_TEMPLATE.format(
+            informal_statement=self.row["informal_statement"],
+            informal_proof=self.row["informal_proof"],
+            lean_code=lean_code,
+            readback=form.readback,
+            evidence=form.evidence,
+        )
+        roles = ["captain"]
+        if "judge" in self.agents.agents:
+            roles.insert(0, "judge")
+        for role in roles:
+            reply = self.agents.complete(
+                prompt,
+                role=role,
+                phase=f"judge{audit_round}",
+                system_prompt=prompts.JUDGE_SYSTEM,
+            )
+            form.verdict = extract_tag(reply, "verdict").upper()
+            form.issues = extract_tag(reply, "issues")
+            if not form.verdict.startswith("FAITHFUL"):
+                return
+
+    def _fidelity_evidence(self, form: Formalization) -> fidelity.Evidence:
+        """What Lean establishes about the statement. Probes are skipped when
+        `fidelity_probes` is off, and a failed probe proves nothing."""
+        evidence = fidelity.Evidence()
+        if not self.config.fidelity_probes:
+            return evidence
+        name, signature = form.theorem_name, form.signature
+
+        def probe(label: str, statement: str):
+            return self._check(
+                f"fidelity_{label}", self._standalone(form, statement)
+            )
+
+        evidence.vacuous = probe(
+            "vacuous", fidelity.vacuity_probe(name, signature)
+        ).ok
+        evidence.automatic = probe(
+            "automatic", fidelity.automation_probe(name, signature)
+        ).ok
+        evidence.counterexample = fidelity.counterexample_in(
+            probe(
+                "tested", fidelity.counterexample_probe(name, signature)
+            ).errors
+        )
+        reference = self._reference_formalization()
+        if reference:
+            statement, other = map(self._premise, (form, reference))
+            prefix = f"{FILE_HEADER}{self.library}\n\n"
+            evidence.implies_reference = fidelity.used_premise(
+                self._check(
+                    "fidelity_implies_reference",
+                    prefix + fidelity.implication_file(statement, other),
+                ),
+                reference.theorem_name,
+            )
+            evidence.implied_by_reference = fidelity.used_premise(
+                self._check(
+                    "fidelity_implied_by_reference",
+                    prefix + fidelity.implication_file(other, statement),
+                ),
+                form.theorem_name,
+            )
+        return evidence
+
+    def _premise(self, form: Formalization) -> tuple[str, str, str, str]:
+        return (
+            self._own_definitions(form),
+            form.preamble,
+            form.theorem_name,
+            form.signature,
+        )
+
+    def _reference_formalization(self) -> Formalization | None:
+        """The `formalizer` role's formalization of the source, written once.
+        Without one, the verdict rests on the judges."""
+        if "formalizer" not in self.agents.agents:
+            return None
+        if not self.reference_attempted:
+            self.reference_attempted = True
+            try:
+                self.reference = self._formalize_until_compiles(
+                    "", "formalizer"
+                )
+            except (AgentLimitReached, BudgetExhausted):
+                raise
+            except RuntimeError as error:
+                logger.info(f"no reference formalization: {error}")
+        return self.reference
+
+    def _formalize_until_compiles(
+        self, feedback: str, role: str = "captain"
+    ) -> Formalization:
+        """A compiling formalization by `role`. Only the captain's enters
+        the run's state: the reference is recorded under its own events."""
+        event = "formalization" if role == "captain" else "reference"
         for repair in range(self.config.max_repairs + 1):
             template = (
                 prompts.FORMALIZE_LIBRARY_TEMPLATE
                 if self.library
                 else prompts.FORMALIZE_TEMPLATE
             )
-            reply = self._captain(
+            reply = self.agents.complete(
                 template.format(
                     informal_statement=self.row["informal_statement"],
                     informal_proof=self.row["informal_proof"],
@@ -103,7 +213,9 @@ class FormalizeStage:
                     theorem_name=self.slug,
                     feedback=feedback,
                 ),
+                role=role,
                 phase=f"formalize{repair}",
+                system_prompt=prompts.CAPTAIN_SYSTEM,
             )
             definitions = drop_imports(extract_tag(reply, "definitions"))
             statement_block = drop_imports(extract_tag(reply, "statement"))
@@ -140,7 +252,7 @@ class FormalizeStage:
                 if result.ok:
                     logger.info(f"formalization compiles (repair {repair})")
                     self._decision(
-                        "formalization_compiled",
+                        f"{event}_compiled",
                         repair=repair,
                         definitions=form.definitions,
                         preamble=preamble,
@@ -152,10 +264,10 @@ class FormalizeStage:
                     return form
                 problems.append("Lean errors:\n" + result.error_report())
             logger.info(
-                f"formalization repair {repair}: " f"{problems[0][:200]}"
+                f"{event} repair {repair}: " f"{problems[0][:200]}"
             )
             self._decision(
-                "formalization_rejected", repair=repair, problems=problems
+                f"{event}_rejected", repair=repair, problems=problems
             )
             feedback = prompts.FORMALIZE_FEEDBACK_TEMPLATE.format(
                 definitions=definitions,

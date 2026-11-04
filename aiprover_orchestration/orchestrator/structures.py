@@ -13,6 +13,16 @@ from ..lean.text import (
     strip_leading_by,
 )
 
+# Kinds of declaration that a sketch may state among its lemmas.
+DEFINITION_KINDS = (
+    "def",
+    "abbrev",
+    "inductive",
+    "structure",
+    "class",
+    "instance",
+)
+
 
 @dataclass
 class Formalization:
@@ -24,6 +34,7 @@ class Formalization:
     readback: str = ""
     verdict: str = ""
     issues: str = ""
+    evidence: str = ""  # what Lean established about the statement
 
     @property
     def statement(self) -> str:
@@ -300,11 +311,32 @@ def new_definitions(lemma: Lemma, shown: set[str]) -> list[str]:
     return blocks
 
 
-def carry_definitions(lemmas: list[Lemma], earlier: list[Lemma]) -> None:
+def sketch_definitions(lemma_block: str) -> list[str]:
+    """The definition blocks that a sketch states among its lemmas."""
+    return [
+        text
+        for kind, _, text in split_declarations(lemma_block)
+        if kind in DEFINITION_KINDS
+    ]
+
+
+def carry_definitions(
+    lemmas: list[Lemma], earlier: list[Lemma], new: tuple[str, ...] = ()
+) -> None:
     """Give each of `lemmas` (a new sketch) the definition blocks of the
-    `earlier` sketch that its statement uses, with the blocks they use."""
+    `earlier` sketch and the `new` ones that its statement uses, with the
+    blocks they use. A `new` block replaces an earlier one of the same name."""
+    names = {name for block in new for name in declared_names(block)}
     blocks = list(
-        dict.fromkeys(block for other in earlier for block in other.definitions)
+        dict.fromkeys(
+            [
+                block
+                for other in earlier
+                for block in other.definitions
+                if not names & declared_names(block)
+            ]
+            + list(new)
+        )
     )
     for lemma in lemmas:
         used, text = [], lemma.statement

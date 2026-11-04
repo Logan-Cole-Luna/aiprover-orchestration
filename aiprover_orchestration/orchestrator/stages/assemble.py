@@ -7,16 +7,22 @@ importing target and solution proves `example : type_of% @target :=
 @solution`, so the solution's type is the target's without the solution
 importing the target.
 
+The time limits grow with the file. A timeout stops the run, so that its
+resume repeats the check, since no lemma is to blame.
+
 A failed assembly returns to the captain (`assembly_rejected`): the lemmas
 responsible lose their proofs and are handed back, and the sketch itself is
 revised when no lemma is responsible.
 """
 
+from ...agents.base import AgentCallError
 from ...lean import checker
 from ...lean.layout import module_name, module_path
 from ..config import MAIN_NAME
 from ..structures import Formalization, Sketch, refers_to
 
+# Slower than any recorded assembly, which leaves a margin.
+LINES_PER_SECOND = 10
 VERIFICATION_CHECKS = (
     "compiles",
     "no_sorry",
@@ -28,10 +34,23 @@ VERIFICATION_CHECKS = (
 
 class AssembleStage:
 
+    def _assembly_timeout(self, lean_text: str) -> int:
+        lines = lean_text.count("\n")
+        return max(self.config.lean_timeout, lines // LINES_PER_SECOND)
+
+    def _assembly_check(self, label: str, lean_text: str):
+        """Check of an assembled file, which raises if it times out."""
+        result = self._check(
+            label, lean_text, self._assembly_timeout(lean_text)
+        )
+        if result.timed_out:
+            raise AgentCallError(f"Lean check {label} timed out")
+        return result
+
     def assemble(self, form: Formalization, sketch: Sketch) -> tuple[str, dict]:
         body = self._sketch_body(form, sketch, use_proofs=True)
         standalone = self._standalone(form, body)
-        result = self._check(
+        result = self._assembly_check(
             "final", standalone + f"\n#print axioms {MAIN_NAME}\n"
         )
         extra_axioms = checker.nonstandard_axioms(result, MAIN_NAME)
@@ -56,9 +75,9 @@ class AssembleStage:
         queries = "".join(
             f"\n#print axioms {lemma.name}" for lemma in sketch.lemmas
         )
-        result = self._check("final_axioms", standalone + queries + "\n")
-        if result.timed_out:
-            return {}
+        result = self._assembly_check(
+            "final_axioms", standalone + queries + "\n"
+        )
         failing = {}
         for lemma in sketch.lemmas:
             extra = checker.nonstandard_axioms(result, lemma.name)
@@ -137,7 +156,7 @@ class AssembleStage:
             self.workspace,
             {module_path(module): text for module, text in files.items()},
             check_module,
-            timeout=self.config.lean_timeout * 2,
+            timeout=self._assembly_timeout(body) * 2,
         )
         (self.result_dir / "module_build.log").write_text(result.output)
         solution_imports_target = thm_module in files[sol_module]
