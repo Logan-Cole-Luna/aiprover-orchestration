@@ -493,6 +493,10 @@ Results
 
 ## Done
 
+- The user guide shows the blueprint of OpenAI 011 (Figure 11), whose natural-language text the writer model supplied after the run.
+- The user guide shows the page of a project (Figure 12), with its controls numbered.
+- The user guide shows the open lemmas and claims of a project (Figure 14), and its glossary defines an open lemma.
+
 - Query server pages received a shared AP favicon, and review corrections covered the states of live runs, the zoom floor of the replay, theme persistence, guide deep links, malformed group files, and the sandbox of imported pages.
 - The Details tab reports the model cost of a finished run, read from its benchmark.
 

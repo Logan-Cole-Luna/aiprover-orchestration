@@ -26,7 +26,7 @@ from ..agents.codex_cli import command as codex_command
 from ..utils.processes import run_group
 from ..paths import LIBRARIES_DIR
 from . import prompts
-from .project import PAPER_MODELS, PROJECTS_DIR, paper, update
+from .project import PAPER_MODELS, PROJECTS_DIR, paper, replace_unstarted, update
 from .structures import extract_named, extract_tag
 
 MILESTONE_NAME = re.compile(r"[A-Za-z0-9_-]{1,80}")
@@ -110,7 +110,7 @@ def paths(project: dict) -> dict[str, str]:
     }
 
 
-def absorb(project: dict, report: str) -> None:
+def absorb(project: dict, report: str, replace: bool = False) -> None:
     """Add what a report found to the project, without repeating an entry."""
     known = {item["lemma"] for item in project["open"]}
     for lemma, reason in extract_named(report, "open").items():
@@ -121,17 +121,31 @@ def absorb(project: dict, report: str) -> None:
     project["reviews"] += [
         {"claim": claim} for claim in dict.fromkeys(found) if claim not in claims
     ]
-    names = {member["uuid"] for member in project["members"]}
+    # With `replace`, the report's milestones replace the unstarted ones, so
+    # that a revision may change or drop them; one listed again with its
+    # statement unchanged keeps the proof and dependencies the report's
+    # session never saw. Otherwise only new milestones are added.
+    members = {member["uuid"]: member for member in project["members"]}
+    proposed = []
     for name, block in extract_named(report, "milestone").items():
         role, statement = extract_tag(block, "role"), extract_tag(block, "statement")
-        if name not in names and MILESTONE_NAME.fullmatch(name) and statement:
-            project["members"].append({
+        member = members.get(name)
+        if member and member.get("run"):
+            continue
+        if member and member["statement"] == statement:
+            proposed.append(member)
+        elif MILESTONE_NAME.fullmatch(name) and statement:
+            proposed.append({
                 "uuid": name,
                 "role": role if role in ROLES else "main",
                 "statement": statement,
                 "proof": extract_tag(block, "proof"),
                 "uses": re.findall(r"[\w-]+", extract_tag(block, "uses")),
             })
+    if not replace:
+        project["members"] += [m for m in proposed if m["uuid"] not in members]
+    elif proposed:
+        replace_unstarted(project, proposed)
 
 
 def research(project: dict, task: dict, folder: Path, spent: list):
@@ -152,7 +166,7 @@ def research(project: dict, task: dict, folder: Path, spent: list):
         task["max_usd"] / 2,
         spent,
     )
-    return lambda current: absorb(current, report)
+    return lambda current: absorb(current, report, task.get("milestones", False))
 
 
 def check(project: dict, task: dict, folder: Path, spent: list):

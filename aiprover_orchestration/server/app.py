@@ -94,8 +94,9 @@ from .jobs import (
     Worker,
     endpoint_status,
     job_selection,
+    trace_pages_command,
 )
-from .model_servers import control_master_running
+from .model_servers import control_master_running, run_command
 
 TOKENS = CONFIG_DIR / "server" / "tokens.json"
 AUTH_REQUIRED = os.environ.get("QUERY_SERVER_AUTH", "off") == "on"
@@ -919,6 +920,9 @@ def restore_run(upload, user: str, page: str) -> str:
         dataset = write_problem(run_id, run["problem"])
         for item in unpacked.iterdir():
             shutil.move(item, RESULTS_DIR / run_id)
+    # The trace's pages, which an archive of the results alone lacks.
+    if (RESULTS_DIR / run_id / "trace.json").exists():
+        run_command(trace_pages_command(RESULTS_DIR / run_id / "trace.json"), timeout=300)
     now = time.time()
     store.add(
         {
@@ -1663,11 +1667,10 @@ def set_members(
 ) -> dict:
     """Replace the members without a run: the plan the user edits."""
     def change(project: dict) -> None:
-        started = [m for m in project["members"] if m.get("run")]
-        names = [m["uuid"] for m in started] + [m.uuid for m in body]
-        if len(set(names)) < len(names):
-            raise HTTPException(400, "each result needs its own name")
-        project["members"] = started + [m.model_dump() for m in body]
+        try:
+            project_file.replace_unstarted(project, [m.model_dump() for m in body])
+        except ValueError as error:
+            raise HTTPException(400, str(error))
 
     project_file.update(name, change)
     return {"members": len(body)}
@@ -1677,6 +1680,7 @@ class Task(BaseModel):
     kind: Literal["research", "check", "paper"]
     question: str = Field("", max_length=MAX_TEXT_CHARS)
     max_usd: float = Field(20, gt=0, le=MAX_TASK_USD)
+    milestones: bool = False  # the report's milestones replace the unstarted ones
 
 
 def task_user(request: Request) -> str:
@@ -1801,12 +1805,15 @@ def project_source(
     )
 
 
-@app.get("/api/projects/{name}/paper")
-def project_paper(name: str = Depends(known_project)) -> FileResponse:
-    pdf = PROJECTS_DIR / name / f"{name}_paper.pdf"
-    if not pdf.exists():
+@app.get("/api/projects/{name}/paper.{ext}")
+def project_paper(
+    ext: Literal["pdf", "tex"], path: Path = Depends(project_path)
+) -> FileResponse:
+    paper = path.parent / path.stem / f"{path.stem}_paper.{ext}"
+    if not paper.exists():
         raise HTTPException(404, "no paper yet")
-    return FileResponse(pdf)
+    text = "text/plain; charset=utf-8" if ext == "tex" else None
+    return FileResponse(paper, media_type=text)
 
 
 @app.post("/api/projects/{name}/launch")
@@ -2208,7 +2215,7 @@ def export_run(job: dict = Depends(owned_job)) -> FileResponse:
 @app.get("/api/runs/{run_id}/progress")
 async def progress(job: dict = Depends(owned_job)) -> StreamingResponse:
     """Server-sent events: the run's progress log, line by line, then `end`."""
-    log_path = run_dir(job, TEMP_DIR) / "progress.log"
+    log_path = run_dir(job, LOGS_DIR) / "run.log"
 
     async def events():
         offset = 0

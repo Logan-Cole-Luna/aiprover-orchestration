@@ -26,7 +26,7 @@ import threading
 from collections import Counter
 from contextlib import contextmanager
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from ...agents.aiprover import AIProverAgent, AIProverSample, sample_record
 from ...agents.base import (
@@ -38,7 +38,12 @@ from ...agents.base import (
 )
 from ...lean.checker import forbidden_problems
 from ...limits import SESSIONS
-from ...lean.text import normalize, split_declarations, strip_leading_by
+from ...lean.text import (
+    normalize,
+    split_declarations,
+    statements_only,
+    strip_leading_by,
+)
 from .. import cdcl, knowledge, prompts
 from ..extraction import (
     extract_lemma_proof,
@@ -765,13 +770,22 @@ class AIProverStage:
             logger.warning(f"{lemma.name}: no direction: {error}")
             return None
 
-    def _job_context(self, phase: Phase, earlier: list[Lemma], lemma: Lemma):
+    def _job_context(
+        self,
+        phase: Phase,
+        earlier: list[Lemma],
+        lemma: Lemma,
+        cited: str | None = None,
+    ):
         """The stubs of `earlier` and the fixed context of a job on `lemma`
-        that receives them."""
+        that receives them: the setting as `statements_only` gives it (the
+        gate checks the answer against the full setting)."""
         stubs = stub_listing(earlier, before=lemma)
         if stubs and self.config.aiprover_cite_lemmas:
             stubs = prompts.EARLIER_LEMMAS_HEADER + stubs
-        return stubs, self._standalone(phase.form, stubs).rstrip() + "\n"
+        setting = f"{phase.form.definitions}\n\n{phase.form.preamble}"
+        fixed = replace(phase.form, definitions=statements_only(setting, cited), preamble="")
+        return stubs, self._standalone(fixed, stubs)
 
     def _cited_lemmas(self, earlier: list[Lemma], proof_text: str) -> str:
         """The earlier lemmas a job's direction names, with their
@@ -833,7 +847,7 @@ class AIProverStage:
             directed = bool(phase.directions.get(key))
         if directed and self.config.aiprover_condensed_prompt:
             named = named_lemmas(earlier, proof_text)
-            condensed = self._job_context(phase, named, lemma)
+            condensed = self._job_context(phase, named, lemma, proof_text)
             # A resumed job keeps the context its sessions started with,
             # condensed or not.
             if not resume_job or solver.job_matches(

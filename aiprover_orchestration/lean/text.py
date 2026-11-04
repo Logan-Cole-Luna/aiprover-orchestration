@@ -1,5 +1,6 @@
 """Reading and editing Lean source text without elaborating it."""
 
+import functools
 import re
 import textwrap
 
@@ -119,22 +120,79 @@ def split_declarations(lean_text: str) -> list[tuple[str, str, str]]:
 
 
 _OPENERS, _CLOSERS = "([{⦃⟨", ")]}⦄⟩"
+# A `let` or `have` in a statement, which takes the next `:=`.
+_BINDER = re.compile(r"(?<![\w'!?.»])(?:let|have)\b")
+# Top-level commands that may follow a proof inside a declaration's block,
+# with their indented continuation lines.
+_TRAILING_COMMAND = re.compile(
+    r"^(?:(?:local|scoped)\s+)?(?P<command>attribute|notation|infixl?|infixr"
+    r"|prefix|postfix|macro_rules|macro|syntax|elab_rules|elab|export)\b"
+    r".*(?:\n[ \t].*)*",
+    re.M,
+)
+_THEOREMS = ("theorem", "lemma")
 
 
-def proof_body(declaration: str) -> str | None:
-    """The text after the `:=` that ends a declaration's header, or None.
+def _header_end(declaration: str) -> int | None:
+    """The index of the `:=` that ends a declaration's header, or None.
 
     A `:=` inside brackets, as in a named argument `(α := T)` of the
     statement, belongs to the header."""
-    depth = 0
+    depth = pending = 0
     for i, char in enumerate(declaration):
         if char in _OPENERS:
             depth += 1
         elif char in _CLOSERS:
             depth -= 1
-        elif not depth and declaration.startswith(":=", i):
-            return declaration[i + 2 :]
+        elif depth:
+            continue
+        elif char in "lh" and _BINDER.match(declaration, i):
+            pending += 1
+        elif declaration.startswith(":=", i):
+            if not pending:
+                return i
+            pending -= 1
     return None
+
+
+def proof_body(declaration: str) -> str | None:
+    """The text after the `:=` that ends a declaration's header, or None."""
+    end = _header_end(declaration)
+    return None if end is None else declaration[end + 2 :]
+
+
+@functools.lru_cache(maxsize=8)
+def statements_only(lean_text: str, cited: str | None = None) -> str:
+    """The text without comments, each theorem's proof replaced by `sorry`:
+    what a prover needs of a library is its definitions and the statements
+    it may cite, not their proofs. With `cited`, only the theorems whose
+    names occur in it or in the definitions are kept. Commands that follow
+    a proof, such as notation, are kept; an `attribute` line goes with its
+    theorem."""
+    code = strip_comments(lean_text)
+    blocks = split_declarations(code)
+    if cited is not None:
+        cited += "\n".join(b for k, _, b in blocks if k not in _THEOREMS)
+        # Whole names, as in refers_to: not after `.`, `'`, or a word character.
+        names = set(re.findall(r"(?<![\w.'])[\w']+", cited))
+    pieces, position, cursor = [], 0, 0
+    for kind, name, block in blocks:
+        start = code.index(block, cursor)
+        cursor = start + len(block)
+        if kind not in _THEOREMS or (end := _header_end(block)) is None:
+            continue
+        pieces.append(code[position:start])
+        kept = cited is None or name.rsplit(".", 1)[-1] in names
+        if kept:
+            pieces += [block[:end].rstrip(), " := by sorry"]
+        pieces += [
+            "\n" + command.group(0)
+            for command in _TRAILING_COMMAND.finditer(block, end)
+            if kept or command["command"] != "attribute"
+        ]
+        position = cursor
+    pieces.append(code[position:])
+    return re.sub(r"\n{3,}", "\n\n", "".join(pieces))
 
 
 def declarations(lean_text: str) -> list[tuple[str, str, int]]:

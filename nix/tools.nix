@@ -20,6 +20,8 @@ pkgs.buildEnv {
     ripgrep
     # npm: the server installs Codex when a user first needs it.
     nodejs
+    # pdftoppm and pdftotext, with which Claude reads a project's PDF sources.
+    poppler-utils
     git
     curl
     # No ssh: the system's own client is used, with the user's ~/.ssh/config, agent and
@@ -52,6 +54,10 @@ pkgs.buildEnv {
         tools
         upquote
         xcolor
+        forloop
+        courier
+        times
+        helvetic
       ]
     ))
   ];

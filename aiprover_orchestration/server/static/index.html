@@ -59,6 +59,12 @@ button.plain { color: var(--ink); background: var(--surface); }
 .plan-grid { display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr); gap: 12px; align-items: start; }
 @media (max-width: 860px) { .plan-grid { grid-template-columns: minmax(0, 1fr); } }
 #plan-graph { height: 520px; border: 1px solid var(--line); background: var(--surface); min-width: 0; }
+.embed { display: block; width: 100%; height: 640px; border: 1px solid var(--line); background: var(--surface); }
+.panel-tools { display: flex; gap: 12px; justify-content: flex-end; align-items: center; margin: 8px 0 6px; font-size: .92rem; }
+/* A panel in full screen keeps the page's colors and fills the screen. */
+#blueprint:fullscreen, #replay:fullscreen { background: var(--bg); padding: 12px 16px; overflow: auto; }
+#blueprint:fullscreen #plan-graph { height: calc(100vh - 150px); }
+#replay:fullscreen .embed { height: calc(100vh - 70px); }
 .lemma-detail { margin: 0; overflow-wrap: anywhere; }
 .lemma-detail textarea, .plan-decision textarea { min-height: 70px; }
 .plan-label { display: block; font-size: .76rem; font-weight: 400; letter-spacing: .05em; text-transform: uppercase; color: var(--muted); margin: 10px 0 2px; }
@@ -798,7 +804,7 @@ const queuedText = run => `Queued (#${run.position})${run.resumptions ? `, resum
 
 function actions(run) {
   // A run of another user's server is managed there.
-  if (run.external) return `<span class="note">on ${escapeHtml(run.owner)}'s server</span>`;
+  if (run.external) return `<span class="note">on a personal server; read only here</span>`;
   const buttons = [];
   if (run.state === "awaiting_approval" && me && me.approver) {
     buttons.push(`<button data-approve="${run.run_id}">Approve</button>`,
@@ -835,7 +841,13 @@ const capitalized = text => text[0].toUpperCase() + text.slice(1).replaceAll("_"
 const STOPS = {interrupted: "Interrupted", budget: "Stopped at its Claude limit", infrastructure: "Server failure", stage_failed: "No plan compiled", refused: "Refused by the model"};
 const resultOf = run => run.plan_review ? "Awaiting plan review" : STOPS[run.stop] || capitalized(run.state === "finished" ? run.status || "finished" : run.state);
 const SCOPES = {All: () => true, Review: run => run.plan_review, Proved: run => run.settled, Unfinished: run => !run.settled};
-const runTabs = run => ["Progress", ...(run.files.includes("blueprint.json") ? ["Blueprint"] : []), "Files", "Details"];
+const runTabs = run => ["Progress", ...(run.files.includes("blueprint.json") ? ["Blueprint"] : []),
+  ...(run.files.includes("trace_replay.html") ? ["Replay"] : []), "Files", "Details"];
+// Shows a panel (the blueprint, the replay) on the whole screen, where the browser allows
+// it, and returns it to the page.
+const fullScreenLabel = id => document.fullscreenElement?.id === id ? "Exit full screen ✕" : "Full screen ⛶";
+const fullScreenButton = id => document.fullscreenEnabled
+  ? `<button type="button" class="plain" data-full-screen="${id}">${fullScreenLabel(id)}</button>` : "";
 
 // GPU time and cost of a run; nothing while its usage is not yet computed.
 function gpuRows(gpu) {
@@ -883,6 +895,9 @@ function runPanel(run) {
   const body = {
     Progress: `<pre class="box" id="log"></pre>`,
     Blueprint: `<div id="blueprint" data-run="${run.run_id}" data-key="${run.run_id}:${run.plan_review}"></div>`,
+    Replay: `<div id="replay" data-key="${run.run_id}:${document.documentElement.dataset.theme}">
+      <div class="panel-tools">${fullScreenButton("replay")}${fileLink(run, "trace_replay.html", "Open page ↗")}</div>
+      <iframe class="embed" src="${themed(fileUrl(run, "trace_replay.html"))}" title="Replay of the run"></iframe></div>`,
     Files: `<div class="box"><table>${files}<tr><td><a href="/api/runs/${run.run_id}/export" download>Export (zip)</a></td>
       <td>Everything from the run in one folder: problem, Lean files, reports, trace, and logs.</td></tr></table></div>`,
     Details: `<div class="box"><table>
@@ -932,6 +947,9 @@ function groupBy(items, key) {
 const filterRow = (attribute, name, active, runs) =>
   `<li><button type="button" aria-pressed="${name === active}" data-${attribute}="${escapeHtml(name)}">${escapeHtml(name)}</button><span>${runs.length}</span></li>`;
 
+// A re-render waits while a blueprint comment is in progress, which would lose
+// its focus, or while a panel is in full screen, which replacing it would end.
+const pageHeld = () => document.fullscreenElement || ($("blueprint")?.contains(document.activeElement) && document.activeElement.matches("textarea, select"));
 function renderRuns() {
   const numbers = new Map([...allRuns].sort((a, b) => a.submitted - b.submitted).map((run, i) => [run.run_id, i + 1]));
   const hiddenCount = allRuns.filter(run => run.hidden).length;
@@ -958,10 +976,9 @@ function renderRuns() {
   $("show-hidden-label").textContent = `Show hidden (${hiddenCount})`;
   // A repeated poll leaves the page alone, with its focus and scroll positions.
   if (page === shownRuns) return;
-  // A comment in progress waits for the next poll, which keeps its focus.
-  if ($("blueprint")?.contains(document.activeElement) && document.activeElement.matches("textarea, select")) return;
+  if (pageHeld()) return;
   shownRuns = page;
-  const held = ["blueprint", "metrics"].map($).filter(Boolean);
+  const held = ["blueprint", "metrics", "replay"].map($).filter(Boolean);
   $("run-list").innerHTML = page;
   if ($("log")) { $("log").textContent = logLines.join("\n"); $("log").scrollTop = $("log").scrollHeight; }
   // The other rows change often: the open panels keep their graph and comments.
@@ -1045,6 +1062,8 @@ const typesetMath = element => window.renderMathInElement?.(element, {delimiters
 let plan = null, planGraph = null, graphLibraries = null;
 
 const planRun = () => allRuns.find(entry => entry.run_id === plan?.runId);
+// A project's blueprint takes comments on its milestones, unless it is a read-only copy.
+const planProject = () => projects.find(entry => plan?.runId === `project:${entry.name}` && !entry.owner);
 const commented = node => (plan.comments[node.name] || "").trim();
 // Most visits never open a plan, so the graph libraries load on first use.
 const loadGraph = () => graphLibraries ??= Promise.all(["cytoscape.min.js", "elk.bundled.js"].map(name => new Promise((resolve, reject) => {
@@ -1063,7 +1082,7 @@ function planComments() {
 }
 function lemmaDetail() {
   const node = planNode(plan.selected), link = name => `<button type="button" data-plan-pick="${escapeHtml(name)}">${escapeHtml(shortLemma(name))}</button>`;
-  const users = dependents(node.name), review = planRun()?.plan_review;
+  const users = dependents(node.name), review = planRun()?.plan_review || planProject();
   return `<div class="box lemma-detail">
     <div class="row"><code>${escapeHtml(node.name)}</code><span class="chip" id="plan-chip">${PLAN_STATUS[node.status]}</span></div>
     ${node.run ? `<button type="button" class="plain" data-project-run="${node.run}" data-run-tab="Blueprint">Open this result and its blueprint</button>` : ""}
@@ -1072,21 +1091,30 @@ function lemmaDetail() {
     ${node.lean ? `<div class="plan-label">Lean statement</div><pre class="lean">${escapeHtml(node.lean)}</pre>` : ""}
     ${node.uses.length ? `<div class="plan-label">Depends on</div><div class="row plan-links">${node.uses.map(link).join("")}</div>` : ""}
     ${users.length ? `<div class="plan-label">Used by</div><div class="row plan-links">${users.map(link).join("")}</div>` : ""}
-    ${review ? `<label class="plan-label" for="plan-comment">Comment on this lemma</label><textarea id="plan-comment">${escapeHtml(plan.comments[node.name] || "")}</textarea>` : ""}
+    ${review ? `<label class="plan-label" for="plan-comment">Comment on this ${planRun() ? "lemma" : "milestone"}</label><textarea id="plan-comment">${escapeHtml(plan.comments[node.name] || "")}</textarea>` : ""}
   </div>`;
 }
-function planDecision(run) {
-  if (!run.plan_review) return "";
-  return `<section class="plan-decision"><h3>Decision on proof plan, version ${plan.data.version}</h3>
-    <label for="plan-general">General comments <small>required to approve with comments or to request a revision</small></label>
+// The review section under a blueprint: a run's plan awaiting a decision, or a project's milestones.
+const planForm = (title, note, choices) => `<section class="plan-decision"><h3>${title}</h3>
+    <label for="plan-general">General comments${note}</label>
     <textarea id="plan-general">${escapeHtml(plan.general)}</textarea>
     <p class="error" id="plan-error"></p>
-    <div class="plan-choices">
+    <div class="plan-choices">${choices}</div></section>`;
+function planDecision(run) {
+  if (planProject()) return planForm("Feedback on the milestones", "", `
+      <div><button type="button" data-plan-revise>Request revision</button>A research task revises the milestones not yet started in light of the comments: one session drafts the revision and a second referees it, within $20. Started results are kept.</div>`);
+  if (!run.plan_review) return "";
+  return planForm(`Decision on proof plan, version ${plan.data.version}`, " <small>required to approve with comments or to request a revision</small>", `
       <div><button type="button" data-plan-decide="approve">Approve</button>Commence proving this plan without changes.</div>
       <div><button type="button" class="plain" data-plan-decide="comment">Approve with comments</button>Commence proving this plan. The orchestrator receives the comments as guidance.</div>
       <div><button type="button" class="plain" data-plan-decide="revise">Request revision</button>The orchestrator revises the plan in light of the comments and returns it for review.</div>
-      <div><button type="button" class="plain bad" data-plan-decide="reject">Reject</button>Terminate the run before proving commences.</div>
-    </div></section>`;
+      <div><button type="button" class="plain bad" data-plan-decide="reject">Reject</button>Terminate the run before proving commences.</div>`);
+}
+async function reviseMilestones() {
+  const comments = planComments();
+  if (!comments) { $("plan-error").textContent = "A revision requires at least one comment."; return; }
+  const question = `${PLAN_QUESTION} Revise the current milestones in light of the reviewer's comments below.\n\nComments:\n${comments}`;
+  if (await startTask(planProject().name, {kind: "research", question, max_usd: 20, milestones: true})) { plan.comments = {}; plan.general = ""; renderPlan(); }
 }
 function dropGraph() { planGraph?.destroy(); planGraph = null; }
 function renderPlan() {
@@ -1105,7 +1133,7 @@ function renderPlan() {
     <div class="row plan-tools"><span class="seg">${modes}</span>
       ${plan.mode === "Outline" ? `<select id="plan-filter" style="width:auto" aria-label="Filter lemmas">${["All", "Open", "Commented"].map(name => `<option${name === plan.filter ? " selected" : ""}>${name}</option>`).join("")}</select>` : `<button type="button" class="plain" id="plan-fit">Fit graph</button>`}
       <span class="note">Version ${version}; ${run.run_id ? `${nodes.length - 1} lemmas` : `${nodes.length} results`}; <span id="plan-tally">${proved}</span> of ${nodes.length} proved</span>
-      ${run.files.includes("blueprint.tex") ? fileLink(run, "blueprint.tex", "LaTeX source") : ""}</div>
+      ${run.files.includes("blueprint.tex") ? fileLink(run, "blueprint.tex", "LaTeX source") : ""}${fullScreenButton("blueprint")}</div>
     ${body}${planDecision(run)}`;
   typesetMath(host);
   if (plan.mode === "Graph") drawPlan();
@@ -1231,9 +1259,24 @@ document.addEventListener("click", event => {
   if (planPick) pickLemma(planPick);
   if (planMode) { plan.mode = planMode; renderPlan(); }
   if (planDecide) decidePlan(planDecide);
+  if (target.dataset.planRevise !== undefined) reviseMilestones();
   if (target.id === "plan-fit") planGraph?.fit(undefined, 16);
 });
-$("run-list").addEventListener("input", event => {
+document.addEventListener("click", event => {
+  const id = event.target.closest("[data-full-screen]")?.dataset.fullScreen;
+  if (!id) return;
+  if (document.fullscreenElement) document.exitFullscreen();
+  else $(id)?.requestFullscreen().catch(() => {});
+});
+// The graph takes the panel's new size, and the run list its missed updates.
+document.addEventListener("fullscreenchange", () => {
+  document.querySelectorAll("[data-full-screen]").forEach(button => { button.textContent = fullScreenLabel(button.dataset.fullScreen); });
+  planGraph?.resize();
+  planGraph?.fit(undefined, 16);
+  if (!document.fullscreenElement) { renderRuns(); refreshProjects(); }
+});
+// Blueprint comments, in a run's panel or a project's.
+document.addEventListener("input", event => {
   if (event.target.id === "plan-general") plan.general = event.target.value;
   if (event.target.id === "plan-comment") { plan.comments[plan.selected] = event.target.value; paintPlan(); }
 });
@@ -1316,7 +1359,7 @@ function taskEntry(task) {
 function reviewEntry(project, review, index) {
   const data = `data-project="${project.name}" data-claim="${index}"`;
   const decided = review.decision ? `${review.decision} by ${escapeHtml(review.by)}${review.note ? `: ${escapeHtml(review.note)}` : ""}` : "not reviewed";
-  const claude = review.claude ? `; Claude's check: ${escapeHtml(review.claude)}` : "";
+  const claude = review.claude ? `; automated check: ${escapeHtml(review.claude)}` : "";
   return `<li>${escapeHtml(review.claim)}<div class="note">${decided}${claude}</div>
     <div class="row${project.owner ? " hidden" : ""}"><button type="button" class="plain" data-decide="confirmed" ${data}>Confirm</button>
     <button type="button" class="plain" data-decide="rejected" ${data}>Reject</button>
@@ -1327,7 +1370,7 @@ function projectCard(project) {
   const data = `data-project="${project.name}"`, link = path => `/api/projects/${project.name}/${path}${PAGE_QUERY}`;
   const idle = `${data} ${project.tasks.some(task => task.state === "running") ? "disabled" : ""}`;
   const change = `class="plain${project.owner ? " hidden" : ""}"`;
-  return `<section class="project"><h2>${escapeHtml(project.title)}${project.owner ? ` <small>${escapeHtml(project.owner)}'s server, read only</small>` : ""}</h2>
+  return `<section class="project"><h2>${escapeHtml(project.title)}${project.owner ? ` <small>copy on a personal server; read only here</small>` : ""}</h2>
     <div class="note">${MONEY(project.spent_usd)} of Claude${project.research_usd ? `, of which ${MONEY(project.research_usd)} on research` : ""}</div>
     ${project.goal ? `<p>${escapeHtml(project.goal)}</p>` : ""}
     ${openPlan === project.name ? `<div id="blueprint" data-project="${project.name}"></div>` : ""}
@@ -1339,14 +1382,14 @@ function projectCard(project) {
       <button type="button" ${change} data-task="" ${idle}>Research</button>
       <button type="button" ${change} data-paper ${idle}>Write paper</button>
       ${project.members.length ? `<button type="button" class="plain" data-toggle-plan ${data} aria-pressed="${openPlan === project.name}">Blueprint</button>` : ""}
-      ${project.paper ? `<a href="${link("paper")}">paper</a>` : ""}
+      ${project.paper ? `<a href="${link("paper.pdf")}">paper</a> <a href="${link("paper.tex")}">tex</a>` : ""}
     </div>
     <h3>Shared by the results</h3>
     <p class="note">Each result builds on the Lean library, and its orchestrator may read the source.</p>
     <ul><li><a href="${link("library")}" target="_blank">Lean library: ${escapeHtml(project.library)}</a></li>
     ${project.source_files.length ? `<li><details><summary>Source files (${project.source_files.length})</summary><ul>${project.source_files.map(file => `<li><a href="${link(`source/${encodeURI(file)}`)}" target="_blank">${escapeHtml(file)}</a></li>`).join("")}</ul></details></li>` : ""}</ul>
     ${project.open.length ? `<h3>Open lemmas</h3><ul>${project.open.map(item => `<li><code>${escapeHtml(item.lemma)}</code>: ${escapeHtml(item.reason)}</li>`).join("")}</ul>` : ""}
-    ${project.reviews.length ? `<h3>Claims without a Lean proof</h3><p class="note">Review is optional. Without an expert, ask Claude for a second opinion, which is not a proof, or prove the claim in Lean.</p><ul>${project.reviews.map((review, index) => reviewEntry(project, review, index)).join("")}</ul>` : ""}
+    ${project.reviews.length ? `<h3>Claims without a Lean proof</h3><p class="note">Review is optional.</p><ul>${project.reviews.map((review, index) => reviewEntry(project, review, index)).join("")}</ul>` : ""}
     ${project.tasks.length ? `<h3>Research</h3>${project.tasks.map(taskEntry).join("")}` : ""}</section>`;
 }
 // The run list moves under its project's row, with its panels and handlers.
@@ -1360,7 +1403,7 @@ async function refreshProjects() {
   projects = await api("/api/projects" + PAGE_QUERY).catch(() => []);
   renderHome();
   const page = projects.map(projectCard).join("") || "<p>No projects.</p>";
-  if (page === shownProjects) return;
+  if (page === shownProjects || pageHeld()) return;
   shownProjects = page;
   $("run-home").append($("run-list"));
   $("project-list").innerHTML = page;
@@ -1368,8 +1411,9 @@ async function refreshProjects() {
   if (openPlan) mountBlueprint();
 }
 const showProjectPlan = name => { openPlan = name; shownProjects = ""; return refreshProjects(); };
+// Whether the call succeeded; the project list refreshes either way.
 const projectCall = (name, path, method, body) => api(`/api/projects/${name}/${path}${PAGE_QUERY}`, {method, body: JSON.stringify(body)})
-  .catch(error => alert(error.message)).then(refreshProjects);
+  .then(() => true, error => { alert(error.message); return false; }).finally(refreshProjects);
 const startTask = (name, body) => projectCall(name, "tasks", "POST", body);
 
 $("project-list").addEventListener("click", async event => {
@@ -1387,7 +1431,7 @@ $("project-list").addEventListener("click", async event => {
     showProjectPlan(openPlan === name ? null : name);
   }
   if (edit !== undefined) { event.preventDefault(); openMember(project, index); }
-  if (task !== undefined) { $("task-form").dataset.project = name; $("task-question").value = task; $("task-dialog").showModal(); }
+  if (task !== undefined) { Object.assign($("task-form").dataset, {project: name, milestones: task === PLAN_QUESTION}); $("task-question").value = task; $("task-dialog").showModal(); }
   if (launch !== undefined && confirm(`Queue the remaining results of ${project.title}? Each run spends Claude and GPU time.`)) projectCall(name, "launch", "POST");
   if (paper !== undefined) startTask(name, {kind: "paper"});
   const review = project?.reviews[claim];
@@ -1402,7 +1446,8 @@ $("project-list").addEventListener("click", async event => {
 $("task-form").addEventListener("submit", event => {
   event.preventDefault();
   $("task-dialog").close();
-  startTask($("task-form").dataset.project, {kind: "research", question: $("task-question").value, max_usd: Number($("task-limit").value)});
+  const {project, milestones} = $("task-form").dataset;
+  startTask(project, {kind: "research", question: $("task-question").value, max_usd: Number($("task-limit").value), milestones: milestones === "true"});
 });
 
 // Only results without a run can change.

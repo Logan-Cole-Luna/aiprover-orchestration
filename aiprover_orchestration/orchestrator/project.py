@@ -107,6 +107,7 @@ def launch(project: dict, submit) -> list[str]:
             "library": project["library"],
             "extend_library": True,
             "after": previous,
+            "settings": project.get("settings", {}),
             **project.get("selection", {}),
         }
         member["run"] = submit(body)["run_id"]
@@ -114,6 +115,16 @@ def launch(project: dict, submit) -> list[str]:
         started.append(member["run"])
         previous = member["run"]
     return started
+
+
+def replace_unstarted(project: dict, members: list[dict]) -> None:
+    """Replace the members without a run by `members`; a started result keeps
+    its place and its run."""
+    started = [member for member in project["members"] if member.get("run")]
+    names = [member["uuid"] for member in started + members]
+    if len(set(names)) < len(names):
+        raise ValueError("each result needs its own name")
+    project["members"] = started + members
 
 
 def member_result(member: dict) -> dict:

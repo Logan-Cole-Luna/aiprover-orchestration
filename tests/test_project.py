@@ -55,3 +55,17 @@ class ReportAbsorptionTest(unittest.TestCase):
             "uuid": "base", "role": "background", "statement": "S", "proof": "P",
             "uses": ["a", "b"],
         }])
+        # A revision replaces only unstarted milestones.
+        project = {"open": [], "reviews": [], "members": [
+            {"uuid": "done", "role": "main", "statement": "D", "run": "r1"},
+            {"uuid": "dropped", "role": "main", "statement": "X"},
+        ]}
+        absorb(project, """<milestone name="done"><statement>D2</statement></milestone>
+        <milestone name="new"><role>main</role><statement>N</statement></milestone>""", True)
+        self.assertEqual([m["uuid"] for m in project["members"]], ["done", "new"])
+        self.assertEqual(project["members"][0]["statement"], "D")
+        absorb(project, "<claim>No milestones here.</claim>", True)
+        self.assertEqual([m["uuid"] for m in project["members"]], ["done", "new"])
+        project["members"][1]["proof"] = "edited by hand"
+        absorb(project, '<milestone name="new"><statement>N</statement><proof>other</proof></milestone>', True)
+        self.assertEqual(project["members"][1]["proof"], "edited by hand")
