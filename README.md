@@ -137,10 +137,10 @@ written to `results/<slug>_skill_<date>/`.
 ## 3. Using a running server
 
 A query server on a host (section 1) can be used without any setup. Its
-runs use the submitting user's own Claude subscription; therefore each user
-runs a server of their own on the host, under their own account. With an
-account on the host, one command from the user's own machine signs in to
-Claude on first use, starts the server, and forwards its page:
+runs use the submitting user's own login to a hosted service; therefore each
+user runs a server of their own on the host, under their own account. With an
+account on the host, one command from the user's own machine starts the server
+and forwards its page:
 
 ```bash
 ssh -t -L PORT:127.0.0.1:PORT <user>@<host> \
@@ -148,14 +148,28 @@ ssh -t -L PORT:127.0.0.1:PORT <user>@<host> \
 ```
 
 `PORT` is fixed per account (20000 + 2 × (uid mod 5000)); on the host,
-`aiprover-server ssh` prints the complete command. On first use the command
-runs `claude auth login`, which prints Anthropic's sign-in link; the sign-in
-completes in the browser on Anthropic's site, and the login is kept in the
-user's `~/.claude` on the host. No Claude credential passes through the
-page or the server. Then open `http://localhost:PORT/user`; Ctrl+C closes the
-connection, while the server and its runs continue (`aiprover-server stop`
-ends the server). Pro and Max limits assume individual use, which long runs
-exhaust quickly.
+`aiprover-server ssh` prints the complete command. Then open
+`http://localhost:PORT/user`; Ctrl+C closes the connection, while the server and
+its runs continue (`aiprover-server stop` ends the server).
+
+The first run that selects a hosted service prompts for its sign-in on the page,
+which links to the service's sign-in site and, where the service requires it,
+accepts the code that the site shows. The page also accepts an API key. A code
+or key entered there passes through the user's own server to the service's
+program, and the login stays under the user's account on the host. Subscription
+limits assume individual use, which long runs exhaust quickly.
+
+A server keeps its state in `users/<account>` of the checkout, which its first
+command creates and the host's owner can read. It runs at most 6 AIProver
+sessions (`AIPROVER_MAX_PARALLEL`) and 2 runs (`QUERY_SERVER_MAX_RUNS`) at once.
+State in `~/.local/share/aiprover_orchestration` moves there on the next
+command, and the private copy remains as a backup. The host's owner prepares the
+folder once, from the checkout:
+
+```bash
+mkdir -p users && chmod 1733 users
+setfacl -d -m u::rwx,u:$(id -un):rwx,g::---,o::---,m:rwx users
+```
 
 Concurrency is bounded per machine, across runs and users: hosted model calls,
 Lean processes, and AIProver sessions wait for slots whose number follows from
@@ -231,9 +245,11 @@ flowchart LR
 
 *Figure 2. Architecture and pipeline.*
 
-The captain (Claude) formalizes the problem; a blind auditor translates the
-Lean back to mathematics for comparison with the source; the captain
-sketches the proof as lemmas, which AIProver jobs attempt in parallel; stuck
+The captain (Claude) formalizes the problem; Lean probes the statement for
+vacuity, triviality, and counterexamples; a blind auditor translates the Lean
+back to mathematics, and a judge panel compares it with the source, which can
+include a model other than the captain's and a Lean comparison with an
+independent formalization; the captain sketches the proof as lemmas, which AIProver jobs attempt in parallel; stuck
 lemmas return to the captain to prove, split or restate; the verified
 solution is assembled, reviewed independently and written up in LaTeX. Lean
 gates every stage.

@@ -30,15 +30,19 @@ ALGORITHM = [
     {
         "stage": "formalize",
         "actor": "auditor (worker model)",
-        "description": "Write a blind read-back of the Lean code, seeing only "
+        "description": "Probe the statement in Lean: contradictory hypotheses, "
+        "closure by automation alone, a counterexample, and "
+        "equivalence with an independent formalization when the "
+        "`formalizer` role is configured. Then write a blind "
+        "read-back of the Lean code, seeing only "
         "the code and the auditor role prompt, never the source.",
     },
     {
         "stage": "formalize",
-        "actor": "captain (orchestrator model)",
-        "description": "Compare the read-back with the source statement and "
-        "proof; verdict FAITHFUL continues, REVISE returns to "
-        "formalization.",
+        "actor": "judge (independent model), captain",
+        "description": "Compare the read-back and the Lean evidence with the "
+        "source statement and proof; verdict FAITHFUL of every "
+        "judge continues, REVISE returns to formalization.",
     },
     {
         "stage": "sketch",
@@ -141,6 +145,9 @@ class Config:
     # failed repair round, except in the last round.
     sketch_judge: bool = True
     max_audit_rounds: int = 2  # formalization revisions after REVISE
+    # Lean probes of each audited statement (fidelity.py); a proof of `False`
+    # from its hypotheses is a REVISE that no judge can overrule.
+    fidelity_probes: bool = True
     # Lean checks of one run; limits.LEAN bounds all runs of the machine.
     lean_parallel: int = 6
     lean_timeout: int = 300
@@ -186,6 +193,9 @@ class Config:
     # statement); "sketch", the comments above the lemma in the captain's
     # reply that stated it (no call); "" for none.
     aiprover_direction: str = "captain"
+    # Keep AIProver sessions off the internet (lean/offline.py), for problems
+    # whose answer may be published.
+    aiprover_offline: bool = False
     # Mark the earlier lemmas in a job's context as facts to cite, and list
     # those its direction names, with their statements, in its guidance.
     aiprover_cite_lemmas: bool = True

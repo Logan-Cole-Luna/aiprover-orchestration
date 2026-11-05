@@ -74,6 +74,9 @@ SETTINGS = {
         "sketch's comments, or none",
         choices=("captain", "sketch", ""),
     ),
+    "aiprover_offline": Setting(
+        "AIProver", "Keep AIProver sessions off the internet"
+    ),
     "aiprover_cite_lemmas": Setting(
         "AIProver", "Mark earlier lemmas as facts to cite"
     ),

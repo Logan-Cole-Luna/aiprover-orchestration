@@ -18,9 +18,9 @@
 #   --allow-owner   run as the owner of the checkout (who otherwise runs the systemd service)
 #
 # Environment:
-#   AIPROVER_ORCHESTRATION_HOME  runtime state (default users/<account> of the checkout, where the
-#                                owner has created it, else ~/.local/share/aiprover_orchestration)
-#   AIPROVER_MAX_PARALLEL        this server's AIProver rollouts on the DGX (default 12 of 48)
+#   AIPROVER_ORCHESTRATION_HOME  runtime state (default users/<account> of the checkout, created
+#                                on the first command)
+#   AIPROVER_MAX_PARALLEL        this server's AIProver rollouts on the DGX (default 6 of 48)
 #   AIPROVER_PYTHON              interpreter (default the owner's lean_env)
 #
 # TEMPORARY: other accounts read this checkout and its toolchain from the owner's home,
@@ -31,13 +31,24 @@ set -eu
 ROOT=$(cd "$(dirname "$0")/../.." && pwd -P)
 OWNER=$(stat -c %U "$ROOT")
 OWNER_HOME=$(getent passwd "$OWNER" | cut -d: -f6)
-# State kept in the checkout (users/<account>, with an ACL for the account)
-# is readable by its owner; otherwise it is private to the account.
+# State is kept in the checkout, in users/<account>, where the default ACL of
+# users/ gives the owner access to what the account creates.
 SHARED_HOME=$ROOT/users/$(id -un)
-[ -d "$SHARED_HOME" ] || SHARED_HOME=${XDG_DATA_HOME:-$HOME/.local/share}/aiprover_orchestration
+PRIVATE_HOME=${XDG_DATA_HOME:-$HOME/.local/share}/aiprover_orchestration
 HOME_DIR=${AIPROVER_ORCHESTRATION_HOME:-$SHARED_HOME}
+# Private state from before users/<account> existed moves there once. A run
+# still writing to it keeps the server on it until a later start.
+MOVE_PRIVATE=no
+if [ "$HOME_DIR" = "$ROOT/users/$(id -un)" ] && [ -d "$PRIVATE_HOME/state" ] \
+  && [ ! -e "$PRIVATE_HOME/moved" ]; then
+  if pgrep -u "$(id -u)" -f "$PRIVATE_HOME" >/dev/null; then
+    HOME_DIR=$PRIVATE_HOME
+  else
+    MOVE_PRIVATE=yes
+  fi
+fi
 PYTHON=${AIPROVER_PYTHON:-$OWNER_HOME/lean_env/bin/python3}
-MAX_PARALLEL=${AIPROVER_MAX_PARALLEL:-12}
+MAX_PARALLEL=${AIPROVER_MAX_PARALLEL:-6}
 ELAN_HOME=$OWNER_HOME/.elan
 DGX_URL="http://cic-dgx-01.tacc.cloud:8040"
 DGX_MODEL="aip-leanstral"
@@ -133,6 +144,17 @@ prepare() {
 # only for a change of its own module. A process that has not exited after
 # STOP_SECONDS (open page streams delay the server's shutdown) is killed.
 STOP_SECONDS=15
+halt() {
+  pid=$(cat "$PIDS/$1")
+  kill "$pid"
+  waited=0
+  while running "$1" && [ "$waited" -lt "$STOP_SECONDS" ]; do
+    sleep 1
+    waited=$((waited + 1))
+  done
+  ! running "$1" || kill -9 "$pid" 2>/dev/null || true
+}
+
 launch() {
   name=$1
   shift
@@ -141,14 +163,7 @@ launch() {
   if running "$name"; then
     [ -z "$(find "$code" -name '*.py' -newer "$PIDS/$name" | head -n 1)" ] && return
     say "restarting the $name: the code changed since it started"
-    pid=$(cat "$PIDS/$name")
-    kill "$pid"
-    waited=0
-    while running "$name" && [ "$waited" -lt "$STOP_SECONDS" ]; do
-      sleep 1
-      waited=$((waited + 1))
-    done
-    ! running "$name" || kill -9 "$pid" 2>/dev/null || true
+    halt "$name"
   fi
   setsid nohup "$@" >>"$HOME_DIR/logs/$name.log" 2>&1 </dev/null &
   echo $! >"$PIDS/$name"
@@ -203,9 +218,24 @@ serve() {
 
 stop() {
   for name in server proxy; do
-    running "$name" && kill "$(cat "$PIDS/$name")" && say "stopped $name"
+    running "$name" && halt "$name" && say "stopped $name"
     rm -f "$PIDS/$name"
   done
+}
+
+# Existing files of the shared state are kept, and the private state stays in
+# place as a backup. The mask lets the owner read what the copy created.
+move_private() {
+  [ "$MOVE_PRIVATE" = yes ] || return 0
+  say "moving your state from $PRIVATE_HOME to $HOME_DIR"
+  shared_pids=$PIDS
+  PIDS=$PRIVATE_HOME/state/pids
+  stop
+  PIDS=$shared_pids
+  cp -r --update=none "$PRIVATE_HOME/." "$HOME_DIR/" \
+    || say "some files were not copied; they remain in $PRIVATE_HOME"
+  setfacl -R -m m:rwX "$HOME_DIR" 2>/dev/null || true
+  touch "$PRIVATE_HOME/moved"
 }
 
 status() {
@@ -227,6 +257,9 @@ for argument in "$@"; do
 done
 [ "$(id -un)" != "$OWNER" ] || [ "$ALLOW_OWNER" = yes ] \
   || die "$OWNER runs the shared systemd service; pass --allow-owner for a separate server"
+
+[ -n "${AIPROVER_ORCHESTRATION_HOME:-}" ] || mkdir -p "$SHARED_HOME"
+move_private
 
 case $COMMAND in
   serve) serve ;;

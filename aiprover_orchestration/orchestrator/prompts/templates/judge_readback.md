@@ -16,6 +16,12 @@ An independent auditor, who saw only the Lean code below and never the source, w
 {readback}
 </readback>
 
+Lean checked the statement mechanically; a positive result below is a fact, and a negative one is only an absence of proof.
+
+<lean_evidence>
+{evidence}
+</lean_evidence>
+
 Reply with:
 <verdict>FAITHFUL or REVISE</verdict>
 <issues>

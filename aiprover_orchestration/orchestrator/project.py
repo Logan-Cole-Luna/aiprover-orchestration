@@ -252,8 +252,53 @@ class PaperBuilder(LatexBuilder):
         )
 
 
+class ProposalBuilder(PaperBuilder):
+    """The project's paper while no result has a run: a proposal for the
+    expert's feedback, written from the latest milestone plan."""
+
+    def __init__(self, project: dict, report: str):
+        super().__init__(project, [])
+        self.report = report
+
+    def problems(self, text: ReportText) -> list[str]:
+        return forbidden_latex(text)
+
+    def verification(self) -> str:
+        return ""
+
+    def write_prompt(self) -> str:
+        milestones = "\n".join(
+            f"- {m['uuid']} ({m['role']}; uses: {', '.join(m.get('uses', [])) or 'none'})"
+            f" {m['statement']}"
+            for m in self.project["members"]
+        )
+        open_items = "\n".join(
+            f"- {item['lemma']}: {item['reason']}" for item in self.project["open"]
+        )
+        return prompts.PROPOSAL_TEMPLATE.format(
+            title=self.project.get("title", ""),
+            goal=self.project.get("goal", ""),
+            milestones=milestones,
+            open_items=open_items or "(none)",
+            report=self.report,
+        )
+
+    def check_prompt(self, text: ReportText) -> str:
+        return prompts.PROPOSAL_CHECK_TEMPLATE.format(report=self.report, body=text.body)
+
+
+def milestone_report(project: dict) -> str:
+    """The latest task report that proposed milestones, or empty."""
+    for task in reversed(project["tasks"]):
+        path = PROJECTS_DIR / project["name"] / "tasks" / task["id"] / "report.md"
+        if path.exists() and "<milestone" in (text := path.read_text()):
+            return text
+    return ""
+
+
 def paper(project: dict, models: dict[str, str]) -> dict:
-    """Write the project's paper from its members' informalizations."""
+    """Write the project's paper from its members' informalizations; before
+    any member has a run, a proposal from the milestone plan instead."""
     unfinished = [
         member["uuid"]
         for member in project["members"]
@@ -262,12 +307,14 @@ def paper(project: dict, models: dict[str, str]) -> dict:
             RESULTS_DIR / member["run"] / "informal" / "informal_parts.json"
         ).exists()
     ]
-    if unfinished:
+    started = any(member.get("run") for member in project["members"])
+    report = "" if started else milestone_report(project)
+    if unfinished and not report:
         raise SystemExit(
             f"members without an informalization: {unfinished}; choose Generate "
             f"documents on each run"
         )
-    results = [member_result(member) for member in project["members"]]
+    results = [] if report else [member_result(m) for m in project["members"]]
     roles = {
         role: build_agent(role_spec(role, PAPER_AGENT | {"model": model}))
         for role, model in models.items()
@@ -283,6 +330,7 @@ def paper(project: dict, models: dict[str, str]) -> dict:
             prompt, role=role, phase=phase, system_prompt=systems[role]
         )
 
-    record = PaperBuilder(project, results).build(complete)
+    builder = ProposalBuilder(project, report) if report else PaperBuilder(project, results)
+    record = builder.build(complete)
     cost = sum(total["cost_usd"] for total in pool.usage_by_model.values())
     return record | {"cost_usd": cost}

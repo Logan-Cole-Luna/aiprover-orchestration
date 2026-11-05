@@ -21,6 +21,7 @@ a:hover { text-decoration: underline; }
 /* Important, since the link-style buttons reset their outline with `all: unset`. */
 :focus-visible { outline: 2px solid var(--accent) !important; outline-offset: 2px; }
 code { font: 13px var(--font-mono); }
+#account-device { font-size: 22px; letter-spacing: 0.08em; user-select: all; }
 .hidden { display: none !important; }
 .good { color: var(--ok); } .bad, .error { color: var(--fail); } .warn { color: var(--warn); }
 .quiet, .note { color: var(--muted); } .live { color: var(--accent); font-style: italic; }
@@ -254,18 +255,18 @@ figcaption { font-size: .9rem; line-height: 1.45; color: var(--caption); margin-
   <div id="app" class="hidden">
     <div id="view-home" class="hidden">
       <section class="home-lead">
-        <h1>Formal proofs from informal mathematics</h1>
-        <p>State a theorem in mathematical language, with a proof if you have one. Agents formalize it, plan the proof, and prove it lemma by lemma, and Lean verifies the result.</p>
+        <h1>Orchestrated formal proving in Lean</h1>
+        <p>A theorem is submitted in mathematical language, optionally with an informal proof. The orchestration formalizes the statement in Lean, decomposes the proof into lemmas, and proves each lemma with <a href="https://jprithwish.github.io/AIProver/" target="_blank" rel="noopener">AIProver</a>; Lean then verifies the complete proof.</p>
         <div class="row"><button class="big" data-view="submit">Submit a problem</button><a href="#guide" data-view="guide">Read the guide</a></div>
       </section>
       <div id="home-recent"></div>
       <nav class="home-cards" aria-label="Sections">
-        <a href="#runs" data-view="runs"><b>Runs</b><span>Follow a proof attempt and read its results.</span><small id="home-runs"></small></a>
-        <a href="#projects" data-view="projects"><b>Projects</b><span>Connected results proved in order on one library.</span><small id="home-projects"></small></a>
-        <a href="#submit" data-view="submit"><b>Submit</b><span>Start a single problem or a project.</span></a>
-        <a href="#guide" data-view="guide"><b>Guide</b><span>Learn how runs work and how to read their results.</span></a>
+        <a href="#runs" data-view="runs"><b>Runs</b><span>The progress and results of each proof attempt.</span><small id="home-runs"></small></a>
+        <a href="#projects" data-view="projects"><b>Projects</b><span>Related results proved in dependency order on a shared library.</span><small id="home-projects"></small></a>
+        <a href="#submit" data-view="submit"><b>Submit</b><span>Submission of a single problem or a project.</span></a>
+        <a href="#guide" data-view="guide"><b>Guide</b><span>The operation of a run and the interpretation of its results.</span></a>
       </nav>
-      <p class="note">Lean verifies each proof against its formal statement. It cannot confirm that the formal statement expresses your theorem; the agents assess this, and the statement deserves your own reading.</p>
+      <p class="note">Lean verifies each proof against its formal statement, but it cannot establish that the formal statement expresses the intended theorem. The orchestration assesses this correspondence; consequently, the formal statement should be read before a result is relied upon.</p>
     </div>
 
     <div id="view-runs" class="columns">
@@ -433,15 +434,15 @@ figcaption { font-size: .9rem; line-height: 1.45; color: var(--caption); margin-
 <dialog id="account-dialog">
   <h3 id="account-title"></h3>
   <p class="note" id="account-wait">Preparing sign-in. The first use installs the service, which may take a minute.</p>
-  <div id="account-step" class="hidden">
-    <p>Open <a id="account-link" target="_blank" rel="noopener noreferrer">the sign-in page</a> and sign in.</p>
-    <p><code id="account-device"></code></p>
-    <div id="account-paste" class="hidden">
-      <label for="account-code">Paste the code it shows</label>
+  <ol id="account-step" class="hidden">
+    <li>Open <a id="account-link" target="_blank" rel="noopener noreferrer">the sign-in page</a> and sign in to your account.</li>
+    <li id="account-device-step" class="hidden">Enter this one-time code on that page:
+      <div class="row"><code id="account-device"></code><button type="button" class="plain" id="account-copy">Copy</button></div>
+      <span class="note">This window closes on its own once the sign-in completes.</span></li>
+    <li id="account-paste" class="hidden"><label for="account-code">Paste the code that page shows</label>
       <input id="account-code" type="password" autocomplete="off">
-      <div class="row"><button type="button" id="account-finish">Finish sign-in</button></div>
-    </div>
-  </div>
+      <div class="row"><button type="button" id="account-finish">Finish sign-in</button></div></li>
+  </ol>
   <label for="account-key">Or use an API key</label>
   <input id="account-key" type="password" autocomplete="off">
   <div class="row"><button type="button" class="plain" id="account-save-key">Save key</button><button type="button" class="plain" id="account-cancel">Close</button></div>
@@ -1016,7 +1017,7 @@ async function openSignIn(service) {
   form.dataset.service = service;
   $("account-title").textContent = `Sign in to ${{claude: "Claude", codex: "Codex"}[service]}`;
   for (const id of ["account-error", "account-device"]) $(id).textContent = "";
-  $("account-paste").classList.add("hidden");
+  for (const id of ["account-paste", "account-device-step"]) $(id).classList.add("hidden");
   $("account-step").classList.add("hidden");
   $("account-wait").classList.remove("hidden");
   if (!form.open) form.showModal();
@@ -1026,6 +1027,7 @@ async function openSignIn(service) {
     $("account-step").classList.remove("hidden");
     if (!code) { $("account-paste").classList.remove("hidden"); return; }
     $("account-device").textContent = code;
+    $("account-device-step").classList.remove("hidden");
     signInPoll = setInterval(async () => {
       if ((await api(`/api/accounts/${service}`)).account) signedIn();
     }, 3000);
@@ -1040,6 +1042,7 @@ $("account-finish").onclick = () => {
   $("account-code").value = "";
   accountAction(() => api("/api/accounts/claude/code", {method: "POST", body: JSON.stringify({value: code})}));
 };
+$("account-copy").onclick = () => navigator.clipboard?.writeText($("account-device").textContent).catch(() => {});
 $("account-save-key").onclick = () => {
   const key = $("account-key").value;
   $("account-key").value = "";

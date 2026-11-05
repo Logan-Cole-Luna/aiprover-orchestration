@@ -7,7 +7,8 @@ them are doubled. The auditor's system prompt is its role guide
 (`aiprover_orchestration/roles/auditor.md`), used verbatim.
 
 Captain: formalizes, judges read-backs, writes and revises proof sketches.
-Auditor: writes blind read-backs. Solver: proves one lemma under the
+Judge: judges read-backs independently of the captain. Formalizer: writes the
+reference formalization. Auditor: writes blind read-backs. Solver: proves one lemma under the
 library's gating rules. Reviewer: referees the verified result. Writer:
 writes the report and the informalization.
 """
@@ -51,6 +52,7 @@ LEAN_ENV_NOTE = (
 CAPTAIN_SYSTEM = system_prompt("captain")
 SOLVER_SYSTEM = system_prompt("solver")
 REVIEWER_SYSTEM = system_prompt("reviewer")
+JUDGE_SYSTEM = system_prompt("judge")
 WRITER_SYSTEM = system_prompt("writer")
 
 # Formalization and audit.
@@ -178,6 +180,8 @@ INFORMAL_REFUTATION_TEMPLATE = template("informal_refutation")
 INFORMAL_CHECK_TEMPLATE = template("informal_check")
 PAPER_TEMPLATE = template("paper")
 PAPER_CHECK_TEMPLATE = template("paper_check")
+PROPOSAL_TEMPLATE = template("proposal")
+PROPOSAL_CHECK_TEMPLATE = template("proposal_check")
 
 TEMPLATES = {
     name: value

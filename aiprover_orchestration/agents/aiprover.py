@@ -17,6 +17,7 @@ import logging
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import time
 import tomllib
@@ -25,6 +26,7 @@ from dataclasses import asdict, dataclass, field
 from functools import cached_property
 from pathlib import Path
 from typing import Callable
+from urllib.parse import urlparse
 
 from ..paths import AIPROVER_CLI, DEFAULT_AIPROVER_CLI, ROOT
 from ..utils.files import read_jsonl
@@ -94,6 +96,7 @@ MAX_DIAGNOSTICS = 20000
 # Transcript entries are cut to these lengths in the trace record.
 MAX_MESSAGE_TEXT = 8000
 MAX_TOOL_TEXT = 6000
+OFFLINE = ROOT / "aiprover_orchestration" / "lean" / "offline.py"
 # Reasoning in a reply, whose closing tag is absent when the reply was cut off.
 THINK_BLOCK = re.compile(r"\[THINK\](.*?)(?:\[/THINK\]|\Z)", re.DOTALL)
 
@@ -162,6 +165,21 @@ def read_reasoning(directory: Path | None) -> list[dict]:
     (`reasoning.jsonl` in the sample directory); empty if it was not recorded.
     """
     return read_jsonl(directory / "reasoning.jsonl") if directory else []
+
+
+def offline_prefix(harness: dict) -> list[str]:
+    """Command prefix that keeps the harness and its sessions off the
+    internet: they reach only the model proxy and the Mathlib index."""
+    urls = (
+        harness["endpoint"]["api_base"],
+        harness["runtime"].get("leanfinder_url", ""),
+    )
+    # A URL without a port uses its scheme's default.
+    ports = [
+        str(parts.port or {"https": 443, "http": 80}[parts.scheme])
+        for parts in map(urlparse, filter(None, urls))
+    ]
+    return [sys.executable, "-I", str(OFFLINE), ",".join(ports), "--"]
 
 
 def split_session_reasoning(sample: dict) -> None:
@@ -247,6 +265,7 @@ class AIProverAgent(Agent):
         max_turns: int = 100,
         poll_seconds: int = 60,
         env: dict | None = None,
+        offline: bool = False,
         **options,
     ):
         super().__init__(
@@ -273,6 +292,7 @@ class AIProverAgent(Agent):
         api_base = harness["endpoint"]["api_base"].rstrip("/")
         self.metrics_url = api_base.removesuffix("/v1") + "/metrics"
         self.upstreams_url = api_base.removesuffix("/v1") + "/upstreams"
+        self.prefix = offline_prefix(harness) if offline else []
         self.timeout = timeout
         self.max_turns = max_turns
         self.poll_seconds = poll_seconds
@@ -292,7 +312,7 @@ class AIProverAgent(Agent):
     ) -> subprocess.CompletedProcess:
         try:
             return subprocess.run(
-                [str(self.cli), *args],
+                [*self.prefix, str(self.cli), *args],
                 env=self.env,
                 capture_output=True,
                 text=True,

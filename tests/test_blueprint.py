@@ -31,7 +31,7 @@ def sketch() -> Sketch:
 
 
 class PlanTest(unittest.TestCase):
-    def test_dependencies_combine_the_writer_and_the_lean_text(self):
+    def check_dependencies_combine_the_writer_and_the_lean_text(self):
         plan = sketch()
         keys = {lemma.name: statement_key(lemma.statement) for lemma in plan.lemmas}
         keys["solution"] = statement_key(FORM.statement)
@@ -39,7 +39,7 @@ class PlanTest(unittest.TestCase):
         self.assertEqual(nodes[1]["uses"], ["a"])
         self.assertEqual(nodes[2]["uses"], ["b"])
 
-    def test_only_a_verified_assembly_proves_the_theorem(self):
+    def check_only_a_verified_assembly_proves_the_theorem(self):
         plan = sketch()
         plan.lemmas[1].proved = True
         self.assertEqual(
@@ -48,6 +48,17 @@ class PlanTest(unittest.TestCase):
         nodes = blueprint.plan_nodes(FORM, plan, {}, verified=True)
         self.assertEqual(nodes[-1]["status"], "proved")
         self.assertEqual(blueprint.latex(nodes).count("{proof}\\leanok"), 3)
+
+    def test_checks(self):
+        for index, name in enumerate([
+            "check_dependencies_combine_the_writer_and_the_lean_text",
+            "check_only_a_verified_assembly_proves_the_theorem",
+        ]):
+            if index:
+                self.tearDown()
+                self.setUp()
+            with self.subTest(name):
+                getattr(self, name)()
 
 
 class PlanReviewTest(TemporaryDirectoryTest):
@@ -58,7 +69,7 @@ class PlanReviewTest(TemporaryDirectoryTest):
         path = self.directory / "blueprint" / "blueprint.json"
         return json.loads(path.read_text())
 
-    def test_a_failed_description_leaves_the_lean_statements(self):
+    def check_a_failed_description_leaves_the_lean_statements(self):
         run = self.run_with()
 
         def failing(prompt, role, phase):
@@ -68,14 +79,14 @@ class PlanReviewTest(TemporaryDirectoryTest):
         run.blueprint(FORM, sketch())
         self.assertEqual(self.plan()["problems"], ["no writer"])
 
-    def test_a_proved_statement_is_marked_in_the_blueprint(self):
+    def check_a_proved_statement_is_marked_in_the_blueprint(self):
         folder = self.directory / "blueprint"
         nodes = blueprint.plan_nodes(FORM, sketch(), {})
         blueprint.write(folder, 1, nodes)
         blueprint.record_proved(folder, "theorem b : True")
         self.assertEqual(self.plan()["nodes"][1]["status"], "proved")
 
-    def test_guidance_reaches_the_guided_phases_only(self):
+    def check_guidance_reaches_the_guided_phases_only(self):
         run = self.run_with(sketch_guidance="prefer induction")
         run.agents.replies = ["", ""]
         run._captain("prompt", "direction/a")
@@ -83,13 +94,13 @@ class PlanReviewTest(TemporaryDirectoryTest):
         self.assertIn("prefer induction", run.agents.prompts[0])
         self.assertEqual(run.agents.prompts[1], "prompt")
 
-    def test_a_replan_receives_the_findings(self):
+    def check_a_replan_receives_the_findings(self):
         run = self.run_with(sketch_feedback="a bound is known", plan_revision=1)
         self.assertTrue(run._revision_requested())
         run._decision("plan_revised", revision=1)
         self.assertFalse(run._revision_requested())
 
-    def test_a_revision_answers_its_request_once(self):
+    def check_a_revision_answers_its_request_once(self):
         run = self.run_with(sketch_feedback="split b", plan_revision=1)
         revised = sketch()
         run.sketch = lambda form, feedback, earlier: (
@@ -97,3 +108,19 @@ class PlanReviewTest(TemporaryDirectoryTest):
         )
         self.assertIs(run._revised_plan(FORM, sketch()), revised)
         self.assertIsNot(run._revised_plan(FORM, sketch()), revised)
+
+    def test_checks(self):
+        for index, name in enumerate([
+            "check_a_failed_description_leaves_the_lean_statements",
+            "check_a_proved_statement_is_marked_in_the_blueprint",
+            "check_guidance_reaches_the_guided_phases_only",
+            "check_a_replan_receives_the_findings",
+            "check_a_revision_answers_its_request_once",
+        ]):
+            if index:
+                self.tearDown()
+                self.setUp()
+            with self.subTest(name):
+                getattr(self, name)()
+
+

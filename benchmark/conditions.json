@@ -1,0 +1,30 @@
+{
+  "no_lean": {
+    "prompt": "no_lean.md",
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "tools": [
+      "Read",
+      "Write",
+      "Edit",
+      "Glob",
+      "Grep"
+    ],
+    "max_budget_usd": 40
+  },
+  "lean": {
+    "prompt": "lean.md",
+    "lean": true,
+    "model": "claude-opus-5-5",
+    "effort": "high",
+    "tools": [
+      "Bash",
+      "Read",
+      "Write",
+      "Edit",
+      "Glob",
+      "Grep"
+    ],
+    "max_budget_usd": 40
+  }
+}

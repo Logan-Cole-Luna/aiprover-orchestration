@@ -74,6 +74,14 @@ Results
 
 ## Todo
 
+- OpenAI benchmark (`openai_benchmark.md` §5): add 153, 259, 138, 268, and
+  284 to `data/openai_math.jsonl` as unconditional entries, and run both
+  arms with 332 as calibration.
+- Fidelity chain: give the skill route of `aiprover-captain` the probes and
+  a judge outside Claude; it currently audits with Claude subagents only.
+- Fidelity chain: prove equivalence with custom definitions through an
+  AIProver job, since the automation cascade rarely bridges them.
+
 - Nix setup: first `./setup` on a Linux device with Nix (commit the
   generated `flake.lock`); then macOS, where the AIProver harness has not
   run before (`setup.sh full` as acceptance test).
@@ -133,6 +141,13 @@ Results
   submodule at the merged commit.
 
 ## Issues
+
+- `PartitionAndProve/datasets_validation/LoCoLib_faithfulness_small`: 101 of
+  248 type-correct attempts contain no theorem, only commands such as `#check`,
+  and 21 of the 147 with a theorem resemble another row's gold statement more
+  than their own by identifier overlap. Results from this set need a row
+  alignment check first. The labels also derive from the same judges under
+  study, so they do not measure judge accuracy.
 
 - The Seatbelt profile of `lean/sandbox.py` permits all Mach lookups; a
   list restricted to the services the Lean runtime uses would narrow it.
@@ -227,6 +242,21 @@ Results
 
 ## Decisions
 
+- Single sessions have a cost cap only (40 USD, `benchmark/conditions.json`),
+  without a time limit (2026-11-04). A continuation
+  (`benchmark/run.py --continue-from RUN_DIR`) starts from the Lean files of
+  an earlier record and inherits its unspent cost cap.
+- OpenAI benchmark selection by Mathlib coverage, not page count: statement
+  objects in Mathlib, a 10 to 30 page proof of standard steps, no black
+  boxes, no machine models or computation, and a single-session triage under
+  condition `lean` (`openai_benchmark.md` §3). 284, 138, 268, and 122 are out
+  of scope; 259 and its rank bound 259r are stretch problems.
+- Proposal at the milestone phase (2026-11-03): before any result of a project
+  has a run, Write paper writes a proposal from the latest milestone report
+  (`ProposalBuilder`, `templates/proposal.md`), checked against that report,
+  so that the expert reviews the plan and its open decisions before
+  formalization. It takes the paper's place and links, and the paper of the
+  proved results replaces it later.
 - Projects on the page (2026-11-02): a project must be reproducible from the
   server page alone. Research and milestone planning share one task, a Claude
   session and a referee, and differ only in the question, so the planner needs
@@ -291,7 +321,27 @@ Results
   Cytoscape.js and an ELK layout in the browser, since the leanblueprint web
   build requires Graphviz on the server. The writer's text is kept in the
   trace, so a statement is described once.
-
+- Large proofs (2026-11-01): a replan rechecks in Lean a proof whose lemmas
+  changed, and keeps it if it compiles, so that a small change does not discard
+  the proofs above it. Assembly time limits grow with the file (10 lines per
+  second, against 22 in the slowest recorded run), and a timeout stops the run
+  for a resume, since no lemma is to blame.
+- Context for long runs (2026-11-01): reference material reaches the captain
+  by retrieval. The agent option `source_dir` copies a directory into each
+  tool call's project as `source/`, with an index to read first, and a short
+  excerpt stays in the prompt. The copy keeps the original out of the model's
+  reach. Research sessions keep notes and a current report, so that their work
+  survives a stop, and milestones run as separate short runs on one library.
+- Sessions off the internet (2026-10-31): `aiprover_offline` starts the
+  AIProver CLI under `lean/offline.py`, a Landlock rule inherited by every
+  worker and session, which permits TCP only to the model proxy and the
+  Mathlib index. Hosted Lean search tools (Loogle, LeanSearch) fail under it.
+  The rule covers the network and not the local disk.
+- Isolated benchmark (2026-10-30): `benchmark/` runs one Claude session per
+  problem under Landlock (`benchmark/confine.py`, on `lean/sandbox.py`), since
+  the VM offers no containers or user namespaces. Grading runs after the
+  session, outside it. The condition `no_lean` has file tools only; `lean`
+  adds `lake env lean` and the Mathlib sources.
 - Reasoning in replays (2026-10-30): the model writes part of its reasoning
   into message content between `[THINK]` tags, so the rendered pages take
   each turn's reasoning from the proxy's record or the transcript
@@ -318,6 +368,23 @@ Results
   H200 4.44 USD per GPU-hour (median on-demand rate across 46 providers,
   2026-10-17). The model server `aip-leanstral` uses four DGX nodes with one
   GB10 GPU each, confirmed by the system's administrators.
+- Prompt cache for directions (2026-10-30): the theorem and the setting above
+  the earlier lemmas repeat across a run's directions and form the system
+  prompt of the direction phase; the earlier lemmas differ per lemma and stay
+  in the request, and the first call of a cold prompt finishes before the
+  rest of its burst. On two long runs the per-lemma request was written to
+  the cache at twice the input price and rarely read back, which cost 29 to
+  35 % more than no cache, so the feature was removed (2026-11-01).
+- Attempts per lemma stay at 5 until §7.6 is tested on a run; a limit of 3
+  is the candidate.
+- Claude alone on JiatuBook 000003 (2026-10-30): one headless session
+  (`claude-opus-5-5`, high effort), on the library snapshot of the recorded
+  run, compiled a 533-line proof with the standard axioms in 5.2 min for 1.44
+  USD (8 turns). Without the library, a second session defined the theory in
+  full and compiled a 688-line proof in 14.8 min for 1.84 USD (12 turns). The
+  orchestration with Claude as prover proved it in 0.65 h for 14.23 USD. Both
+  review models and the Claude judge prompts accept both sessions; Judge2
+  (Bedrock) is not available on this machine. Details in `ablations.md` §7.7.
 - Failed assembly returns to the captain (2026-10-30): `#print axioms` on every
   lemma names the lemmas responsible; their proofs are withdrawn and handed
   back at once, for up to `max_assembly_rounds` rounds. A failure with no
@@ -493,12 +560,31 @@ Results
 
 ## Done
 
+- Catalogue of the unformalized OpenAI manuscripts (`docs/openai_unformalized.md`):
+  751 manuscripts, 345 linked to a formalization, and 378 current
+  unformalized manuscripts in 195 families, with discipline, pages,
+  citations, and computation markers.
+- Per-manuscript screen of the OpenAI release (181 unformalized manuscripts
+  in supported disciplines, 43 after the mechanical filter, 4 after the
+  citation check); bank records `OpenAIMath_084_ErdosSimilarityGeometric`,
+  `OpenAIMath_259_RankBoundRowSystems`, and
+  `OpenAIMath_122_TraceReconstructionQuasipolynomial`.
+- `openai_benchmark.md`: upper-bound problems from the 128 unformalized
+  families of the OpenAI release (commit `4eaee87`), with calibration,
+  selection criteria, five candidates (153, 259, 138, 268, and 284), and the
+  paired protocol.
 - The user guide shows the blueprint of OpenAI 011 (Figure 11), whose natural-language text the writer model supplied after the run.
 - The user guide shows the page of a project (Figure 12), with its controls numbered.
 - The user guide shows the open lemmas and claims of a project (Figure 14), and its glossary defines an open lemma.
+- Fidelity chain extended (`orchestrator/fidelity.py`, `stages/formalize.py`):
+  Lean probes for contradictory hypotheses, closure by automation, and
+  counterexamples; optional `judge` role whose verdict joins the captain's;
+  optional `formalizer` role whose reference statement Lean compares with the
+  formal statement in both directions.
 
 - Query server pages received a shared AP favicon, and review corrections covered the states of live runs, the zoom floor of the replay, theme persistence, guide deep links, malformed group files, and the sandbox of imported pages.
 - The Details tab reports the model cost of a finished run, read from its benchmark.
+- Each run in the list is a box whose left edge carries the color of its outcome.
 
 - Run names and imports (2026-10-30): a submission takes an optional run name,
   which becomes the run id. `POST /api/runs/import` and the Import run button
@@ -1212,7 +1298,7 @@ Results
   run is terminated, so a cancel does not wait for a rate-limit retry.
 - P versus NP cancelled; 004 moved to group `open` to use its server
   (1070334) and resumed.
-- 2026-10-16: `Open_WordEquations_Length` cancelled after 7.5 h of proving
+- 2026-10-16: a private open problem cancelled after 7.5 h of proving
   with no lemma proved (its sketch reduces the problem to a length-preserving
   quadratization, which is the open step). Problem 004 resumed on the DGX in
   its place (DGX solver, 6 lemmas and slots, its hand-back and Claude limits
@@ -1279,7 +1365,7 @@ Results
   network access are blocked; checks and builds pass (9 s and 18 s). Lake
   runs `git` to check package sources, and without it tries to clone them
   again, so `git` is executable in the sandbox (no shell, no TCP).
-- `Open_WordEquations_Length` moved to group `dgx`, after 164 (`after`),
+- A private open problem moved to group `dgx`, after 164 (`after`),
   with the DGX solver and the settings of 164; it needs no Vista SUs.
 - Problem 004 (2026-10-15 18:30): `max_handbacks` raised to 120 and
   `max_claude_calls` to 220 after the 60 hand-back limit was reached; then
@@ -1310,8 +1396,7 @@ Results
   run-wide `max_claude_calls` of 60 (65 billed calls), which stopped
   hand-backs. The budget is now 150; the run was stopped and resumed from
   its trace at 11:42.
-- Open problem `Open_WordEquations_Length` (decidability of word equations
-  with length constraints) added to `data/open_problems.jsonl`. Its run is
+- A private open problem added to `data/open_problems.jsonl`. Its run is
   queued in group `open` after 004 (`after`): the allocation cannot cover a
   third 12-hour server job, and the OpenAIMath runs have priority.
 

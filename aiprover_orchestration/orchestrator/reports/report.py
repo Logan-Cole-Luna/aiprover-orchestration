@@ -64,6 +64,8 @@ PREAMBLE = r"""\documentclass[11pt]{article}
 \usepackage[capitalise,nameinlink]{cleveref}
 \newtheorem{theorem}{Theorem}[section]
 \newtheorem{lemma}[theorem]{Lemma}
+\newtheorem{proposition}[theorem]{Proposition}
+\newtheorem{conjecture}[theorem]{Conjecture}
 \theoremstyle{definition}
 \newtheorem{definition}[theorem]{Definition}
 \theoremstyle{remark}

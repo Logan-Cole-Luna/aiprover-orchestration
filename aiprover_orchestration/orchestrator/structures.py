@@ -35,6 +35,7 @@ class Formalization:
     readback: str = ""
     verdict: str = ""
     issues: str = ""
+    evidence: str = ""  # what Lean established about the statement
 
     @property
     def statement(self) -> str:

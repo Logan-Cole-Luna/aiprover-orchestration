@@ -115,6 +115,8 @@ class Orchestration(
         )
         self.slug = slug_from_problem(row)
         self.auditor_system = prompts.auditor_system()
+        self.reference: Formalization | None = None
+        self.reference_attempted = False
         # The reviewer and the report writer default to fresh agents of the
         # captain's model, without its tools.
         captain = {
@@ -123,6 +125,9 @@ class Orchestration(
             if key != "tools"
         }
         specs = {"reviewer": captain, "writer": captain, **config.agents}
+        solver = specs.get("solver") or {}
+        if config.aiprover_offline and solver.get("backend") == "aiprover":
+            specs["solver"] = {**solver, "offline": True}
         agents = {
             role: build_agent(role_spec(role, spec))
             for role, spec in specs.items()
@@ -133,6 +138,7 @@ class Orchestration(
             "solver": prompts.SOLVER_SYSTEM,
             "reviewer": prompts.REVIEWER_SYSTEM,
             "writer": prompts.WRITER_SYSTEM,
+            "judge": prompts.JUDGE_SYSTEM,
         }
         trace_path = self.result_dir / "trace.json"
         previous = Trace.load(trace_path) if resume else None
