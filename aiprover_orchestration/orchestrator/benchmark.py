@@ -37,7 +37,7 @@ from pathlib import Path
 
 import psutil
 
-from ..agents.base import add_usage
+from ..agents.base import add_usage, billed_tokens
 from ..utils.files import read_jsonl
 from . import gpu_usage
 
@@ -305,6 +305,7 @@ def run_costs(trace: dict, result_dir: Path | None = None) -> dict:
     `result_dir` once it is computed; a later overlapping run changes it."""
     steps = trace.get("steps", [])
     hosted: dict[tuple, dict] = {}
+    unpriced_tokens = 0
     sessions = 0
     jobs = 0
     for step in steps:
@@ -324,10 +325,14 @@ def run_costs(trace: dict, result_dir: Path | None = None) -> dict:
                 "purpose": key[2],
                 "calls": 0,
                 "output_tokens": 0,
+                "tokens": 0,
                 "cost_usd": 0.0,
             },
         )
         row["calls"] += 1
+        row["tokens"] += billed_tokens(usage)
+        if step.get("hosted") and not step.get("cost_usd"):
+            unpriced_tokens += billed_tokens(usage)
         row["output_tokens"] += int(usage.get("outputTokens") or 0)
         row["cost_usd"] += float(step.get("cost_usd") or 0.0)
     session_hours = 0.0
@@ -345,6 +350,8 @@ def run_costs(trace: dict, result_dir: Path | None = None) -> dict:
         "hosted_cost_usd": round(
             sum(row["cost_usd"] for row in hosted.values()), 4
         ),
+        "hosted_tokens": sum(row["tokens"] for row in hosted.values()),
+        "unpriced_tokens": unpriced_tokens,
         "solver": {
             "model": gpu_usage.solver_of(trace).get("model"),
             "jobs": jobs,

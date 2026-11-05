@@ -341,11 +341,11 @@ figcaption { font-size: .9rem; line-height: 1.45; color: var(--caption); margin-
           <label for="library">Library of verified results <small>optional</small></label>
           <select id="library"><option value="">none</option></select>
           <label for="library-file">Or upload a library</label>
-          <input type="file" id="library-file" accept=".lean">
+          <input type="file" id="library-file" accept=".lean,.zip">
           <label for="new-library">Or start a new library from this run</label>
           <input id="new-library" placeholder="new library name, e.g. my_book" pattern="[A-Za-z0-9_.-]+">
           <label class="check"><input type="checkbox" id="extend-library"> Add the result to the library once proved and reviewed</label>
-          <small class="models-note">A library is a Lean file that compiles on its own, without <code>sorry</code>. The run uses its definitions and may cite its theorems instead of proving them again.</small>
+          <small class="models-note">A library is a Lean file that compiles on its own, without <code>sorry</code>. The run uses its definitions and may cite its theorems instead of proving them again. A zip of Lean files, with its root modules at the top level, becomes a package library: it is built on the chosen Lean version once, every file of the run imports it, and agents read its statements through their tools rather than in their prompts.</small>
         </div>
         <div data-step="2" class="hidden">
           <div class="models" id="models"></div>
@@ -458,7 +458,7 @@ figcaption { font-size: .9rem; line-height: 1.45; color: var(--caption); margin-
     <label for="server-url">Address <small>for example http://host:8000/v1</small></label>
     <input id="server-url" required pattern="https?://.+">
     <label for="server-kind">Kind</label>
-    <select id="server-kind"><option value="general">General model</option><option value="aiprover">AIProver</option></select>
+    <select id="server-kind"><option value="general">General model</option><option value="hosted">Hosted model, billed by its provider</option><option value="aiprover">AIProver</option></select>
     <label for="server-model">Model <small>empty takes the first the server offers</small></label>
     <input id="server-model">
     <label for="server-key">API key <small>optional; never shown again</small></label>
@@ -530,7 +530,7 @@ async function start() {
     `<option value="${p.uuid}">${p.uuid}${p.label ? ": " + escapeHtml(p.label) : ""}</option>`).join("");
   const libraries = await api("/api/libraries").catch(() => []);
   $("library").innerHTML = `<option value="">none</option>` + libraries.map(l =>
-    `<option value="${escapeHtml(l.name)}">${escapeHtml(l.name)} (${l.declarations} declarations)</option>`).join("");
+    `<option value="${escapeHtml(l.name)}">${escapeHtml(l.name)} (${l.package ? `package, ${l.modules} modules, Lean ${escapeHtml(l.release)}, ` : ""}${l.declarations} declarations)</option>`).join("");
   refreshHealth(); refreshRuns();
   // The run list does not depend on the model choices, so it loads either way.
   if (!catalog) {
@@ -563,13 +563,13 @@ function buildPickers() {
     <p class="role-note">${escapeHtml(r.description)}</p><div class="pick" id="pick-${r.role}"></div></div>`).join("");
   for (const role of ROLES) {
     const box = $("pick-" + role);
-    // A phase of the captain (the hand-back) runs on Claude only.
-    const providers = catalog.phase_roles?.includes(role) ? `<option value="claude">Claude</option>` : providerOptions();
+    // A phase of the captain (the hand-back) follows the orchestrator by default.
+    const providers = (catalog.phase_roles?.includes(role) ? `<option value="">Same as the orchestrator</option>` : "") + providerOptions();
     box.innerHTML = `<select aria-label="${role} model" data-field="provider">${providers}</select>
       <select aria-label="${role} model choice" data-field="model"></select>
       <select aria-label="${role} reasoning level" data-field="effort"></select>${toolPickers(role)}`;
     box.addEventListener("change", () => syncPicker(role));
-    const wanted = catalog.default[role];
+    const wanted = catalog.default[role] || {provider: ""};
     box.querySelector('[data-field="provider"]').value =
       ["aiprover", "custom"].includes(wanted.provider) ? `${wanted.provider}:${wanted.model}` : wanted.provider;
     syncPicker(role);
@@ -582,7 +582,7 @@ function buildPickers() {
   }
 }
 
-// Lean tools (compile, Mathlib search) of a Claude role; the orchestrator also
+// Lean tools (compile, Mathlib search) of a role; the orchestrator also
 // chooses them for its formalization and sketch judges. The subagent is
 // AIProver's harness or a single model call, with no such choice.
 function toolPickers(role) {
@@ -612,18 +612,18 @@ function syncPicker(role, effort) {
   level.value = efforts.includes(keep) ? keep : "";
   model.classList.toggle("hidden", !service);
   level.classList.toggle("hidden", !efforts.length);
-  for (const pick of box.querySelectorAll('[data-field$="tools"]')) pick.classList.toggle("hidden", !service);
+  for (const pick of box.querySelectorAll('[data-field$="tools"]')) pick.classList.toggle("hidden", !provider);
 }
 
 function selection(role) {
   const box = $("pick-" + role);
   const [provider, version] = box.querySelector('[data-field="provider"]').value.split(":");
-  if (["aiprover", "custom"].includes(provider)) return {provider, model: version, effort: ""};
+  if (!provider) return null;
+  const tools = {};
+  for (const pick of box.querySelectorAll('[data-field$="tools"]')) tools[pick.dataset.field] = pick.value === "on";
+  if (["aiprover", "custom"].includes(provider)) return {provider, model: version, effort: "", ...tools};
   const choice = {provider, model: box.querySelector('[data-field="model"]').value,
-                  effort: box.querySelector('[data-field="effort"]').value};
-  for (const pick of box.querySelectorAll('[data-field$="tools"]')) {
-    choice[pick.dataset.field] = pick.value === "on";
-  }
+                  effort: box.querySelector('[data-field="effort"]').value, ...tools};
   return choice;
 }
 
@@ -632,7 +632,7 @@ function modelLabel(choice) {
   if (choice.provider === "aiprover") {
     return (catalog?.aiprover.find(v => v.model === choice.model) || {label: `AIProver ${choice.model}`}).label;
   }
-  if (choice.provider === "custom") return choice.model;
+  if (choice.provider === "custom") return [choice.model, choice.tools && "Lean tools"].filter(Boolean).join(", ");
   const label = ([...catalog?.claude || [], ...catalog?.codex || []].find(m => m.model === choice.model) || {label: choice.model}).label;
   const parts = [label, choice.effort, choice.tools && "Lean tools",
                  choice.judge_tools && "judges with tools"];
@@ -907,7 +907,8 @@ function runPanel(run) {
       <tr><td>Group</td><td>${escapeHtml(groupName(run))}</td></tr>
       <tr><td>Submitted</td><td>${new Date(run.submitted * 1000).toLocaleString()}</td></tr>
       ${elapsed(run) ? `<tr><td>Elapsed</td><td>${elapsed(run)}</td></tr>` : ""}
-      ${run.cost_usd == null ? "" : `<tr><td>Cost</td><td>$${run.cost_usd.toFixed(run.cost_usd < 0.1 ? 3 : 2)} in hosted model usage</td></tr>`}
+      ${run.tokens == null ? "" : `<tr><td>Usage</td><td>${run.tokens.toLocaleString()} tokens</td></tr>`}
+      ${run.cost_usd ? `<tr><td>Cost</td><td>$${run.cost_usd.toFixed(run.cost_usd < 0.1 ? 3 : 2)} in hosted model usage</td></tr>` : ""}
       ${gpuRows(run.gpu)}
       <tr><td>Models</td><td>${modelsHTML(run.agents)}</td></tr>
       <tr><td>GPU group</td><td>${escapeHtml(run.gpu_group)}</td></tr></table></div>
@@ -1749,7 +1750,13 @@ $("submit").onclick = async () => {
   $("submit-message").textContent = "";
   try {
     const upload = $("library-file").files[0];
-    if (upload) body.library_text = await upload.text();
+    if (upload && upload.name.endsWith(".zip")) {
+      const name = upload.name.replace(/\.zip$/, "").replace(/[^A-Za-z0-9_-]/g, "_");
+      $("submit-message").textContent = `Building the library ${name}; a large library takes minutes.`;
+      const query = `?name=${encodeURIComponent(name)}&lean_release=${encodeURIComponent(body.lean_release)}`;
+      await api("/api/libraries" + query, {method: "POST", body: upload, headers: {"Content-Type": "application/zip"}});
+      body.library = name;
+    } else if (upload) body.library_text = await upload.text();
     else if ($("library").value) body.library = $("library").value;
     else if ($("new-library").value.trim()) body.new_library = $("new-library").value.trim();
     body.extend_library = $("extend-library").checked;

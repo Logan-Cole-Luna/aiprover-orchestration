@@ -80,6 +80,8 @@ FORBIDDEN_PATTERNS = {
 
 # Problem reported for a compiled proof that still uses `sorry`.
 SORRY_PROBLEM = "the proof uses `sorry` (for example through `stop`)"
+# Lean's warning, quoted 'sorry' up to v4.2x and `sorry` from v4.3x.
+SORRY_WARNING = re.compile(r"declaration uses ['`]sorry['`]")
 
 # `lean` prints `<file>:<line>:<col>: error: ...`; `lake build` prints
 # `error: <file>:<line>:<col>: ...`.
@@ -106,7 +108,7 @@ class CheckResult:
     output: str  # raw Lean output
     errors: list[str] = field(default_factory=list)
     has_sorry_warning: bool = False
-    # (file, line) of each "declaration uses 'sorry'" warning.
+    # (file, line) of each SORRY_WARNING.
     sorry_warnings: list[tuple[str, int]] = field(default_factory=list)
     axioms: dict[str, list[str]] = field(default_factory=dict)
     timed_out: bool = False
@@ -345,11 +347,11 @@ def _run(
         ok=not errors,
         output=output,
         errors=errors,
-        has_sorry_warning="declaration uses 'sorry'" in output,
+        has_sorry_warning=bool(SORRY_WARNING.search(output)),
         sorry_warnings=[
             (file, line)
             for severity, text, file, line in messages
-            if severity == "warning" and "declaration uses 'sorry'" in text
+            if severity == "warning" and SORRY_WARNING.search(text)
         ],
         axioms=axioms,
     )
@@ -420,7 +422,15 @@ def build(
     if constructs:
         return rejected(constructs)
     with build_lock(workspace):
-        for path, text in sources.items():
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(text)
-        return _run(["lake", "build", target], Path(workspace), timeout)
+        return build_locked(workspace, sources, target, timeout)
+
+
+def build_locked(
+    workspace: Path, sources: dict[Path, str], target: str, timeout: int = 600
+) -> CheckResult:
+    """`build` for a caller that holds `build_lock` and has checked the
+    sources."""
+    for path, text in sources.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text)
+    return _run(["lake", "build", target], Path(workspace), timeout)

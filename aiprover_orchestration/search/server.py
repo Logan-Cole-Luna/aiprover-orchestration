@@ -3,6 +3,10 @@
     python -m aiprover_orchestration.search.server \\
         --index data/mathlib_index --port 18570
 
+POST /library/<name> searches the pinned Mathlib and the package library
+`libraries/<name>` together (search/library_index.py), for the runs built on
+that library.
+
 POST / with {"inputs": query, "top_k": k} returns {"results": [...]}, each
 result with formal_name, informal_name, kind, type, informal_description
 and path, as lean_lsp_mcp's `lean_leanfinder` tool expects (`version` is
@@ -18,6 +22,7 @@ import json
 import logging
 import re
 import threading
+from itertools import zip_longest
 from pathlib import Path
 
 import numpy as np
@@ -44,7 +49,7 @@ logger = logging.getLogger(__name__)
 
 
 class Index:
-    def __init__(self, directory: Path):
+    def __init__(self, directory: Path, embedder: Embedder | None = None):
         with open(directory / "documents.jsonl") as f:
             self.documents = [
                 {key: entry[key] for key in FIELDS}
@@ -56,13 +61,18 @@ class Index:
             name = document["formal_name"]
             for key in {name, name.rsplit(".", 1)[-1]}:
                 self.by_name.setdefault(key, []).append(i)
-        self.embedder = Embedder(str(directory / "qwen3-embedding-0.6b"))
+        self.embedder = embedder or Embedder(
+            str(directory / "qwen3-embedding-0.6b")
+        )
         self.lock = threading.Lock()  # one query through the model at a time
         logger.info(f"index of {len(self.documents)} declarations loaded")
 
-    def search(self, query: str, top_k: int) -> list[dict]:
+    def vector(self, query: str) -> np.ndarray:
         with self.lock:
-            vector = self.embedder([query_text(query)])[0]
+            return self.embedder([query_text(query)])[0]
+
+    def search(self, query: str, top_k: int, vector=None) -> list[dict]:
+        vector = self.vector(query) if vector is None else vector
         scores = self.vectors @ vector
         exact = [
             i
@@ -88,8 +98,32 @@ async def handle_search(request: web.Request) -> web.Response:
         return web.json_response({"results": []})
     index: Index = request.app["index"]
     request.app["queries"][0] += 1
-    results = await asyncio.to_thread(index.search, query, top_k)
+    name = request.match_info.get("name")
+    library = request.app["libraries"].get(name) if name else None
+    if name and library is None:
+        return web.json_response({"error": f"no index of library {name}"})
+    results = await asyncio.to_thread(both, index, library, query, top_k)
     return web.json_response({"results": results})
+
+
+def both(index: Index, library, query: str, top_k: int) -> list[dict]:
+    """The library's matches, then Mathlib's, alternating from the top, so
+    that neither crowds the other out."""
+    vector = index.vector(query)
+    found = [index.search(query, top_k, vector)]
+    if library is not None:
+        found.insert(0, library.search(query, top_k, vector))
+    merged = [d for pair in zip_longest(*found) for d in pair if d is not None]
+    return merged[:top_k]
+
+
+def library_indexes(folder: Path, embedder: Embedder) -> dict[str, Index]:
+    """The indexes of the package libraries in `folder`, by library name."""
+    return {
+        index.parent.name: Index(index, embedder)
+        for index in sorted(folder.glob("*/index"))
+        if (index / "embeddings.npy").exists()
+    }
 
 
 async def handle_health(request: web.Request) -> web.Response:
@@ -108,6 +142,7 @@ def main() -> None:
     )
     parser.add_argument("--port", type=int, default=18570)
     parser.add_argument("--threads", type=int, default=4)
+    parser.add_argument("--libraries", type=Path, default=Path("libraries"))
     args = parser.parse_args()
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
@@ -115,8 +150,10 @@ def main() -> None:
     torch.set_num_threads(args.threads)
     app = web.Application()
     app["index"] = Index(args.index)
+    app["libraries"] = library_indexes(args.libraries, app["index"].embedder)
     app["queries"] = [0]  # served since start
     app.router.add_post("/", handle_search)
+    app.router.add_post("/library/{name}", handle_search)
     app.router.add_get("/health", handle_health)
     web.run_app(app, host="127.0.0.1", port=args.port, print=None)
 

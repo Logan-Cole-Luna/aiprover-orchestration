@@ -12,6 +12,25 @@ CACHE_USAGE_KEYS = {
     "cacheReadInputTokens": "cache_read_tokens",
     "cacheCreationInputTokens": "cache_creation_tokens",
 }
+# Tokens are the unit that every backend reports. A USD limit converts them
+# where a backend reports no price: 78 retained runs ($968 at list prices) used
+# 104,000 billed tokens per USD. A cached token is billed at about a tenth of
+# an input token by the providers in use.
+TOKENS_PER_USD = 100_000
+CACHED_TOKEN_WEIGHT = 0.1
+# Turns a USD limit allows a call that reports its tokens only at the end: the
+# rate of the hand-back phase's limits (configs/orchestrator/captain_phases.json).
+TURNS_PER_USD = 20
+
+
+def billed_tokens(usage: dict) -> int:
+    """The tokens of a call's usage, weighted as they are billed."""
+    return round(
+        int(usage.get("inputTokens") or 0)
+        + int(usage.get("outputTokens") or 0)
+        + int(usage.get("cacheCreationInputTokens") or 0)
+        + CACHED_TOKEN_WEIGHT * int(usage.get("cacheReadInputTokens") or 0)
+    )
 
 
 def retry_after_seconds(value: str | None) -> float | None:

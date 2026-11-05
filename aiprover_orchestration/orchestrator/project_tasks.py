@@ -16,12 +16,14 @@ one is to add it as a milestone.
 """
 
 import json
+import os
 import re
 import subprocess
 import sys
 from pathlib import Path
 
-from ..agents.codex_cli import DEFAULT_CODEX_MODEL
+from ..agents.base import TOKENS_PER_USD, TURNS_PER_USD, billed_tokens
+from ..agents.codex_cli import DEFAULT_CODEX_MODEL, parse_events, token_usage
 from ..agents.codex_cli import command as codex_command
 from ..utils.processes import run_group
 from ..paths import LIBRARIES_DIR
@@ -36,20 +38,44 @@ MODEL = "claude-opus-5-5"
 # A session of the hand-run research took at most this long.
 SESSION_SECONDS = 3 * 3600
 # As in those sessions: no web, whose pages could steer a session with Python.
+# `python3` resolves to bin/python3, which confines it to the session's files.
 TOOLS = "Bash,Read,Write,Edit,Glob,Grep"
 PERMISSIONS = ("Read(./**)", "Write(./**)", "Edit(./**)", "Bash(python3:*)")
+SESSION_BIN = Path(__file__).resolve().parent / "bin"
+SANDBOX = Path(__file__).resolve().parents[1] / "lean" / "sandbox.py"
 
 
 def task_dir(name: str, task_id: str) -> Path:
     return PROJECTS_DIR / name / "tasks" / task_id
 
 
-def claude_command(project: dict, limit: float) -> list[str]:
-    """A session that reads only this project's files, which keeps projects'
-    material apart."""
+def readable_files(project: dict) -> list[Path]:
+    """What a session reads, which keeps projects' material apart."""
     readable = [PROJECTS_DIR / project["name"]]
     if project.get("source"):
-        readable.append(project["source"])
+        readable.append(Path(project["source"]))
+    return readable
+
+
+def session_environment(project: dict, folder: Path) -> dict[str, str]:
+    """The search path and the trees of the session Python (bin/python3)."""
+    trees = readable_files(project)
+    if project.get("library"):
+        trees.append(LIBRARIES_DIR / project["library"])
+    return {
+        **os.environ,
+        "PATH": f"{SESSION_BIN}:{os.environ.get('PATH', '')}",
+        "SESSION_PYTHON": sys.executable,
+        "SESSION_PREFIX": sys.prefix,
+        "SESSION_SANDBOX": str(SANDBOX),
+        "SESSION_READ": ":".join(map(str, trees)),
+        "SESSION_WRITE": str(folder),
+    }
+
+
+def claude_command(project: dict, limit: float) -> list[str]:
+    """A session that reads only this project's files."""
+    readable = readable_files(project)
     reads = [f"{rule}(/{path}/**)" for path in readable
              for rule in ("Read", "Glob", "Grep")]
     reads.append(f"Read(/{LIBRARIES_DIR / project.get('library', '')})")
@@ -65,23 +91,39 @@ def session(
 ) -> str:
     """The report of a session in `folder`. `spent` receives its cost before
     a failure can lose it: its limit, if the session never answers. Codex
-    reports no cost and has no spending limit."""
+    reports tokens, so its limit is on turns and its cost is converted."""
     folder.mkdir(parents=True, exist_ok=True)
     codex = project.get("service") == "codex"
     command = (
-        codex_command(DEFAULT_CODEX_MODEL, "high", folder, True)
+        codex_command(
+            DEFAULT_CODEX_MODEL,
+            "high",
+            folder,
+            True,
+            read=tuple(map(str, readable_files(project))),
+            tools=("python3",),
+            max_turns=round(limit * TURNS_PER_USD),
+        )
         if codex
         else claude_command(project, limit)
     )
     try:
         reply = run_group(
-            command, cwd=folder, timeout=SESSION_SECONDS, stdin=prompt
+            command,
+            cwd=folder,
+            timeout=SESSION_SECONDS,
+            stdin=prompt,
+            env=session_environment(project, folder),
         )
         payload = {} if codex else json.loads(reply.stdout)
     except (subprocess.TimeoutExpired, json.JSONDecodeError):
         spent.append(limit)
         raise
-    spent.append(payload.get("total_cost_usd", 0.0))
+    spent.append(
+        billed_tokens(token_usage(parse_events(reply.stdout)[1])) / TOKENS_PER_USD
+        if codex
+        else payload.get("total_cost_usd", 0.0)
+    )
     report = folder / "report.md"
     if payload.get("is_error") or not report.exists():
         raise RuntimeError(

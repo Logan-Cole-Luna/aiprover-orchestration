@@ -3,9 +3,16 @@
 import re
 from dataclasses import dataclass, field
 
-from ..paths import DEFAULT_LEAN_RELEASE, LEAN_RELEASE
+from ..paths import DEFAULT_LEAN_RELEASE, LEAN_RELEASE, LIBRARY_PACKAGE, WORKSPACE
 
-FILE_HEADER = "import Mathlib\nset_option autoImplicit false\n\n"
+# Every file of a run imports Mathlib and the root modules of its package
+# library, if it has one.
+LIBRARY_IMPORTS = "".join(
+    f"import {root.stem}\n"
+    for root in sorted(WORKSPACE.glob("*.lean"))
+    if LIBRARY_PACKAGE and root.stem != "lakefile"
+)
+FILE_HEADER = f"import Mathlib\n{LIBRARY_IMPORTS}set_option autoImplicit false\n\n"
 MAIN_NAME = "solution"
 LEAN_ENVIRONMENT = {
     "toolchain": f"leanprover/lean4:{LEAN_RELEASE}",
@@ -152,7 +159,8 @@ class Config:
     lean_parallel: int = 6
     lean_timeout: int = 300
     max_claude_calls: int = 0  # Claude calls per run; 0 = unlimited
-    # USD of Claude calls per run at list prices, before the final review;
+    # USD of hosted calls per run at list prices, before the final review,
+    # where tokens without a price count at agents.base.TOKENS_PER_USD;
     # 0 = unlimited. No recorded run above 34 USD reached a proof.
     max_claude_usd: int = 50
     # AIProver lemma jobs in flight at once; 0 = all pending lemmas. Each job

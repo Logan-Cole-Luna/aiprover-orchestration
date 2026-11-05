@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from aiprover_orchestration.agents import claude_cli
+from aiprover_orchestration.agents import common
 
 
 class SourceTest(unittest.TestCase):
@@ -14,7 +14,7 @@ class SourceTest(unittest.TestCase):
             (root / "notes").mkdir()
             (root / "notes" / "a.tex").write_text("text")
             (root / "work").mkdir()
-            claude_cli.add_source(root / "work", str(root / "notes"))
+            common.add_source(root / "work", str(root / "notes"))
             copied = root / "work" / "source" / "a.tex"
             copied.write_text("changed")
             self.assertEqual((root / "notes" / "a.tex").read_text(), "text")

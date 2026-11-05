@@ -49,6 +49,7 @@ from ..paths import (
     locate,
 )
 from ..lean import releases
+from ..orchestrator import libraries
 from ..utils.sqlite import SqliteStore
 from . import accounts, model_servers, models
 from .model_servers import run_command
@@ -252,6 +253,29 @@ def job_selection(job: dict) -> dict:
     """Models chosen for a job; empty for a job submitted before the choice
     existed, which runs with the served config."""
     return json.loads(job.get("agents") or "null") or {}
+
+
+def library_search(environment: dict, agents: dict, name: str) -> None:
+    """Point the AIProver configs of a run on package library `name` at the
+    search of Mathlib and that library (search/server.py)."""
+    def searching(path: str) -> str:
+        source = locate(path)
+        target = TEMP_DIR / "library_search" / name / source.name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            re.sub(
+                r'^leanfinder_url = "(http[^"]*?)/?"',
+                rf'leanfinder_url = "\1/library/{name}"',
+                source.read_text(),
+                flags=re.M,
+            )
+        )
+        return str(target)
+
+    environment["AIPROVER_CONFIG"] = searching(environment["AIPROVER_CONFIG"])
+    for spec in agents.values():
+        if spec.get("backend") == "aiprover" and spec.get("config"):
+            spec["config"] = searching(spec["config"])
 
 
 def release_environment(
@@ -825,10 +849,10 @@ class Worker(threading.Thread):
                 if spec.get("backend") == "aiprover":
                     spec["timeout"] = timeout
         captain = config["agents"]["captain"]
-        if "source_dir" in options and captain["backend"] in models.SERVICE_MODELS:
+        if "source_dir" in options and captain.get("tools"):
             captain["source_dir"] = options["source_dir"]
         phases = options.get("captain_phases")
-        if phases and captain["backend"] == "claude":
+        if phases:
             # `true` selects the default phases, a name the file
             # captain_phases_<name>.json.
             path = (
@@ -836,15 +860,28 @@ class Worker(threading.Thread):
                 if phases is True
                 else CAPTAIN_PHASES.with_name(f"captain_phases_{phases}.json")
             )
-            # The selection's choices (the judges' tools) are kept.
+            # The selection's choices (the judges' tools) are kept. The files
+            # name Claude models, which another backend's phases do not take.
             selected = captain.get("phases") or {}
-            captain["phases"] = json.loads(path.read_text())
+            captain["phases"] = {
+                prefix: {
+                    key: value
+                    for key, value in overrides.items()
+                    if key != "model" or captain["backend"] == "claude"
+                }
+                for prefix, overrides in json.loads(path.read_text()).items()
+            }
             for prefix, overrides in selected.items():
                 captain["phases"][prefix] = {
                     **captain["phases"].get(prefix, {}),
                     **overrides,
                 }
         environment = {"AIPROVER_CONFIG": str(group.tunnel_config)}
+        library = options.get("library") or ""
+        if library and libraries.is_package(library):
+            environment["AIPROVER_LIBRARY_PACKAGE"] = str(
+                libraries.resolve(library)
+            )
         release = options.get("lean_release")
         if release:
             environment |= release_environment(
@@ -852,6 +889,8 @@ class Worker(threading.Thread):
                 group.tunnel_config,
                 config["agents"],
             )
+        if "AIPROVER_LIBRARY_PACKAGE" in environment:
+            library_search(environment, config["agents"], Path(library).name)
         config_path.write_text(json.dumps(config, indent=1))
         arguments = [
             sys.executable,

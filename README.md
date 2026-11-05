@@ -193,6 +193,13 @@ a question and a second referee the answer; the report adds open lemmas and
 claims without a Lean proof, and the Resume dialog replans a run on it. A claim
 may be confirmed or rejected by a person, checked by Claude, or added as a result
 to prove in Lean. Review is optional, and only the last settles a claim.
+
+A library is either one Lean file or a Lean package uploaded as a zip, which
+the server builds on the chosen Lean version and refuses on `sorry`, axioms,
+`native_decide`, or code that runs. Every file of a run on a package imports
+it, and agents read its statements, with proofs elided, through their tools;
+`python -m aiprover_orchestration.search.library_index libraries/<name>` adds
+it to the semantic search that provers query.
 installed can be downloaded there with its matching Mathlib, REPL, and CSLib
 (`aiprover_orchestration/lean/releases.py`). A cancelled or
 unproved run has a Resume button that continues it from its trace, and asks
@@ -278,8 +285,14 @@ for size. Slides on these results:
 ## 7. Configuration
 
 Each role of a run config names a backend: `claude`, `codex`,
-`openai_compatible` (any server with that API), or `aiprover` (solver only).
-Claude and Codex install on first use, when a user signs in or runs a model. `claude` uses the subscription of the
+`openai_compatible` (any server with that API, with Lean tools if `tools` is
+set), or `aiprover` (solver only). Any such backend can serve any chat role,
+including the orchestrator and its hand-backs; a provider's API is added on the
+page as a server of kind "Hosted model". Every backend reports tokens, and USD
+is reported where a price is known. A USD limit counts tokens without a price at
+100,000 per USD.
+Claude and Codex are not installed in advance: launching a run that selects one
+prompts for its sign-in, which installs the program. `claude` uses the subscription of the
 logged-in `claude` CLI, or the Anthropic API when `ANTHROPIC_API_KEY` is
 set (`CLAUDE_AUTH=subscription|api` overrides).
 

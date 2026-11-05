@@ -63,6 +63,7 @@ from ..lean import releases
 from ..library import api as library_api
 from ..orchestrator import gpu_usage, libraries
 from ..orchestrator.config import FILE_HEADER
+from ..agents.base import TOKENS_PER_USD
 from ..agents.codex_cli import DEFAULT_CODEX_MODEL
 from ..orchestrator import project as project_file
 from ..orchestrator.project import PROJECTS_DIR
@@ -118,7 +119,8 @@ MAX_IMPORTS_PER_USER = 20
 # Libraries a run may build on (orchestrator/libraries.py); uploads are kept
 # per run under uploads/.
 LIBRARY_DIR = LIBRARIES_DIR
-LIBRARY_NAME = re.compile(r"^[A-Za-z0-9_.-]+\.lean$")
+# A single-file library, or a package library (a folder).
+LIBRARY_NAME = re.compile(r"^[A-Za-z0-9_-]+(?:\.lean)?$")
 RESULT_PAGES = ("trace.html", "trace_replay.html", "summary.json")
 # Single files of a run, by the name the page links them under.
 ROOT_FILES = {
@@ -694,8 +696,7 @@ def require_sign_in(selection: dict) -> None:
     page's prompt. A shared server's Claude is its owner's standing login."""
     chosen = {
         choice["provider"]
-        for role, choice in selection.items()
-        if role not in models.PHASE_ROLES
+        for choice in selection.values()
     }
     for service, info in accounts.SERVICES.items():
         needed = service in chosen and (PER_USER or service == "codex")
@@ -985,6 +986,12 @@ def library_options(body: Submission, run_id: str) -> dict:
         ):
             raise HTTPException(400, f"unknown library {body.library}")
         options["library"] = f"libraries/{body.library}"
+        if libraries.is_package(options["library"]):
+            built = libraries.release(options["library"])
+            if built != (body.lean_release or DEFAULT_LEAN_RELEASE):
+                raise HTTPException(
+                    400, f"library {body.library} is built on Lean {built}"
+                )
     elif body.library_text.strip():
         if len(body.library_text) > MAX_LIBRARY_CHARS:
             raise HTTPException(413, "library file too long")
@@ -1023,15 +1030,38 @@ def library_options(body: Submission, run_id: str) -> dict:
 
 @app.get("/api/libraries")
 def list_libraries(user: str = Depends(current_user)) -> list[dict]:
-    """Libraries in libraries/: name, size, and number of declarations."""
+    """Libraries in libraries/: single files and packages."""
     return [
-        {
-            "name": path.name,
-            "chars": len(text := path.read_text()),
-            "declarations": len(libraries.declared_names(text)),
-        }
-        for path in sorted(LIBRARY_DIR.glob("*.lean"))
+        libraries.listing(path)
+        for path in sorted(LIBRARY_DIR.iterdir())
+        if (path.suffix == ".lean" and path.is_file())
+        or (path.is_dir() and not path.name.startswith("."))
     ]
+
+
+@app.post("/api/libraries", status_code=201)
+async def upload_package(
+    name: str,
+    request: Request,
+    lean_release: str = "",
+    user: str = Depends(current_user),
+) -> dict:
+    """A package library from the body, a zip of Lean files with top-level
+    root modules, built on Lean `lean_release` (by default the pin)."""
+    release = lean_release or DEFAULT_LEAN_RELEASE
+    if not releases.is_installed(release):
+        raise HTTPException(400, f"Lean {release} is not installed here")
+    body = await request.body()
+    if len(body) > libraries.MAX_PACKAGE_BYTES:
+        raise HTTPException(413, "library too large")
+    if not zipfile.is_zipfile(io.BytesIO(body)):
+        raise HTTPException(400, "a package library is uploaded as a zip")
+    try:
+        return await asyncio.to_thread(
+            libraries.create_package, name, release, body
+        )
+    except ValueError as error:
+        raise HTTPException(400, str(error))
 
 
 def may_continue(job: dict) -> bool:
@@ -1103,7 +1133,10 @@ def spent_limit(job: dict) -> bool:
     ):
         return False
     limit = read_json(paths[0]).get("config", {}).get("max_claude_usd")
-    cost = read_json(paths[1]).get("costs", {}).get("hosted_cost_usd")
+    costs = read_json(paths[1]).get("costs", {})
+    cost = (costs.get("hosted_cost_usd") or 0) + (
+        costs.get("unpriced_tokens") or 0
+    ) / TOKENS_PER_USD
     return bool(limit and cost and cost >= limit)
 
 
@@ -1180,6 +1213,7 @@ def describe(job: dict) -> dict:
         "plan_review": job["state"] == PLAN_REVIEW,
         "settled": job.get("status") in CONCLUSIVE,
         "cost_usd": costs.get("hosted_cost_usd"),
+        "tokens": costs.get("hosted_tokens"),
         "gpu": gpu,
         "external": "home" in job,
     }
@@ -1435,7 +1469,7 @@ class ModelServer(BaseModel):
     url: str = Field(pattern=r"^https?://")
     api_key: str = ""
     model: str = ""
-    kind: Literal["aiprover", "general"] = "general"
+    kind: Literal["aiprover", "general", "hosted"] = "general"
 
 
 def server_admin(request: Request) -> str:

@@ -20,7 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from aiprover_orchestration.agents.claude_cli import (  # noqa: E402
+from aiprover_orchestration.agents.common import (  # noqa: E402
     LEAN_PROJECT_FILES,
 )
 from aiprover_orchestration.paths import WORKSPACE  # noqa: E402

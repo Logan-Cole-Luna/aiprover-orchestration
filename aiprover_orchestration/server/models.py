@@ -2,11 +2,12 @@
 
 A selection is `{"provider": ..., "model": ..., "effort": ...}` with provider
 "claude", "codex", "aiprover", or "custom" (a server added on the page, which
-`model` names).
-For Claude and Codex, `model` is a model id, `effort` a reasoning level the model
-accepts (empty = the model default) and `tools` whether the role has Lean
-tools (agents/claude_cli.py); the orchestrator's `judge_tools` covers its
-formalization and sketch judges. For AIProver, `model` is a version, whose
+`model` names). `tools` is whether a role other than the subagent has Lean
+tools; the orchestrator's `judge_tools` covers its formalization and sketch
+judges. They default to on for the orchestrator of a service and to off
+otherwise, since a chat server may not support tool calls.
+For Claude and Codex, `model` is a model id and `effort` a reasoning level the
+model accepts (empty = the model default). For AIProver, `model` is a version, whose
 checkpoint the Vista model server must serve, and `effort` is empty: the
 reasoning of the model is not configurable.
 
@@ -14,7 +15,8 @@ Roles (pipeline name in parentheses): the orchestrator (captain) formalizes,
 sketches and repairs; the auditor judges the formalization against the
 informal statement; the reviewer, an independent model, judges the finished
 proof; the writer writes the LaTeX report; the subagent (solver) proves the
-lemmas. A role absent from a stored selection keeps the served config's model.
+lemmas; the hand-back follows the orchestrator unless chosen. A role absent from
+a stored selection keeps the served config's model.
 """
 
 import json
@@ -73,12 +75,6 @@ DEFAULT_SELECTION = {
         "effort": "high",
     },
     "subagent": {"provider": "aiprover", "model": "trained", "effort": ""},
-    "handback": {
-        "provider": "claude",
-        "model": "claude-opus-5-5",
-        "effort": "high",
-        "tools": True,
-    },
 }
 ROLES = {
     "orchestrator": "captain",
@@ -87,8 +83,8 @@ ROLES = {
     "writer": "writer",
     "subagent": "solver",
 }
-# Roles served by a phase of the captain (Claude only), by the phase-label
-# prefix they set the model of.
+# Roles served by a phase of the captain, by the phase-label prefix they set
+# the model of.
 PHASE_ROLES = {"handback": "handback"}
 SELECTABLE_ROLES = (*ROLES, *PHASE_ROLES)
 ROLE_LABELS = {"handback": "Hand-back"}
@@ -151,12 +147,15 @@ def validate(selection: dict) -> dict:
     """The normalized selection of both roles; ValueError names the problem."""
     normalized = {}
     for role in SELECTABLE_ROLES:
-        choice = selection.get(role) or DEFAULT_SELECTION[role]
+        choice = (
+            selection.get(role)
+            or (role in PHASE_ROLES and selection.get("orchestrator"))
+            or DEFAULT_SELECTION.get(role)
+            or DEFAULT_SELECTION["orchestrator"]
+        )
         provider, model, effort = (
             choice.get(key) or "" for key in ("provider", "model", "effort")
         )
-        if role in PHASE_ROLES and provider != "claude":
-            raise ValueError(f"{role}: a phase of the captain uses Claude")
         if provider in SERVICE_MODELS:
             service_models = SERVICE_MODELS[provider]
             if model not in service_models:
@@ -181,7 +180,7 @@ def validate(selection: dict) -> dict:
             "model": model,
             "effort": effort,
         }
-        if provider in SERVICE_MODELS and role != "subagent":
+        if role != "subagent":
             normalized[role] |= tool_choice(role, choice)
     versions = checkpoint_names(normalized)
     if len(versions) > 1:
@@ -193,14 +192,14 @@ def validate(selection: dict) -> dict:
 
 
 def tool_choice(role: str, choice: dict) -> dict:
-    """The Lean tools of a Claude role; an absent choice takes the role's
-    default (on for the orchestrator except its judges, off otherwise)."""
-    default = DEFAULT_SELECTION[role]
-    tools = {"tools": bool(choice.get("tools", default.get("tools", False)))}
+    """The Lean tools of a role; an absent choice takes the default (on for a
+    service's orchestrator or hand-back, except the judges; off otherwise)."""
+    default = role in ("orchestrator", *PHASE_ROLES) and (
+        choice.get("provider") in SERVICE_MODELS
+    )
+    tools = {"tools": bool(choice.get("tools", default))}
     if role == "orchestrator":
-        tools["judge_tools"] = bool(
-            choice.get("judge_tools", default["judge_tools"])
-        )
+        tools["judge_tools"] = bool(choice.get("judge_tools", False))
     return tools
 
 
@@ -236,6 +235,46 @@ def checkpoint_of(selection: dict) -> str | None:
     return CHECKPOINTS[next(iter(names))] if names else None
 
 
+def chat_spec(role: str, choice: dict, spec: dict) -> dict:
+    """The agent of a role that a service or a chat server answers, keeping
+    the options that `spec` gives it."""
+    if choice["provider"] in SERVICE_MODELS:
+        agent = {
+            key: value
+            for key, value in spec.items()
+            if key in ("timeout", "max_output_tokens")
+        }
+        agent |= {"backend": choice["provider"], "model": choice["model"]}
+        if choice["effort"]:
+            agent["effort"] = choice["effort"]
+    elif choice["provider"] == "custom":
+        name, server = choice["model"], custom_servers()[choice["model"]]
+        agent = {
+            "backend": "openai_compatible",
+            "model": server["model"],
+            "base_url": server_endpoint(name, server),
+            "api_key_file": str(key_file(name)),
+            "timeout": spec.get("timeout", 2400),
+            "max_tokens": CHAT_REPLY_TOKENS,
+            "hosted": server["kind"] == "hosted",
+        }
+    else:
+        agent = {
+            "backend": "openai_compatible",
+            "model": AIPROVER_SERVED_MODEL,
+            "base_url": VERSION_ENDPOINTS.get(choice["model"], AIPROVER_ENDPOINT),
+            "timeout": spec.get("timeout", 2400),
+            "max_tokens": CHAT_REPLY_TOKENS,
+        }
+    if role == "subagent":
+        return agent
+    tools = tool_choice(role, choice)
+    agent["tools"] = tools["tools"]
+    if "judge_tools" in tools:
+        agent["phases"] = {"judge": {"tools": tools["judge_tools"]}}
+    return agent
+
+
 def build_config(base_config: Path, selection: dict) -> dict:
     """The served config with the agents of `selection` (already validated)."""
     config = json.loads(base_config.read_text())
@@ -246,52 +285,19 @@ def build_config(base_config: Path, selection: dict) -> dict:
         # The pipeline gives a reviewer or writer absent from the config the
         # captain's specification.
         spec = agents.get(ROLES[role]) or agents["captain"]
-        if choice["provider"] in SERVICE_MODELS:
-            spec = {
-                key: value
-                for key, value in spec.items()
-                if key in ("timeout", "max_output_tokens")
+        if (
+            role == "subagent"
+            and choice["provider"] == "custom"
+            and custom_servers()[choice["model"]]["kind"] == "aiprover"
+        ):
+            name = choice["model"]
+            agents["solver"] = {
+                **agents["solver"],
+                "config": custom_harness_config(name, custom_servers()[name]),
+                "timeout": SOLVER_TIMEOUTS["dgx"],
             }
-            spec |= {"backend": choice["provider"], "model": choice["model"]}
-            if choice["effort"]:
-                spec["effort"] = choice["effort"]
-            if role != "subagent":
-                tools = tool_choice(role, choice)
-                spec["tools"] = tools["tools"]
-                if "judge_tools" in tools:
-                    spec["phases"] = {
-                        "judge": {"tools": tools["judge_tools"]}
-                    }
-            if role == "subagent":
-                spec["timeout"] = SUBAGENT_TIMEOUT
-        elif choice["provider"] == "custom":
-            name, server = choice["model"], custom_servers()[choice["model"]]
-            if role == "subagent" and server["kind"] == "aiprover":
-                agents["solver"] = {
-                    **agents["solver"],
-                    "config": custom_harness_config(name, server),
-                    "timeout": SOLVER_TIMEOUTS["dgx"],
-                }
-                continue
-            spec = {
-                "backend": "openai_compatible",
-                "model": server["model"],
-                "base_url": server_endpoint(name, server),
-                "api_key_file": str(key_file(name)),
-                "timeout": spec.get("timeout", 2400),
-                "max_tokens": CHAT_REPLY_TOKENS,
-            }
-        elif role != "subagent":
-            spec = {
-                "backend": "openai_compatible",
-                "model": AIPROVER_SERVED_MODEL,
-                "base_url": VERSION_ENDPOINTS.get(
-                    choice["model"], AIPROVER_ENDPOINT
-                ),
-                "timeout": spec.get("timeout", 2400),
-                "max_tokens": CHAT_REPLY_TOKENS,
-            }
-        else:
+            continue
+        if role == "subagent" and choice["provider"] == "aiprover":
             # The served config's solver is the AIProver harness; a persistent
             # version has its own harness configuration.
             if choice["model"] in HARNESS_CONFIGS:
@@ -303,16 +309,18 @@ def build_config(base_config: Path, selection: dict) -> dict:
                     ),
                 }
             continue
+        spec = chat_spec(role, choice, spec)
+        if role == "subagent" and choice["provider"] in SERVICE_MODELS:
+            spec["timeout"] = SUBAGENT_TIMEOUT
         agents[ROLES[role]] = spec
     captain = agents["captain"]
     for role, prefix in PHASE_ROLES.items():
         choice = selection.get(role)
-        if choice and captain.get("backend") == "claude":
+        if choice:
             # The phase keeps its other options (limits) from the run's
-            # captain phases; an empty effort keeps the captain's.
-            override = {"model": choice["model"], "tools": choice["tools"]}
-            if choice["effort"]:
-                override["effort"] = choice["effort"]
+            # captain phases; an empty effort keeps the captain's. A phase on
+            # another backend replaces the captain's backend for its calls.
+            override = chat_spec(role, choice, {})
             phases = captain.setdefault("phases", {})
             phases[prefix] = {**phases.get(prefix, {}), **override}
     for version in checkpoint_names(selection):

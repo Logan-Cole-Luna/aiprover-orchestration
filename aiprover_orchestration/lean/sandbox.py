@@ -1,13 +1,14 @@
 """Run a command under a Landlock sandbox (Linux 6.7 or later, no root) or,
 on macOS, under Seatbelt (`sandbox-exec`).
 
-    python3 -I sandbox.py [--read DIR]... [--write DIR]... [--cpu-seconds N]
-        -- command [argument]...
+    python3 -I sandbox.py [--read DIR]... [--write DIR]... [--execute PATH]...
+        [--cpu-seconds N] -- command [argument]...
 
 The command and its children may read the system directories, the Lean
 toolchain (`~/.elan`) and the `--read` and `--write` trees, write only in the
-`--write` trees, execute only the toolchain, the ELF loader and `git` (which
-Lake runs to check package sources), and open no TCP connection (Landlock
+`--write` trees, execute only the toolchain, the ELF loader, `git` (which Lake
+runs to check package sources), and the `--execute` paths, and open no TCP
+connection (Landlock
 ABI 4, Linux 6.7). The environment is replaced by a minimal one, so no
 credential of the caller reaches the command. The script uses the standard
 library only and fails closed: without Landlock ABI 4, or on macOS without
@@ -61,6 +62,8 @@ SYSTEM_EXECUTE = (
 )
 DEVICES = "/dev"
 ELAN_HOME = Path(os.environ.get("ELAN_HOME") or Path.home() / ".elan")
+# Module trees of the caller (a package library), passed on and readable.
+LEAN_PATH = os.environ.get("LEAN_PATH", "")
 
 # macOS: the system trees (the dyld cache lies under /System), and the git
 # of the developer tools, which /usr/bin/git starts through xcrun.
@@ -253,6 +256,7 @@ def minimal_environment(home: str) -> dict[str, str]:
         "HOME": home,
         "TMPDIR": home,
         "LANG": "C.UTF-8",
+        **({"LEAN_PATH": LEAN_PATH} if LEAN_PATH else {}),
         "GIT_CONFIG_COUNT": str(len(packages)),
         **trusted,
     }
@@ -263,12 +267,14 @@ def main(arguments: list[str]) -> None:
         sys.exit("usage: sandbox.py [--read DIR] [--write DIR] -- command")
     split = arguments.index("--")
     options, command = arguments[:split], arguments[split + 1 :]
-    read, write, cpu_seconds = [], [], 0
+    read, write, execute, cpu_seconds = [], [], [], 0
     for flag, value in zip(options[::2], options[1::2]):
         if flag == "--read":
             read.append(os.path.realpath(value))
         elif flag == "--write":
             write.append(os.path.realpath(value))
+        elif flag == "--execute":
+            execute.append(os.path.realpath(value))
         elif flag == "--cpu-seconds":
             cpu_seconds = int(value)
         else:
@@ -284,9 +290,9 @@ def main(arguments: list[str]) -> None:
             sys.exit(f"sandbox.py: {SANDBOX_EXEC} not found; refusing to run")
         command = [
             *seatbelt_arguments(
-                read=[*DARWIN_READ, *read],
+                read=[*DARWIN_READ, *read, *filter(None, LEAN_PATH.split(":"))],
                 write=write,
-                execute=[*DARWIN_EXECUTE, elan_home],
+                execute=[*DARWIN_EXECUTE, elan_home, *execute],
             ),
             *command,
         ]
@@ -295,9 +301,9 @@ def main(arguments: list[str]) -> None:
         if abi < 4:
             sys.exit(f"sandbox.py: Landlock ABI {abi} < 4; refusing to run")
         restrict(
-            read=[*SYSTEM_READ, *read],
+            read=[*SYSTEM_READ, *read, *filter(None, LEAN_PATH.split(":"))],
             write=write,
-            execute=[*SYSTEM_EXECUTE, elan_home],
+            execute=[*SYSTEM_EXECUTE, elan_home, *execute],
             abi=abi,
         )
     os.execvpe(command[0], command, minimal_environment(write[0]))

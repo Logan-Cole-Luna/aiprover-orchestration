@@ -327,7 +327,11 @@ class Orchestration(
             if not self.library_path:
                 return ""
             library_file = libraries.resolve(self.library_path)
-            snapshot.write_text(library_file.read_text())
+            snapshot.write_text(
+                libraries.package_note(self.library_path)
+                if library_file.is_dir()
+                else library_file.read_text()
+            )
         return libraries.load(str(snapshot))
 
     def _check_library(self) -> None:

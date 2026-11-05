@@ -90,7 +90,11 @@ SETTINGS = {
         "Claude budget", "Claude calls per run (0: unlimited)", 0, 1000
     ),
     "max_claude_usd": Setting(
-        "Claude budget", "Claude USD per run (0: unlimited)", 0, 100000
+        "Claude budget",
+        "USD per run; a model without a price counts 100,000 tokens per USD "
+        "(0: unlimited)",
+        0,
+        100000,
     ),
     "write_reports": Setting(
         "Claude budget", "Generate the report, informal proof, and blueprint"

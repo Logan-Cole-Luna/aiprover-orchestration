@@ -25,6 +25,15 @@ WORKSPACE = (  # Lake project of all modules
     if LEAN_RELEASE == DEFAULT_LEAN_RELEASE
     else RELEASES_DIR / LEAN_RELEASE / "workspace"
 )
+# A package library (orchestrator/libraries.py) is the workspace of the runs
+# built on it, and Lean finds its modules through LEAN_PATH, which `lake env`
+# extends and lean/sandbox.py passes on, readable only.
+LIBRARY_PACKAGE = os.environ.get("AIPROVER_LIBRARY_PACKAGE", "")
+if LIBRARY_PACKAGE:
+    WORKSPACE = Path(LIBRARY_PACKAGE)
+    os.environ["LEAN_PATH"] = str(WORKSPACE / ".lake" / "build" / "lib" / "lean")
+    # AIProver sessions build their own LEAN_PATH and append this one.
+    os.environ["AIPROVER_EXTRA_LEAN_PATH"] = os.environ["LEAN_PATH"]
 LIBRARIES_DIR = HOME_DIR / "libraries"  # single-file result libraries
 RESULTS_DIR = HOME_DIR / "results"  # per-run outputs
 LOGS_DIR = HOME_DIR / "logs"

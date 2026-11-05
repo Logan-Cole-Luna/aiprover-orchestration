@@ -1,5 +1,5 @@
-"""`lean-check FILE...`: the one shell command of a Claude agent with Lean
-tools (agents/claude_cli.py).
+"""`lean-check FILE...`: the Lean check of an agent with Lean tools
+(agents/common.py).
 
 Each FILE must be a `.lean` file inside the working directory, a scratch Lake
 project. Every Lean file of the project is checked for constructs that run
@@ -30,12 +30,22 @@ from aiprover_orchestration.limits import (  # noqa: E402
 CPU_SECONDS = 900
 
 
+# Reference material of a call (agents/common.py): a package library's views
+# and the source. Lean files there are never elaborated: no target lies in them,
+# and imports resolve to built modules only, which they are not.
+REFERENCE = ("library", "source")
+
+
 def project_files(project: Path) -> list[Path]:
-    """The project's Lean files, outside its `.lake` directory."""
+    """The project's Lean files, outside its `.lake` directory and its
+    reference material."""
     files = []
     for directory, subdirectories, names in os.walk(project):
         subdirectories[:] = [
-            name for name in subdirectories if name != ".lake"
+            name
+            for name in subdirectories
+            if name != ".lake"
+            and not (directory == str(project) and name in REFERENCE)
         ]
         files += [
             Path(directory) / name for name in names if name.endswith(".lean")
@@ -49,6 +59,8 @@ def main(arguments: list[str]) -> None:
     for target in targets:
         if target.suffix != ".lean" or not target.is_relative_to(project):
             sys.exit(f"lean-check: {target} is not a Lean file of the project")
+        if target.relative_to(project).parts[0] in REFERENCE:
+            sys.exit(f"lean-check: {target} is reference material, not checked")
         if not target.is_file():
             sys.exit(f"lean-check: {target} does not exist")
     if not targets:

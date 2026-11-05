@@ -20,48 +20,27 @@ import argparse
 import json
 import logging
 import os
-import re
 import shutil
 import subprocess
-import tempfile
-import time
-from datetime import datetime, timedelta
-from pathlib import Path
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..limits import LEAN_CHECK_TIMEOUT_MS
-from ..orchestrator.trace import REFUSAL_MARKER
-from ..paths import ROOT, TEMP_DIR, WORKSPACE
 from ..utils.processes import ProcessStopped, run_group
-from .base import RETRYABLE_STATUS, STOPPING, Agent, Completion, Terminated
+from .base import STOPPING, Agent, Completion, Terminated
+from .common import (
+    CLI_WORKDIR,
+    LEAN_CHECK_BIN,
+    LEAN_PACKAGES_DIR,
+    LEAN_TOOLS_BUDGET_USD,
+    MAX_RETRIES,
+    REQUEST_TIMEOUT_S,
+    SOURCE_NOTE,
+    STOP_GRACE_SECONDS,
+    add_source,
+    failed_call,
+    lean_scratch_project,
+)
 
 logger = logging.getLogger(__name__)
-
-REQUEST_TIMEOUT_S = 900
-# Time the processes of a stopped call get to end.
-STOP_GRACE_SECONDS = 5
-MAX_RETRIES = 5
-RETRY_BACKOFF_S = [30, 60, 180, 300, 600]
-# A usage limit (as opposed to a short rate limit) reports a reset time that
-# can be hours away, so a single call sleeps at most this long.
-MAX_USAGE_LIMIT_WAIT_S = 3600
-# Error texts of transient failures: a retryable HTTP status as a whole
-# number (not the digits of a token count), or a phrase.
-RETRYABLE_ERROR = re.compile(
-    r"\b(?:"
-    + "|".join(map(str, sorted(RETRYABLE_STATUS)))
-    + r")\b|rate.limit|usage limit|session limit|overloaded|server error"
-    r"|\btime(?:d)? ?out\b|connection error|econnreset|network error"
-    r"|temporarily unavailable",
-    re.IGNORECASE,
-)
-
-
-# Neutral working directory for CLI subprocesses (no CLAUDE.md above it),
-# one per account on a shared host.
-CLI_WORKDIR = (
-    Path(tempfile.gettempdir()) / f"aiprover_orchestration_cli_cwd_{os.getuid()}"
-)
 
 # Lean tools: the built-in tools offered, the permissions granted (all
 # others are denied without a prompt), and the scratch projects, one per call.
@@ -69,7 +48,7 @@ LEAN_TOOLS = "Bash,Read,Write,Edit,Glob,Grep"
 # Unscoped Glob and Grep rules reach any path, so every read rule names its
 # tree. The packages are a symlink out of the project, matched by their real
 # path ("//" marks an absolute rule); they are readable, not writable.
-LEAN_PACKAGES = f"/{(WORKSPACE / '.lake' / 'packages').resolve()}/**"
+LEAN_PACKAGES = f"/{LEAN_PACKAGES_DIR}/**"
 LEAN_TOOL_PERMISSIONS = (
     "Read(./**)",
     "Glob(./**)",
@@ -81,10 +60,6 @@ LEAN_TOOL_PERMISSIONS = (
     "Edit(./**)",
     "Bash(lean-check:*)",
 )
-# Directory of `lean-check`, put first on the command search path.
-LEAN_CHECK_BIN = ROOT / "aiprover_orchestration" / "lean" / "bin"
-LEAN_TOOLS_DIR = TEMP_DIR / "lean_tools"
-LEAN_PROJECT_FILES = ("lakefile.lean", "lean-toolchain", "lake-manifest.json")
 LEAN_TOOLS_NOTE = """
 
 Tools. The working directory is a Lean 4 project with Mathlib (the versions of
@@ -97,12 +72,6 @@ sources are under `.lake/packages/mathlib/Mathlib`, for Grep and Read. Files
 outside the working directory are unavailable. Check the Lean you return
 before replying. Your final message is the reply, in the format the task
 requires."""
-SOURCE_NOTE = (
-    "\n\nReference material lies in `source/` of the working directory. It "
-    "is not verified: use it for ideas, and prove in Lean what you rely on."
-)
-# Spend limit of one call with tools, in USD.
-LEAN_TOOLS_BUDGET_USD = 10.0
 # Result subtypes and error text of a call stopped at its spend, turn or
 # reply-length limit.
 LIMIT_SUBTYPES = ("error_max_budget_usd", "error_max_turns")
@@ -127,51 +96,6 @@ def get_account_status(timeout: int = 30) -> dict | None:
         logger.warning(f"Could not read `claude auth status`: {e}")
         return None
     return status if status.get("loggedIn") else None
-
-
-def _clock_reset_epoch(text: str) -> float | None:
-    """The next occurrence of a clock time such as `resets 1:40pm
-    (America/Chicago)`, as an epoch."""
-    match = re.search(
-        r"resets (\d{1,2})(?::(\d{2}))?\s*([ap]m)\s*\(([^)]+)\)",
-        text,
-        flags=re.IGNORECASE,
-    )
-    if not match:
-        return None
-    hour, minute, meridiem, zone = match.groups()
-    try:
-        now = datetime.now(ZoneInfo(zone))
-    except (ZoneInfoNotFoundError, ValueError):
-        return None
-    hour = int(hour) % 12 + (12 if meridiem.lower() == "pm" else 0)
-    reset = now.replace(
-        hour=hour, minute=int(minute or 0), second=0, microsecond=0
-    )
-    if reset < now - timedelta(minutes=1):
-        reset += timedelta(days=1)
-    return reset.timestamp()
-
-
-def _usage_limit_wait_seconds(text: str) -> float | None:
-    """Seconds until the reset time named in a usage-limit message, if any."""
-    match = re.search(
-        r"usage limit reached\|(\d{10,13})", text, flags=re.IGNORECASE
-    )
-    if match:
-        raw = int(match.group(1))
-        reset_epoch = raw / 1000.0 if raw > 10_000_000_000 else float(raw)
-    else:
-        reset_epoch = _clock_reset_epoch(text)
-        if reset_epoch is None:
-            return None
-        # A margin past the reset, whose clock time has minute resolution.
-        reset_epoch += 60
-    return max(0.0, min(reset_epoch - time.time(), MAX_USAGE_LIMIT_WAIT_S))
-
-
-def _is_retryable(error_text: str) -> bool:
-    return bool(RETRYABLE_ERROR.search(error_text or ""))
 
 
 def invoke_once(
@@ -284,25 +208,6 @@ def invoke_once(
     return (payload.get("result") or "").strip(), payload, None
 
 
-def add_source(workdir: Path, source_dir: str) -> None:
-    """Copy reference material into a call's project as `source/`, for the
-    model to search. A copy, since the model can write in its project."""
-    shutil.copytree(source_dir, Path(workdir) / "source")
-
-
-def lean_scratch_project() -> Path:
-    """A new Lake project with the workspace's toolchain and packages."""
-    LEAN_TOOLS_DIR.mkdir(parents=True, exist_ok=True)
-    project = Path(tempfile.mkdtemp(dir=LEAN_TOOLS_DIR))
-    for name in LEAN_PROJECT_FILES:
-        shutil.copy(WORKSPACE / name, project / name)
-    (project / ".lake").mkdir()
-    (project / ".lake" / "packages").symlink_to(
-        (WORKSPACE / ".lake" / "packages").resolve()
-    )
-    return project
-
-
 class ClaudeCLIAgent(Agent):
     """Claude model through the local `claude` CLI (subscription auth)."""
 
@@ -369,24 +274,11 @@ class ClaudeCLIAgent(Agent):
         }
         if error is None:
             return Completion(text=text, usage=usage)
-        refused = REFUSAL_MARKER in error
-        limited = (
-            payload.get("subtype") in LIMIT_SUBTYPES
-            or OUTPUT_LIMIT_MARKER in error
-        )
-        retryable = (
-            not refused
-            and not limited
-            and not error.startswith("__fatal__")
-            and _is_retryable(error)
-        )
-        return Completion(
-            usage=usage,
-            error=error,
-            retryable=retryable,
-            retry_after_s=_usage_limit_wait_seconds(error),
-            refused=refused,
-            limited=limited,
+        return failed_call(
+            error,
+            usage,
+            limited=payload.get("subtype") in LIMIT_SUBTYPES
+            or OUTPUT_LIMIT_MARKER in error,
         )
 
 

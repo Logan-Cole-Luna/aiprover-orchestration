@@ -18,15 +18,16 @@ set, otherwise through the logged-in `claude` CLI (Claude subscription);
 `CLAUDE_AUTH=api` or `CLAUDE_AUTH=subscription` selects one explicitly.
 `codex` calls a Codex model through the logged-in `codex` CLI.
 `openai_compatible` covers any server that implements the OpenAI chat
-completions schema, such as a local vLLM server. `aiprover` runs the AIProver
+completions schema, such as a local vLLM server or a provider's API, with
+Lean tools if its specification sets `tools`. `aiprover` runs the AIProver
 harness (a full agentic Lean session per call; solver role only) with the
 model named in its own configuration. `python` loads a user-defined
 subclass of `Agent`, so a custom agent can replace any role without changes
 to the pipeline.
 
-`tools` gives a Claude agent on the CLI Lean tools (agents/claude_cli.py);
-`role_spec` sets the defaults: on for the captain except its judge phases,
-off for the other roles.
+`tools` gives an agent Lean tools (agents/common.py, agents/session_tools.py);
+`role_spec` sets the defaults: on for a service's captain except its judge
+phases, off for other roles and for a chat server, which may not support them.
 
 `AgentPool` routes each call to the agent of its role, retries transient
 failures, and records every call in `calls.jsonl` and in the run trace.
@@ -48,6 +49,7 @@ from ..limits import HOSTED, TOOL_CALLS
 from ..orchestrator.trace import REFUSAL_MARKER, is_untraced
 from .base import (
     STOPPING,
+    TOKENS_PER_USD,
     Agent,
     AgentCallError,
     AgentLimitReached,
@@ -56,6 +58,7 @@ from .base import (
     Completion,
     Terminated,
     add_usage,
+    billed_tokens,
     raise_if_stopping,
 )
 from .claude import ClaudeAgent
@@ -100,10 +103,11 @@ SKETCH_BUDGET_USD = 6.0
 
 
 def role_spec(role: str, spec: dict) -> dict:
-    """`spec` with the default Lean tools of `role` for a CLI backend."""
-    if spec.get("backend") not in ("claude", "codex"):
+    """`spec` with the default Lean tools of `role`."""
+    backend = spec.get("backend")
+    if backend not in ("claude", "codex", "openai_compatible"):
         return spec
-    spec = {"tools": role in TOOL_ROLES, **spec}
+    spec = {"tools": backend != "openai_compatible" and role in TOOL_ROLES, **spec}
     if spec["tools"]:
         phases = dict(spec.get("phases") or {})
         for prefix in TOOLLESS_PHASES:
@@ -186,6 +190,8 @@ class AgentPool:
         # Calls under way, which the budget counts before they are billed.
         self._claude_calls_reserved = 0
         self.usage_by_model: dict[str, dict] = {}
+        # Hosted tokens without a price, which the USD limit converts.
+        self.unpriced_tokens = 0
         if self.calls_path.exists():
             self._load_history()
         elif trace is not None:
@@ -242,6 +248,12 @@ class AgentPool:
             return
         self.num_calls[role] = self.num_calls.get(role, 0) + 1
         add_usage(self.usage_by_model, model_usage)
+        if hosted:
+            self.unpriced_tokens += sum(
+                billed_tokens(usage)
+                for usage in model_usage.values()
+                if not usage.get("costUSD")
+            )
 
     def complete(
         self,
@@ -339,16 +351,18 @@ class AgentPool:
                 self._claude_calls_reserved -= 1
 
     def _claude_usd_spent(self) -> bool:
-        return bool(self.max_claude_usd) and self.max_claude_usd <= sum(
+        priced = sum(
             total["cost_usd"] for total in self.usage_by_model.values()
         )
+        spent = priced + self.unpriced_tokens / TOKENS_PER_USD
+        return bool(self.max_claude_usd) and self.max_claude_usd <= spent
 
     def check_spend_limit(self) -> None:
         """Stop the run if it has spent its limit."""
         with self._lock:
             if self._claude_usd_spent():
                 raise BudgetExhausted(
-                    f"Claude spend limit of {self.max_claude_usd} USD reached"
+                    f"Spend limit of {self.max_claude_usd} USD reached"
                 )
 
     def _claude_calls_used(self) -> int:

@@ -332,6 +332,30 @@ Results
   excerpt stays in the prompt. The copy keeps the original out of the model's
   reach. Research sessions keep notes and a current report, so that their work
   survives a stop, and milestones run as separate short runs on one library.
+- Interchangeable models (2026-11-05): tokens are the unit that every backend
+  reports. USD is reported only where a price is known, and a USD limit counts
+  unpriced hosted tokens at 100,000 per USD, the rate of 78 retained runs, with a
+  cached token weighted at a tenth. Chat endpoints run the same tools through a
+  loop in `agents/openai_compatible.py`, off by default, and stop on exact tokens.
+  Codex reports tokens only at the end of a call, so its limit becomes turns at
+  20 per USD, enforced by the tool server; its session files would give tokens
+  per response, but they keep prompts on disk, so calls stay ephemeral. Shared
+  code lies in `agents/common.py`. The hand-back follows the orchestrator unless
+  chosen, on any backend.
+- Package libraries (2026-11-05): a library may be a Lake package,
+  `libraries/<name>/`, built against a release's Mathlib. It is the workspace
+  of the runs built on it, their files import its root modules, and Lean finds
+  its build through `LEAN_PATH`, read only under `lean/sandbox.py`.
+  - Agents read generated views: statements with proofs elided, and `toc.md`.
+    Captain projects carry them in `library/`, which `lean-check` skips and
+    refuses as a target.
+  - A verified run adds one module to `Extensions` and rebuilds.
+- Session restrictions (2026-11-05): a Codex call now has the restrictions of a
+  Claude call. Its shell, web search, connected apps, plugins, and image tools
+  are off, and with tools it has the file tools and `lean_check` of
+  `agents/session_tools.py`. The Python of a project session runs under
+  `lean/sandbox.py` through `orchestrator/bin/python3`: project files, its own
+  folder, no network.
 - Sessions off the internet (2026-10-31): `aiprover_offline` starts the
   AIProver CLI under `lean/offline.py`, a Landlock rule inherited by every
   worker and session, which permits TCP only to the model proxy and the

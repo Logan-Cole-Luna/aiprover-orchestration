@@ -64,7 +64,13 @@ def compute_rows(costs: dict) -> list[tuple[str, str]]:
             "Hosted models",
             escape(
                 f"{calls} calls to {models}, "
-                f"${costs['hosted_cost_usd']:.2f} up to the final review"
+                f"{costs['hosted_tokens']:,} tokens"
+                + (
+                    f", ${costs['hosted_cost_usd']:.2f}"
+                    if costs["hosted_cost_usd"]
+                    else ""
+                )
+                + " up to the final review"
             ),
         )
     )
