@@ -1,5 +1,6 @@
 """Lean releases: the packages that match a release, and their installation."""
 
+import os
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -32,7 +33,9 @@ class InstallTest(TemporaryDirectoryTest):
         def run(command, cwd, env, check):
             if command[:2] == ["lake", "update"]:
                 (Path(cwd) / "lake-manifest.json").write_text("{}")
-            (Path(cwd) / ".lake" / "packages").mkdir(parents=True, exist_ok=True)
+            (Path(cwd) / ".lake" / "packages" / "mathlib" / ".lake").mkdir(
+                parents=True, exist_ok=True
+            )
 
         with (
             mock.patch.object(releases, "RELEASES_DIR", self.directory),
@@ -42,5 +45,10 @@ class InstallTest(TemporaryDirectoryTest):
             self.assertTrue(releases.is_installed("v4.35.0"))
             workspace = releases.directory("v4.35.0") / "workspace"
             text = (workspace / "lakefile.lean").read_text()
+            project = releases.project_path("v4.35.0")
+            build = project / ".lake" / "packages" / "mathlib" / ".lake"
+            # Installed package builds are read-only to the runs that link them.
+            self.assertFalse(os.access(build, os.W_OK))
+            releases.set_writable(project, True)
         self.assertEqual(text.count('@ "v4.35.0"'), 3)
         self.assertTrue((workspace / ".lake" / "packages").is_symlink())

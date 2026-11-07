@@ -20,10 +20,29 @@ DATA_DIR = ROOT / "data"  # problem datasets (JSONL)
 DEFAULT_LEAN_RELEASE = "v4.23.0"
 LEAN_RELEASE = os.environ.get("AIPROVER_LEAN_RELEASE") or DEFAULT_LEAN_RELEASE
 RELEASES_DIR = HOME_DIR / "lean_releases"
+
+
+def own_workspace(home: Path, release: str) -> Path:
+    """The Lake project of this home's modules on Lean `release`: a copy of
+    the release's workspace (lean/releases.py) on its packages. Releases may be
+    shared between users' homes, whose module builds must not meet."""
+    own = home / "workspaces" / release
+    template = home / "lean_releases" / release / "workspace"
+    if not (own / "lakefile.lean").exists() and template.is_dir():
+        for folder in ("Definitions", "Theorems", "Solutions", ".lake"):
+            (own / folder).mkdir(parents=True, exist_ok=True)
+        for name in ("lakefile.lean", "lean-toolchain", "lake-manifest.json"):
+            (own / name).write_bytes((template / name).read_bytes())
+        packages = own / ".lake" / "packages"
+        if not packages.is_symlink():
+            packages.symlink_to((template / ".lake" / "packages").resolve())
+    return own
+
+
 WORKSPACE = (  # Lake project of all modules
     HOME_DIR / "orchestration_workspace"
     if LEAN_RELEASE == DEFAULT_LEAN_RELEASE
-    else RELEASES_DIR / LEAN_RELEASE / "workspace"
+    else own_workspace(HOME_DIR, LEAN_RELEASE)
 )
 # A package library (orchestrator/libraries.py) is the workspace of the runs
 # built on it, and Lean finds its modules through LEAN_PATH, which `lake env`

@@ -9,6 +9,7 @@ orchestration_workspace/Definitions/*.lean
 orchestration_workspace/Theorems/*.lean
 orchestration_workspace/Solutions/*.lean
 orchestration_workspace/.lake_build.lock
+workspaces/
 
 # Generated Lean outputs of orchestration runs
 results/**/*.lean

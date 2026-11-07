@@ -15,7 +15,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from ..paths import DEFAULT_LEAN_RELEASE, HOME_DIR, RELEASES_DIR, ROOT
+from ..paths import DEFAULT_LEAN_RELEASE, HOME_DIR, RELEASES_DIR, ROOT, STATE_DIR
 from .sandbox import ELAN_HOME
 
 PACKAGES = {
@@ -159,6 +159,18 @@ def link_workspace(release: str, chosen: dict[str, str]) -> None:
     packages.symlink_to((project / ".lake" / "packages").resolve())
 
 
+def set_writable(project: Path, writable: bool) -> None:
+    """Make the packages' build outputs writable, or read-only once
+    installed. Sessions reach them through links; read-only, a Lake process
+    that finds a stale trace fails in its own session instead of rebuilding
+    Mathlib under every run of the release."""
+    for build in (project / ".lake" / "packages").glob("*/.lake"):
+        subprocess.run(
+            ["chmod", "-R", "u+w" if writable else "a-w", str(build)],
+            check=True,
+        )
+
+
 def install(release: str, run=subprocess.run) -> None:
     """Download Lean, Mathlib's cache, and the packages of `release`, build
     the packages, and check the result on a small file."""
@@ -169,6 +181,7 @@ def install(release: str, run=subprocess.run) -> None:
         raise SystemExit(f"{release}: not all packages support this release")
     project = project_path(release)
     project.mkdir(parents=True, exist_ok=True)
+    set_writable(project, True)
     toolchain = f"leanprover/lean4:{release}"
     (project / "lean-toolchain").write_text(toolchain + "\n")
     (project / "lakefile.lean").write_text(
@@ -200,11 +213,16 @@ def install(release: str, run=subprocess.run) -> None:
     if found != toolchain:
         raise SystemExit(f"lake update moved {release} to {found}")
     step("lake", "exe", "cache", "get")
+    # The cache may lack artifacts that a later `lake setup-file` requires
+    # (the `.ir` files of Lean 4.35); building now completes them here
+    # rather than under a run.
+    step("lake", "build", "Mathlib")
     # `REPL` alone is its library; the harness runs the executable.
     step("lake", "build", "cslib", "REPL/repl")
     step("test", "-x", REPL_BINARY)
     step("lake", "env", "lean", probe.name)
     link_workspace(release, chosen)
+    set_writable(project, False)
     (directory(release) / "ready").touch()
     print("installed", flush=True)
 
@@ -238,9 +256,11 @@ def start_install(release: str) -> bool:
 
 def harness_config(source: Path, release: str) -> Path:
     """The harness configuration `source` on the Lean project of `release`.
-    It keeps its file name, which identifies the run's server."""
-    target = directory(release) / "harness" / source.name
-    target.parent.mkdir(exist_ok=True)
+    It keeps its file name, which identifies the run's server, and lies in the
+    state of this server: releases are shared between users' servers, whose
+    configurations may have one name."""
+    target = STATE_DIR / "harness" / release / source.name
+    target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(
         re.sub(
             r"^lean_project\s*=.*$",
