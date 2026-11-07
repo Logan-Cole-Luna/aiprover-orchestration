@@ -242,6 +242,10 @@ Results
 
 ## Decisions
 
+- A side, once chosen, is kept for the run: a replan does not switch from
+  proving to disproving. Whether switching earns its place is to be measured
+  on benchmark results.
+
 - Single sessions have a cost cap only (40 USD, `benchmark/conditions.json`),
   without a time limit (2026-11-04). A continuation
   (`benchmark/run.py --continue-from RUN_DIR`) starts from the Lean files of
@@ -604,6 +608,10 @@ Results
   HttpOnly cookie, which also authorizes the event stream and result links.
 
 ## Done
+
+- Setting `disproof` (prove mode, off by default): the captain first judges
+  whether the statement holds (`side.md`); judged false, the run's theorem
+  becomes the statement's negation, and a verified run ends as `disproved`.
 
 - Catalogue of the unformalized OpenAI manuscripts (`docs/openai_unformalized.md`):
   751 manuscripts, 345 linked to a formalization, and 378 current

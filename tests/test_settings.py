@@ -11,6 +11,7 @@ from aiprover_orchestration.orchestrator.stages.draft import (
     FIXED_VERDICT,
     WITHHELD_PROOF,
     DraftStage,
+    negation,
 )
 from aiprover_orchestration.orchestrator.stages.sketch import SketchStage
 from aiprover_orchestration.orchestrator.structures import Lemma, Sketch
@@ -109,6 +110,27 @@ class SettingsTest(unittest.TestCase):
                 stage.result_dir = Path(folder)
                 (stage.result_dir / "draft.md").write_text("kept\n")
                 self.assertEqual(stage.draft_proof(form), "kept\n")
+        with self.subTest("a statement judged false becomes its negation"):
+            self.assertEqual(negation(" : P "), " : ¬ (P) ")
+            self.assertEqual(negation(" {n : ℕ} (h : 0 < n) : f n = (1 : ℕ) "),
+                             " : ¬ (∀ {n : ℕ} (h : 0 < n), f n = (1 : ℕ)) ")
+            self.assertEqual(settings.validate({"disproof": True}), {"disproof": True})
+            replies = []
+            stage.agents = SimpleNamespace(
+                complete=lambda *args, **fields: replies.append(1)
+                or "<reason>n = 0 fails</reason><side>disprove</side>")
+            stage._own_definitions = lambda form: form.definitions
+            stage._check = lambda label, text: checked.append(text) or SimpleNamespace(ok=True)
+            with tempfile.TemporaryDirectory() as folder:
+                stage.result_dir = Path(folder)
+                negated = stage.choose_side(stage.fixed_formalization())
+                self.assertEqual(negated.statement, "theorem slug : ¬ "
+                                 "(∀ (n : ℕ), double n = n + n) := by sorry")
+                self.assertIn(negated.statement, checked[-1])
+                self.assertEqual(stage.row["side"], "disprove")
+                # A resumed run keeps the choice without asking again.
+                stage.choose_side(stage.fixed_formalization())
+                self.assertEqual(len(replies), 1)
 
 if __name__ == "__main__":
     unittest.main()

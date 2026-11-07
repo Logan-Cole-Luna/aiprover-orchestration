@@ -451,6 +451,8 @@ class Orchestration(
                 summary["formalization"] = asdict(form)
                 summary["status"] = "unfaithful_formalization"
                 return summary
+            if prove and self.config.disproof:
+                form = self.choose_side(form)
             if self.config.setting_check and not state.setting_checked:
                 with self._timed("sketch"):
                     facts = self.check_setting(form)
@@ -500,7 +502,9 @@ class Orchestration(
                         return summary
             while True:
                 if sketch.refutation:
-                    summary["status"] = "disproved"
+                    # Refuting the negation proves the statement.
+                    negated = self.row.get("side") == "disprove"
+                    summary["status"] = "proved" if negated else "disproved"
                     summary["refutation"] = sketch.refutation
                     refutation = self._standalone(
                         form,
@@ -584,12 +588,14 @@ class Orchestration(
                 review = self.final_review(form, standalone)
             summary["review"] = review
             if review["verdict"] == "FAITHFUL":
-                summary["status"] = "proved"
+                negated = self.row.get("side") == "disprove"
+                summary["status"] = "disproved" if negated else "proved"
+            conclusive = summary["status"] in ("proved", "disproved")
             # Before the documents, whose failure leaves the proof standing.
             if (
                 self.config.extend_library
                 and self.library_path
-                and summary["status"] == "proved"
+                and conclusive
             ):
                 summary["library_extension"] = self._extend_library(
                     form, standalone
@@ -604,7 +610,7 @@ class Orchestration(
             blueprint_exists = (self.result_dir / "blueprint").exists()
             if self.config.write_reports or blueprint_exists:
                 self.blueprint(
-                    form, sketch, verified=summary["status"] == "proved"
+                    form, sketch, verified=conclusive
                 )
             return summary
         except AgentRefusal as error:

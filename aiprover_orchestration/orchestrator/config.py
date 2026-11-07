@@ -156,6 +156,9 @@ class Config:
     # "prove" finds a proof (stages/draft.py), of the row's formal statement if
     # it has one, kept as given, or else of its formalized informal statement.
     mode: str = "autoformalize"
+    # In prove mode the captain first judges whether the statement holds;
+    # judged false, the run proves its negation (stages/draft.py).
+    disproof: bool = False
     workers: int = 4  # parallel solver chains per lemma
     max_repairs: int = 4  # Lean-error feedback rounds per chain
     # Sketch revisions after failed lemmas; a revision that follows the

@@ -29,6 +29,9 @@ SETTINGS = {
         "Formalize the given proof, or prove the theorem",
         choices=("autoformalize", "prove"),
     ),
+    "disproof": Setting(
+        "Proof search", "In prove mode, disprove the theorem if judged false"
+    ),
     "workers": Setting("Proof search", "Solver chains per lemma", 1, 8),
     "max_repairs": Setting(
         "Proof search", "Lean-error repair rounds per chain", 0, 10

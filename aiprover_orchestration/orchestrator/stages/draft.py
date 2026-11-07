@@ -36,7 +36,28 @@ DRAFT_NOTES = {
     "statement; a departure from the draft is no reason for UNFAITHFUL.",
 }
 WITHHELD_PROOF = "(The proof is to be found.)"
+NEGATED_STATEMENT = (
+    "The run proves the negation of the statement below, which the "
+    "orchestrator judged false.\n\n{}"
+)
 _THEOREM = re.compile(r"^(?:@\[[^\]]*\]\s*)?theorem\s", re.M)
+_OPENING, _CLOSING = "([{⦃⟨", ")]}⦄⟩"
+
+
+def negation(signature: str) -> str:
+    """The signature of the statement's negation: its binders, which may
+    precede the type's colon, move under a universal quantifier."""
+    depth = 0
+    for index, char in enumerate(signature):
+        depth += (char in _OPENING) - (char in _CLOSING)
+        if char == ":" and depth == 0:
+            binders = signature[:index].strip()
+            claim = signature[index + 1 :].strip()
+            break
+    else:
+        raise ValueError(f"no type in the signature {signature!r}")
+    body = f"∀ {binders}, {claim}" if binders else claim
+    return f" : ¬ ({body}) "
 
 
 class DraftStage:
@@ -73,6 +94,47 @@ class DraftStage:
         result = self._check("fixed_statement", lean)
         self._decision("fixed_statement", compiles=result.ok, name=name)
         return form if result.ok else None
+
+    def choose_side(self, form: Formalization) -> Formalization:
+        """The captain judges whether the statement holds. Judged false, the
+        run's theorem becomes its negation, and every later stage proves
+        that. The choice is kept as `side.md`, so that a resumed run keeps
+        it."""
+        path = self.result_dir / "side.md"
+        if not path.exists():
+            reply = self.agents.complete(
+                prompts.SIDE_TEMPLATE.format(
+                    informal_statement=self.row["informal_statement"],
+                    definitions=self._own_definitions(form),
+                    library=self.library or "(none)",
+                    statement=form.statement,
+                ),
+                role="captain",
+                phase="side",
+                system_prompt=prompts.CAPTAIN_SYSTEM,
+            )
+            side = extract_tag(reply, "side").strip().lower()
+            side = "disprove" if side == "disprove" else "prove"
+            reason = extract_tag(reply, "reason").strip()
+            path.write_text(f"{side}\n\n{reason}\n")
+            self._decision("side_chosen", side=side)
+        if path.read_text().split()[0] != "disprove":
+            return form
+        signature = negation(form.signature)
+        lean = (
+            f"{FILE_HEADER}{form.definitions}\n\n{form.preamble}\n\n"
+            f"theorem {form.theorem_name}{signature}:= by sorry\n"
+        )
+        if not self._check("negated_statement", lean).ok:
+            self._decision("negation_does_not_compile")
+            return form
+        form.signature = signature
+        self.row["side"] = "disprove"
+        self.row["informal_statement"] = NEGATED_STATEMENT.format(
+            self.row["informal_statement"]
+        )
+        logger.info("proving the negation of the statement")
+        return form
 
     def proof_for(self, reader: str) -> str:
         """The informal proof as `reader` ("judge" or "review") sees it."""
