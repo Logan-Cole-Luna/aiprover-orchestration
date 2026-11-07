@@ -156,16 +156,22 @@ def add_source(workdir: Path, source_dir: str) -> None:
     shutil.copytree(source_dir, Path(workdir) / "source")
 
 
+def make_lean_project(folder: Path) -> None:
+    """Make `folder` a Lake project on the workspace's toolchain and packages,
+    where `lean-check` runs."""
+    for name in LEAN_PROJECT_FILES:
+        shutil.copy(WORKSPACE / name, folder / name)
+    (folder / ".lake").mkdir(exist_ok=True)
+    packages = folder / ".lake" / "packages"
+    if not packages.is_symlink():
+        packages.symlink_to((WORKSPACE / ".lake" / "packages").resolve())
+
+
 def lean_scratch_project() -> Path:
     """A new Lake project with the workspace's toolchain and packages."""
     LEAN_TOOLS_DIR.mkdir(parents=True, exist_ok=True)
     project = Path(tempfile.mkdtemp(dir=LEAN_TOOLS_DIR))
-    for name in LEAN_PROJECT_FILES:
-        shutil.copy(WORKSPACE / name, project / name)
-    (project / ".lake").mkdir()
-    (project / ".lake" / "packages").symlink_to(
-        (WORKSPACE / ".lake" / "packages").resolve()
-    )
+    make_lean_project(project)
     # A package library's views (orchestrator/libraries.py), to read; Lean
     # finds its modules through LEAN_PATH, outside the project.
     if (WORKSPACE / "views").is_dir():

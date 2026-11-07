@@ -8,7 +8,7 @@ and its proposed milestones. A check task has the service referee one claim,
 and a paper task writes the project's paper. Each task lies in
 data/projects/<name>/tasks/<id>/.
 
-Claims record a person's decision and Claude's verdict apart, since a project
+Claims record a person's decision and the service's verdict apart, since a project
 may have no expert: neither is a proof, and the way to settle a claim without
 one is to add it as a milestone.
 
@@ -25,6 +25,8 @@ from pathlib import Path
 from ..agents.base import TOKENS_PER_USD, TURNS_PER_USD, billed_tokens
 from ..agents.codex_cli import DEFAULT_CODEX_MODEL, parse_events, token_usage
 from ..agents.codex_cli import command as codex_command
+from ..agents.common import LEAN_CHECK_BIN, make_lean_project
+from ..agents.session_tools import TURN_LIMIT
 from ..utils.processes import run_group
 from ..paths import LIBRARIES_DIR
 from . import prompts
@@ -40,8 +42,31 @@ SESSION_SECONDS = 3 * 3600
 # As in those sessions: no web, whose pages could steer a session with Python.
 # `python3` resolves to bin/python3, which confines it to the session's files.
 TOOLS = "Bash,Read,Write,Edit,Glob,Grep"
-PERMISSIONS = ("Read(./**)", "Write(./**)", "Edit(./**)", "Bash(python3:*)")
+PERMISSIONS = (
+    "Read(./**)", "Write(./**)", "Edit(./**)", "Bash(python3:*)",
+    "Bash(lean-check:*)",
+)  # fmt: skip
 SESSION_BIN = Path(__file__).resolve().parent / "bin"
+# A final message this long is taken for the report itself.
+REPORT_CHARS = 2000
+# Every session writes its report as it goes, so that a session that ends
+# early, at a limit or by an error, leaves what it found.
+REPORT_NOTE = """
+
+Write `report.md` early, with an outline and your findings so far, and update
+it as you work. A session can end at any turn, and only the file is kept: your
+final message is not the report."""
+# A Codex session reaches files only through agents/session_tools.py; its own
+# patch tool is refused by the read-only sandbox, and it has no sub-agents.
+CODEX_NOTE = """
+
+Tools. Read the project's files with `read_file`, `list_files`, and `grep`.
+Write files, including `report.md`, with `write_file` and `edit_file`; paths
+are relative to the current directory. Run a Python script you have written
+with `python3`, whose argument is the script's path; it has no network. Check a
+Lean file with `lean_check`, whose argument is its path. There
+is no shell, no patch tool, no web search, and no sub-agent: do all the work
+yourself with these tools."""
 SANDBOX = Path(__file__).resolve().parents[1] / "lean" / "sandbox.py"
 
 
@@ -64,7 +89,7 @@ def session_environment(project: dict, folder: Path) -> dict[str, str]:
         trees.append(LIBRARIES_DIR / project["library"])
     return {
         **os.environ,
-        "PATH": f"{SESSION_BIN}:{os.environ.get('PATH', '')}",
+        "PATH": f"{SESSION_BIN}:{LEAN_CHECK_BIN}:{os.environ.get('PATH', '')}",
         "SESSION_PYTHON": sys.executable,
         "SESSION_PREFIX": sys.prefix,
         "SESSION_SANDBOX": str(SANDBOX),
@@ -93,6 +118,7 @@ def session(
     a failure can lose it: its limit, if the session never answers. Codex
     reports tokens, so its limit is on turns and its cost is converted."""
     folder.mkdir(parents=True, exist_ok=True)
+    make_lean_project(folder)
     codex = project.get("service") == "codex"
     command = (
         codex_command(
@@ -100,8 +126,9 @@ def session(
             "high",
             folder,
             True,
-            read=tuple(map(str, readable_files(project))),
-            tools=("python3",),
+            read=tuple(map(str, readable_files(project)))
+            + ((str(LIBRARIES_DIR / project["library"]),) if project.get("library") else ()),
+            tools=("python3", "lean-check"),
             max_turns=round(limit * TURNS_PER_USD),
         )
         if codex
@@ -112,7 +139,7 @@ def session(
             command,
             cwd=folder,
             timeout=SESSION_SECONDS,
-            stdin=prompt,
+            stdin=prompt + REPORT_NOTE + (CODEX_NOTE if codex else ""),
             env=session_environment(project, folder),
         )
         payload = {} if codex else json.loads(reply.stdout)
@@ -125,11 +152,64 @@ def session(
         else payload.get("total_cost_usd", 0.0)
     )
     report = folder / "report.md"
+    # The session's last message, kept for diagnosis; one long enough to be a
+    # report stands in for a report the session did not write to its file.
+    final = parse_events(reply.stdout)[0] if codex else payload.get("result", "")
+    (folder / "reply.md").write_text(final or "")
+    if codex:
+        (folder / "events.jsonl").write_text(reply.stdout)
+    if not report.exists() and len(final or "") >= REPORT_CHARS:
+        report.write_text(final)
     if payload.get("is_error") or not report.exists():
         raise RuntimeError(
-            f"{payload.get('subtype', 'no report')}: {reply.stderr[-500:]}"
+            no_report(payload.get("subtype", ""), reply, limit, spent[-1])
+            + activity(reply.stdout, payload, final)
         )
     return report.read_text()
+
+
+def activity(output: str, payload: dict, final: str) -> str:
+    """What a session did before it ended: its tool calls and the start of
+    its last message."""
+    calls = []
+    for line in output.splitlines():
+        try:
+            item = json.loads(line).get("item") or {}
+        except (json.JSONDecodeError, AttributeError):
+            continue
+        if item.get("type") in ("mcp_tool_call", "command_execution"):
+            calls.append(item.get("tool") or item.get("command") or "?")
+    count = len(calls) if calls else payload.get("num_turns")
+    text = f" It made {count} tool calls" if count else " It made no tool calls"
+    if calls:
+        text += f", the last {', '.join(calls[-3:])}"
+    text += "."
+    if final.strip():
+        text += f" Its last message begins: {final.strip()[:200]!r}"
+    return text
+
+
+def no_report(subtype: str, reply, limit: float, cost: float) -> str:
+    """Why a session ended without its report, in terms of what to change."""
+    again = "Run it again with a higher limit."
+    turns = round(limit * TURNS_PER_USD)
+    if subtype == "error_max_turns" or TURN_LIMIT in reply.stdout:
+        return (
+            f"Stopped at its turn limit before writing its report: {turns} "
+            f"tool calls, which its limit of ${limit:g} allows "
+            f"({TURNS_PER_USD} per USD). {again}"
+        )
+    if subtype == "error_max_budget_usd" or cost >= limit:
+        return (
+            f"Stopped at its spending limit of ${limit:g} (spent ${cost:.2f}) "
+            f"before writing its report. {again}"
+        )
+    errors = [line for line in reply.stderr.splitlines() if "ERROR" in line]
+    detail = f" Last errors: {' '.join(errors[-2:])[-400:]}" if errors else ""
+    return (
+        "Ended without writing its report (report.md); its last message is in"
+        f" reply.md of the task folder.{detail}"
+    )
 
 
 def context(project: dict) -> str:

@@ -144,6 +144,25 @@ class SessionRestrictionsTest(unittest.TestCase):
                     self.assertTrue(libraries.UNSOUND.search(unsound))
                 with self.assertRaises(ValueError):
                     libraries.create_package("../x", "v4.23.0", b"")
+            with self.subTest("a task without a report says why"):
+                quiet = SimpleNamespace(stdout="", stderr="")
+                self.assertIn(
+                    "turn limit",
+                    project_tasks.no_report(
+                        "", SimpleNamespace(stdout=session_tools.TURN_LIMIT, stderr=""), 1, 0.4
+                    ),
+                )
+                self.assertIn(
+                    "spending limit of $1", project_tasks.no_report("", quiet, 1, 1.2)
+                )
+                self.assertIn("report.md", project_tasks.no_report("", quiet, 10, 0.5))
+                events = "\n".join(
+                    json.dumps({"item": {"type": "mcp_tool_call", "tool": name}})
+                    for name in ("list_files", "read_file", "grep")
+                )
+                said = project_tasks.activity(events, {}, "Here is my summary")
+                self.assertIn("3 tool calls, the last list_files, read_file, grep", said)
+                self.assertIn("Here is my summary", said)
             with self.subTest("Codex has no shell and no web"):
                 arguments = command("m", "", home, True, (str(shared),), ("lean-check",))
                 self.assertIn('web_search="disabled"', arguments)
@@ -290,12 +309,12 @@ class SessionRestrictionsTest(unittest.TestCase):
                 pool = AgentPool(
                     {"captain": SimpleNamespace(hosted=True)},
                     Path(directory) / "calls.jsonl",
-                    max_claude_usd=1,
+                    max_hosted_usd=1,
                 )
                 pool._accumulate("captain", True, {"m": {"outputTokens": 99_999}})
-                self.assertGreater(pool.claude_budget_left(), 0)
+                self.assertGreater(pool.hosted_budget_left(), 0)
                 pool._accumulate("captain", False, {"m": {"outputTokens": 9}})
-                self.assertGreater(pool.claude_budget_left(), 0)
+                self.assertGreater(pool.hosted_budget_left(), 0)
                 pool._accumulate("captain", True, {"m": {"outputTokens": 1}})
                 with self.assertRaises(BudgetExhausted):
                     pool.check_spend_limit()

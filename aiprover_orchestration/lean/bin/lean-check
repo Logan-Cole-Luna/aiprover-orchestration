@@ -1,3 +1,5 @@
 #!/usr/bin/env bash
 # The Lean check of an agent with tools; see ../tool_check.py.
-exec python3 -I "$(dirname "$(readlink -f "$0")")/../tool_check.py" "$@"
+# In a project session, `python3` on the path is the confined session Python
+# (orchestrator/bin/python3); the check runs on the real interpreter.
+exec "${SESSION_PYTHON:-python3}" -I "$(dirname "$(readlink -f "$0")")/../tool_check.py" "$@"
