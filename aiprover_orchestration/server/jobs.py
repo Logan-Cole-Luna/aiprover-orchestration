@@ -50,6 +50,7 @@ from ..paths import (
 )
 from ..lean import releases
 from ..orchestrator import libraries
+from ..orchestrator.config import current_names
 from ..utils.sqlite import SqliteStore
 from . import accounts, model_servers, models
 from .model_servers import run_command
@@ -906,7 +907,8 @@ class Worker(threading.Thread):
             "0",
         ]
         # Per-run settings over the served config, e.g. more attempts per lemma.
-        for name, value in json.loads(job.get("options") or "{}").items():
+        options_now = current_names(json.loads(job.get("options") or "{}"))
+        for name, value in options_now.items():
             if name in SERVER_OPTIONS:
                 continue
             # One argument, since a reviewer's comment may start with a dash.

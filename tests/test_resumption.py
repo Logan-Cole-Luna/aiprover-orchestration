@@ -17,7 +17,7 @@ run = RESULTS_DIR / record["run_id"]
 run.mkdir(parents=True)
 (run / "trace.json").write_text("{}")
 (run / "summary.json").write_text(
-    json.dumps({"config": {"max_claude_usd": limit}})
+    json.dumps({"config": {"max_hosted_usd": limit}})
 )
 (run / "benchmark.json").write_text(
     json.dumps({"costs": {"hosted_cost_usd": cost}})
@@ -47,7 +47,7 @@ class ResumptionTest(RequestTest):
         self.assertEqual(reply["state"], "finished")
 
     def test_a_higher_limit_resumes_the_run(self):
-        body = {"max_claude_usd": 200}
+        body = {"max_hosted_usd": 200}
         reply = self.post("finished", "failed", "resume", body, cost=60)
         self.assertEqual(reply["state"], "queued")
         self.assertEqual(reply["options"], body)

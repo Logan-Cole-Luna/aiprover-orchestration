@@ -56,7 +56,7 @@ class HandbackStage:
         empty if one was accepted."""
         feedback, problems = "", ["no reply"]
         for repair in range(2):
-            if repair and self.agents.claude_budget_left() < 1:
+            if repair and self.agents.hosted_budget_left() < 1:
                 break
             try:
                 reply = self._captain(prompt + feedback, phase=phase)

@@ -24,7 +24,7 @@ from pathlib import Path
 from ..agents import stop_run
 from ..paths import CONFIG_DIR, DATA_DIR, LOGS_DIR, RESULTS_DIR, TEMP_DIR
 from ..utils.files import write_atomic
-from .config import LEAN_ENVIRONMENT, Config
+from .config import FORMER_NAMES, LEAN_ENVIRONMENT, Config, current_names
 from .pipeline import Orchestration
 from .trace import Trace
 
@@ -167,6 +167,10 @@ def main() -> None:
                 else kind
             ),
         )
+    for former, name in FORMER_NAMES.items():
+        parser.add_argument(
+            "--" + former.replace("_", "-"), dest=name, type=int, default=None
+        )
     args = parser.parse_args()
 
     if args.fork_from:
@@ -196,6 +200,7 @@ def main() -> None:
         settings = trace["config"]
     else:
         settings = json.loads(DEFAULT_CONFIG.read_text())
+    settings = current_names(settings)
     for option in scalar_options:
         value = getattr(args, option.name)
         if value is not None:

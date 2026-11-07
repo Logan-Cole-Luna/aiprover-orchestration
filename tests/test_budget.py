@@ -31,12 +31,12 @@ class ClaudeLimitTest(unittest.TestCase):
             pool = AgentPool(
                 {"captain": SimpleNamespace(hosted=True)},
                 Path(directory) / "calls.jsonl",
-                max_claude_usd=50,
+                max_hosted_usd=50,
             )
         pool.usage_by_model = {"model": {"cost_usd": 49.99}}
-        self.assertGreater(pool.claude_budget_left(), 0)
+        self.assertGreater(pool.hosted_budget_left(), 0)
         pool.usage_by_model = {"model": {"cost_usd": 50}}
-        self.assertEqual(pool.claude_budget_left(), 0)
+        self.assertEqual(pool.hosted_budget_left(), 0)
         with self.assertRaises(BudgetExhausted):
             with pool._budget_reservation(pool.agents["captain"]):
                 pass

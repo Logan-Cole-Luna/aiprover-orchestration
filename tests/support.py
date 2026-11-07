@@ -63,7 +63,7 @@ class ScriptedPool:
         reply = self.replies.pop(0)
         return reply() if callable(reply) else reply
 
-    def claude_budget_left(self) -> int:
+    def hosted_budget_left(self) -> int:
         return self.budget
 
     def check_spend_limit(self) -> None:
