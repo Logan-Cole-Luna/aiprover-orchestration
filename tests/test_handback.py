@@ -114,6 +114,33 @@ class HandbackTest(TemporaryDirectoryTest):
         run.trace.document["steps"] += first.trace.document["steps"]
         return run, goal, child, sketch
 
+    def test_sketch_conflict_ends_the_phase_for_a_replan(self):
+        run, goal, child, sketch = self.conflict_run(
+            ["<diagnosis>bad encoding</diagnosis><replan/><clause>no</clause>"],
+            Config(cdcl=True, cdcl_sketch_conflicts=True),
+        )
+        phase = aiprover_phase(run, sketch)
+        decision = Lemma("Encoding", "-- the sketch's use of `Encoding`")
+        run._conflict(phase, decision, [child])
+        self.assertTrue(phase.refuted.is_set())
+        self.assertEqual(
+            [clause.kind for clause in run.clauses.clauses()],
+            ["conflict_cause", "failed_route"],
+        )
+        self.assertIn(
+            "conflict",
+            [step.get("event") for step in run.trace.document["steps"]],
+        )
+
+    def test_a_replan_is_refused_for_a_lemma_of_the_sketch(self):
+        run, goal, child, sketch = self.conflict_run(
+            ["<diagnosis>bad</diagnosis><replan/>", "<local/>", "<local/>"],
+            Config(cdcl=True, cdcl_sketch_conflicts=True),
+        )
+        phase = aiprover_phase(run, sketch)
+        run._conflict(phase, goal, [child])
+        self.assertFalse(phase.refuted.is_set())
+
     def test_conflict_backjump_and_replay(self):
         run, goal, child, sketch = self.conflict_run(
             [

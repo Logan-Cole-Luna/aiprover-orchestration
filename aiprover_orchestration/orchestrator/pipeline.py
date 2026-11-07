@@ -481,6 +481,7 @@ class Orchestration(
                             ),
                         )
                     replans_used += 1
+                    state.replans_started = replans_used
                     continue
                 # A refuted lemma makes the sketch unprovable: its revision
                 # is not charged to the replan budget.
@@ -496,6 +497,7 @@ class Orchestration(
                 with self._timed("sketch"):
                     sketch = self.replan(form, sketch)
                 replans_used += not refuted
+                state.replans_started = replans_used
             self._export_jiatu_row(standalone)
             # A verified proof stands even if the review or the report cannot
             # be completed; its status then says so.

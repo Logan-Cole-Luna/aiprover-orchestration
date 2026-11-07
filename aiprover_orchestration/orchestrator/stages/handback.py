@@ -411,10 +411,12 @@ class HandbackStage:
             ),
             clause_output=self._clause_output(),
             backjump_action=(
-                prompts.BACKJUMP_ACTION.format(decision_name=decision.name)
+                prompts.REPLAN_ACTION
+                if not phase.present(decision)
+                else prompts.BACKJUMP_ACTION
                 if self.config.cdcl_backjump
                 else prompts.NO_BACKJUMP
-            ),
+            ).format(decision_name=decision.name),
         )
         logger.info(
             f"conflict at {decision.name}: {len(names)} stuck lemma(s) "
@@ -434,7 +436,30 @@ class HandbackStage:
             if problems:
                 return problems
             facts = extract_clauses(reply)
+            if "<replan" in reply and not phase.present(decision):
+                self._decision(
+                    "conflict", **conflict, action="replan", diagnosis=diagnosis
+                )
+                self._learn(
+                    cdcl.LearnedClause(
+                        "conflict_cause",
+                        decision.name,
+                        diagnosis,
+                        decision.name,
+                    )
+                )
+                for fact in facts:
+                    self._learn(
+                        cdcl.LearnedClause(
+                            "failed_route", decision.name, fact, decision.name
+                        )
+                    )
+                logger.info(f"conflict at {decision.name}: replanning")
+                phase.refuted.set()
+                return []
             restated = extract_tag(reply, "backjump")
+            if restated and not phase.present(decision):
+                return ["this decision has no statement; choose <replan/>"]
             if restated and not self.config.cdcl_backjump:
                 return ["backjumping is off in this run; choose <local/>"]
             if not restated and "<local" in reply:

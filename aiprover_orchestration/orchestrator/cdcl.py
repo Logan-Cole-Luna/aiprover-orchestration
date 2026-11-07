@@ -52,6 +52,13 @@ MAX_CLAUSES_CHARS = 4000
 CAPTAIN_CLAUSES_CHARS = 8000
 # Kinds that hold for every lemma of the run, shown before any other.
 RUN_WIDE_KINDS = ("refuted", "conflict_cause")
+# A declaration used by more of the lemmas than this share is the setting of
+# the theorem, not a decision of the sketch.
+BROAD_DECLARATION_SHARE = 0.8
+# Stuck lemmas that conflict with the sketch itself, with no declaration in
+# common: at least this many, and this share of the lemmas with failed jobs.
+SKETCH_CONFLICT_LEAVES = 4
+SKETCH_CONFLICT_SHARE = 0.5
 MAX_CLAUSE_CHARS = 400
 CLAUSES_HEADER = (
     "Learned clauses: facts this run established after conflicts (failed or "
@@ -293,6 +300,42 @@ def conflict(
             return None
         return ancestor, stuck_leaves
     return None
+
+
+def sketch_conflict(
+    lemmas: list[Lemma],
+    declarations: set[str],
+    threshold: int,
+    analysed: set[tuple],
+) -> tuple[Lemma, list[Lemma]] | None:
+    """A conflict above the lemma tree, with the decision as a stand-in lemma
+    outside the sketch, and its stuck leaves: the declaration in `declarations`
+    with at least `threshold` stuck lemmas and the fewest users, else the
+    sketch itself. Two failed jobs make a lemma stuck here, so that a replan
+    comes while its siblings still have attempts."""
+    stuck_leaves = [lemma for lemma in lemmas if stuck(lemma, 1)]
+    candidates = []
+    for name in declarations:
+        users = [lemma for lemma in lemmas if refers_to(lemma.statement, name)]
+        leaves = [lemma for lemma in stuck_leaves if lemma in users]
+        if (
+            len(leaves) >= threshold
+            and len(users) < BROAD_DECLARATION_SHARE * len(lemmas)
+        ):
+            candidates.append((len(users), name, leaves))
+    failed = [lemma for lemma in lemmas if lemma.attempts and not lemma.proved]
+    if candidates:
+        _, name, leaves = min(candidates, key=lambda found: found[:2])
+        decision = Lemma(name, f"-- the sketch's use of `{name}`")
+    elif len(stuck_leaves) >= max(
+        SKETCH_CONFLICT_LEAVES, SKETCH_CONFLICT_SHARE * len(failed)
+    ):
+        decision, leaves = Lemma("sketch", "-- the sketch"), stuck_leaves
+    else:
+        return None
+    if conflict_key(decision, leaves) in analysed:
+        return None
+    return decision, leaves
 
 
 def conflict_key(ancestor: Lemma, stuck_leaves: list[Lemma]) -> tuple:

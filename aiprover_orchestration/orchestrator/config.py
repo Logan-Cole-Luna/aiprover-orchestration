@@ -196,6 +196,10 @@ class Config:
     # Stuck leaves under one decision that make a conflict; a refuted leaf
     # makes one alone.
     cdcl_conflict_leaves: int = 3
+    # Conflicts above the lemma tree (cdcl.sketch_conflict): at a declaration
+    # shared by stuck lemmas, or at the sketch itself; the captain may answer
+    # with a replan at once.
+    cdcl_sketch_conflicts: bool = False
     # Claude calls kept for the final review and the report: the limit rises
     # to leave this many, so a run that spent its budget on proving is still
     # reviewed.

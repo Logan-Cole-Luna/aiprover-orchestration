@@ -62,6 +62,51 @@ class TreeTest(unittest.TestCase):
         self.assertIsNone(cdcl.conflict(a1, lemmas, 2, 2, analysed))
 
 
+class SketchConflictTest(unittest.TestCase):
+    """Flat sketches: no lemma has a parent, so the tree finds no conflict."""
+
+    def flat(self, stuck: int, other: int = 0) -> list[Lemma]:
+        lemmas = [
+            Lemma(f"s{i}", f"theorem s{i} : Enc = 1", attempts=2)
+            for i in range(stuck)
+        ]
+        return lemmas + [
+            Lemma(f"o{i}", f"theorem o{i} : True") for i in range(other)
+        ]
+
+    def test_stuck_lemmas_sharing_a_declaration_conflict_at_it(self):
+        lemmas = self.flat(3, 2)
+        decision, leaves = cdcl.sketch_conflict(lemmas, {"Enc"}, 3, set())
+        self.assertEqual(decision.name, "Enc")
+        self.assertNotIn(decision, lemmas)
+        self.assertEqual(len(leaves), 3)
+
+    def test_the_narrowest_shared_declaration_is_chosen(self):
+        lemmas = self.flat(3, 4)
+        lemmas[0].statement = "theorem s0 : Enc = Sub"
+        lemmas[1].statement = "theorem s1 : Enc = Sub"
+        lemmas[2].statement = "theorem s2 : Enc = Sub"
+        lemmas[3].statement = "theorem o0 : Enc = 1"
+        decision, _ = cdcl.sketch_conflict(lemmas, {"Enc", "Sub"}, 3, set())
+        self.assertEqual(decision.name, "Sub")
+
+    def test_the_setting_of_the_theorem_is_not_a_decision(self):
+        self.assertIsNone(cdcl.sketch_conflict(self.flat(3), {"Enc"}, 3, set()))
+
+    def test_many_stuck_lemmas_conflict_with_the_sketch(self):
+        lemmas = self.flat(4)
+        decision, leaves = cdcl.sketch_conflict(lemmas, set(), 3, set())
+        self.assertEqual(decision.name, "sketch")
+        analysed = {cdcl.conflict_key(decision, leaves)}
+        self.assertIsNone(cdcl.sketch_conflict(lemmas, set(), 3, analysed))
+
+    def test_one_failed_job_is_not_stuck(self):
+        lemmas = self.flat(4)
+        for lemma in lemmas:
+            lemma.attempts = 1
+        self.assertIsNone(cdcl.sketch_conflict(lemmas, set(), 3, set()))
+
+
 class ClauseStoreTest(unittest.TestCase):
 
     def test_from_steps(self):

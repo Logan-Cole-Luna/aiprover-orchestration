@@ -120,6 +120,12 @@ NO_DIRECT_PROOF = (
     "into lemmas the solvers can prove, with a short proof of `{lemma_name}` "
     "from them, or restate, retry or refute it.\n\n"
 )
+REPLAN_ACTION = (
+    "- Replan, when the cause lies in `{decision_name}` and not in the "
+    "lemmas: <replan/>. This decision belongs to the sketch, so no lemma "
+    "restates it. No further solver jobs start, and a new sketch is written "
+    "from your diagnosis and clauses, keeping every proved lemma it retains.\n"
+)
 NO_BACKJUMP = (
     "Backjumping is off in this run: name a shared cause in the diagnosis "
     "and the clauses, and choose local.\n"

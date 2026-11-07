@@ -52,6 +52,7 @@ from ..structures import (
     Formalization,
     Lemma,
     Sketch,
+    definition_blocks,
     missing_lemmas,
     stub_listing,
 )
@@ -107,8 +108,9 @@ class Phase:
     # reuse, and the names of every retracted lemma.
     retracted: dict[str, Lemma] = field(default_factory=dict)
     retracted_names: set[str] = field(default_factory=set)
-    # Set once a lemma is refuted: the sketch must change, so no further job
-    # or hand-back starts and the phase ends with the running jobs.
+    # Set once a lemma is refuted or a conflict asks for a replan: the sketch
+    # must change, so no further job or hand-back starts and the phase ends
+    # with the running jobs.
     refuted: threading.Event = field(default_factory=threading.Event)
     # Set after a failure (lost endpoint, interruption): lemmas not yet
     # started are skipped rather than run against a dead server.
@@ -616,17 +618,64 @@ class AIProverStage:
                 return
             decision, stuck_leaves = found
             below = cdcl.subtree(decision.name, phase.sketch.lemmas)
-            limit = self.config.max_handbacks
-            if (
-                decision.name in phase.in_analysis
-                or any(other.name in phase.in_handback for other in below)
-                or (limit and phase.handbacks >= limit)
-                or self.agents.claude_budget_left() < 2
+            if not self._claim_analysis(phase, decision, stuck_leaves, below):
+                return
+        self._run_analysis(phase, decision, stuck_leaves)
+
+    def _analyse_sketch_conflict(self, phase: Phase) -> None:
+        """Conflict analysis at a decision above the lemma tree
+        (cdcl.sketch_conflict), while a replan is still allowed."""
+        if (
+            not self.config.cdcl_sketch_conflicts
+            or phase.halted()
+            or self.state.replans_started >= self.config.max_replans
+        ):
+            return
+        with phase.lock:
+            lemmas = phase.sketch.lemmas
+            found = cdcl.sketch_conflict(
+                lemmas,
+                phase.run_names
+                | knowledge.declared_names(
+                    "\n".join(definition_blocks(lemmas))
+                ),
+                self.config.cdcl_conflict_leaves,
+                phase.analysed,
+            )
+            if found is None:
+                return
+            decision, stuck_leaves = found
+            if not self._claim_analysis(
+                phase, decision, stuck_leaves, stuck_leaves
             ):
                 return
-            phase.analysed.add(cdcl.conflict_key(decision, stuck_leaves))
-            phase.in_analysis.add(decision.name)
-            phase.handbacks += 1
+        self._run_analysis(phase, decision, stuck_leaves)
+
+    def _claim_analysis(
+        self,
+        phase: Phase,
+        decision: Lemma,
+        stuck_leaves: list[Lemma],
+        below: list[Lemma],
+    ) -> bool:
+        """Reserve the analysis of a conflict (call with `phase.lock` held),
+        unless its lemmas are busy or the budget does not allow it."""
+        limit = self.config.max_handbacks
+        if (
+            decision.name in phase.in_analysis
+            or any(other.name in phase.in_handback for other in below)
+            or (limit and phase.handbacks >= limit)
+            or self.agents.claude_budget_left() < 2
+        ):
+            return False
+        phase.analysed.add(cdcl.conflict_key(decision, stuck_leaves))
+        phase.in_analysis.add(decision.name)
+        phase.handbacks += 1
+        return True
+
+    def _run_analysis(
+        self, phase: Phase, decision: Lemma, stuck_leaves: list[Lemma]
+    ) -> None:
         try:
             self._conflict(phase, decision, stuck_leaves)
         except AgentRefusal as error:
@@ -664,6 +713,13 @@ class AIProverStage:
                         f"conflict analysis near {leaf.name} failed: "
                         f"{str(error)[:300]}"
                     )
+            try:
+                self._analyse_sketch_conflict(phase)
+            except Exception as error:  # noqa: BLE001
+                logger.warning(
+                    f"conflict analysis of the sketch failed: "
+                    f"{str(error)[:300]}"
+                )
 
     def _retract(self, phase: Phase, decision: Lemma) -> list[Lemma]:
         """Backjump to `decision` (call with `phase.lock` held): remove its
@@ -810,6 +866,9 @@ class AIProverStage:
         solver = phase.solver
         with phase.lock:
             lemmas = phase.sketch.lemmas
+            clauses = (
+                self.clauses.text([lemma], lemmas) if self.config.cdcl else ""
+            )
             earlier = (
                 cdcl.context_lemmas(lemma, lemmas)
                 if self.config.aiprover_relevant_context
@@ -865,6 +924,7 @@ class AIProverStage:
                 lemma=lemma.name,
                 statement=key[1],
                 aiprover_job=job_id,
+                clauses=clauses,
             )
 
         job = solver.solve(
@@ -884,11 +944,7 @@ class AIProverStage:
                 lemma.knowledge,
                 mathlib,
                 setting=knowledge.setting_index(context),
-                clauses=(
-                    self.clauses.text([lemma], lemmas)
-                    if self.config.cdcl
-                    else ""
-                ),
+                clauses=clauses,
             ),
             on_start=started,
             # A session's answer is gated when the session ends; the first
