@@ -280,6 +280,26 @@ gates every stage.
 
 *Figure 4. Claude cost and prover compute per problem.*
 
+**Public benchmark: MathArena ArXivLean, September 2026 edition.** It holds 53
+conjectures from recent arXiv papers, stated in Lean 4.34.1 with Mathlib, each to
+be proved or disproved. Runs use `configs/orchestrator/arxivlean.json` (prove mode,
+`disproof` on, offline solvers, 100 USD per problem, as in MathArena's limit) on
+the Lean release v4.34.1, and MathArena's comparator grades the result. The
+problems are in `benchmark/arxivlean/arxivlean_0926.jsonl`; the setup script
+builds the release and the comparator once per machine (about 30 GB):
+
+```bash
+bash benchmark/arxivlean_setup.sh
+AIPROVER_LEAN_RELEASE=v4.34.1 python -m aiprover_orchestration.orchestrator.run \
+  --dataset benchmark/arxivlean/arxivlean_0926.jsonl \
+  --problem-uuid ArXivLean0926_14 --config configs/orchestrator/arxivlean.json
+python benchmark/arxivlean.py grade results/<run_id>
+```
+
+The reference single session is MathArena's own run of the same captain model
+in its agent harness: 25 of 53 problems at 726 USD in total, per problem in
+`benchmark/arxivlean/baseline_0926.csv`.
+
 Run records are in `results/<run_id>/`: Lean files, summary, report and
 informalization; traces and server metrics are kept out of the repository
 for size. Slides on these results:

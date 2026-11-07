@@ -74,6 +74,10 @@ Results
 
 ## Todo
 
+- ArXivLean: a pilot on 3 to 5 problems (both sides, some that MathArena's
+  single session solved and some it did not), once AIProver runs on the
+  machine chosen for it; then the A/B test of `disproof`.
+
 - OpenAI benchmark (`openai_benchmark.md` §5): add 153, 259, 138, 268, and
   284 to `data/openai_math.jsonl` as unconditional entries, and run both
   arms with 332 as calibration.
@@ -242,9 +246,13 @@ Results
 
 ## Decisions
 
+- ArXivLean runs compare against MathArena's published single-session run of
+  the same model (Claude Opus 5.5, high effort, its agent harness, 100 USD per
+  problem): 25 of 53 solved, 726 USD in total. Solvers run offline, since
+  every problem's source paper is public; rows omit the arXiv source.
 - A side, once chosen, is kept for the run: a replan does not switch from
   proving to disproving. Whether switching earns its place is to be measured
-  on benchmark results.
+  on the ArXivLean results.
 
 - Single sessions have a cost cap only (40 USD, `benchmark/conditions.json`),
   without a time limit (2026-11-04). A continuation
@@ -609,6 +617,15 @@ Results
 
 ## Done
 
+- MathArena ArXivLean (September 2026, 53 problems) as the public benchmark
+  (2026-11-07). The Lean release v4.34.1 matches MathArena's Mathlib pin
+  (`d13f23b`); all 53 statements and their negations compile on it.
+  The rows and MathArena's single-session baseline are in
+  `benchmark/arxivlean/`. `benchmark/arxivlean_setup.sh` builds the release
+  and MathArena's comparator runtime; `benchmark/arxivlean.py` exports a
+  run's verified proof or refutation as `Solution.lean` and grades it. The
+  grader accepted two published correct answers repackaged as run results,
+  one proof and one disproof, and rejected one with an altered definition.
 - Setting `disproof` (prove mode, off by default): the captain first judges
   whether the statement holds (`side.md`); judged false, the run's theorem
   becomes the statement's negation, and a verified run ends as `disproved`.

@@ -1,0 +1,54 @@
+{
+  "agents": {
+    "captain": {
+      "backend": "claude",
+      "model": "claude-opus-5-5",
+      "timeout": 2400,
+      "effort": "high",
+      "max_output_tokens": 128000
+    },
+    "auditor": {
+      "backend": "claude",
+      "model": "claude-sonnet-5-5"
+    },
+    "reviewer": {
+      "backend": "claude",
+      "model": "claude-opus-5-5",
+      "timeout": 2400,
+      "effort": "high",
+      "max_output_tokens": 128000
+    },
+    "writer": {
+      "backend": "claude",
+      "model": "claude-opus-5-5",
+      "timeout": 2400,
+      "effort": "high",
+      "max_output_tokens": 128000
+    },
+    "solver": {
+      "backend": "aiprover",
+      "model": "aiprover",
+      "config": "configs/aiprover/dgx.toml",
+      "timeout": 3600,
+      "max_turns": 200
+    }
+  },
+  "workers": 2,
+  "max_repairs": 4,
+  "max_replans": 2,
+  "max_audit_rounds": 2,
+  "lean_parallel": 4,
+  "lean_timeout": 300,
+  "max_hosted_calls": 100,
+  "aiprover_attempts_per_lemma": 5,
+  "aiprover_session_slots": 8,
+  "aiprover_job_sessions": 3,
+  "aiprover_handback_after": 2,
+  "max_handbacks": 12,
+  "final_hosted_calls": 8,
+  "mode": "prove",
+  "disproof": true,
+  "aiprover_offline": true,
+  "max_hosted_usd": 100,
+  "write_reports": false
+}
