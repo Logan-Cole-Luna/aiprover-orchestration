@@ -25,6 +25,7 @@ from ...lean.text import (
     indent,
 )
 from .. import prompts
+from .gaps import is_gap
 from ..structures import (
     Formalization,
     Lemma,
@@ -40,11 +41,22 @@ logger = logging.getLogger(__name__)
 class ProveStage:
 
     def prove(self, form: Formalization, sketch: Sketch) -> None:
+        """Prove the pending lemmas. With `config.gaps`, the routine lemmas
+        come first and the gaps only once all of them are proved; with
+        `config.captain_first`, the captain proves what it can before the
+        solvers start."""
+        if self.config.captain_first:
+            self.captain_proofs(form, sketch)
         pending = [
             (k, lemma)
             for k, lemma in enumerate(sketch.lemmas)
             if not lemma.proved
         ]
+        if self.config.gaps:
+            routine = [(k, lemma) for k, lemma in pending if not is_gap(lemma)]
+            pending = routine or pending
+            if routine:
+                logger.info(f"proving {len(routine)} routine lemma(s) first")
         if not pending:
             return
         if isinstance(self.agents.agents["solver"], AIProverAgent):

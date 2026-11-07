@@ -342,6 +342,27 @@ Results
   per response, but they keep prompts on disk, so calls stay ephemeral. Shared
   code lies in `agents/common.py`. The hand-back follows the orchestrator unless
   chosen, on any backend.
+- Model-neutral limits (2026-11-05): `max_claude_usd`, `max_claude_calls`,
+  `final_claude_calls`, and `informal_claude_calls` are now `max_hosted_usd`,
+  `max_hosted_calls`, `final_hosted_calls`, and `informal_hosted_calls`, since
+  they bound every hosted model. The former names are still accepted in
+  configs, recorded runs, queued jobs, command-line options, settings, and the
+  resume request (`config.FORMER_NAMES`). The page speaks of a spending limit.
+- Theorem-proving mode (2026-11-05): the setting `mode` (`autoformalize` by
+  default, or `prove`), shown on the page as the Task switch. In `prove`, any
+  informal proof of the row is withheld.
+  - A row's `formal_statement` is compiled and kept as given, without an audit.
+    Without one, the informal statement is formalized and audited as before.
+  - The captain drafts the informal proof that the sketch decomposes
+    (`stages/draft.py`, kept in `draft.md` for a resumed run).
+  - The sketch judge and the final reviewer are told that the proof is the
+    run's own draft: the judge assesses whether the lemmas hold, and the
+    reviewer assesses the definitions and statement.
+  - A replan first redrafts the proof from the findings (`redraft.md`;
+    earlier drafts are kept as `draft_<n>.md`).
+  - The setting `lemma_counterexamples` (off by default, pending an A/B
+    test) has Lean's `plausible` test each sketch lemma before the judge; a
+    counterexample rejects the sketch.
 - Package libraries (2026-11-05): a library may be a Lake package,
   `libraries/<name>/`, built against a release's Mathlib. It is the workspace
   of the runs built on it, their files import its root modules, and Lean finds

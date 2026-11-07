@@ -479,6 +479,7 @@ class AIProverAgent(Agent):
         accept: Callable[[AIProverSample], bool] | None = None,
         probe: Callable[[AIProverSample], bool] | None = None,
         probe_seconds: int = 0,
+        timeout: int = 0,
     ) -> AIProverJob:
         """Run one AIProver job and return its samples (blocks until done).
 
@@ -493,7 +494,8 @@ class AIProverAgent(Agent):
         the job's remaining sessions are cancelled. `probe` is offered, every
         `probe_seconds` while the job runs, the working file of each running
         session that changed since; when it returns True the job is cancelled
-        as for `accept`."""
+        as for `accept`. A nonzero `timeout` replaces the agent's session time
+        limit for a new job."""
         raise_if_stopping()
         work_dir.mkdir(parents=True, exist_ok=True)
         start = time.time()
@@ -569,7 +571,7 @@ class AIProverAgent(Agent):
                     "--name",
                     name,
                     "--timeout",
-                    str(self.timeout),
+                    str(timeout or self.timeout),
                     "--max-turns",
                     str(self.max_turns),
                     *args,

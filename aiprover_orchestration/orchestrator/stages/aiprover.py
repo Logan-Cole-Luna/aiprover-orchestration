@@ -104,6 +104,8 @@ class Phase:
     # (lemma, statement): direction.
     directions: dict[tuple, str] = field(default_factory=dict)
     lock: threading.Lock = field(default_factory=threading.Lock)
+    # Lemmas submitted to this phase; the others wait for a later phase.
+    submitted: set[str] = field(default_factory=set)
     sessions_in_flight: dict[str, int] = field(default_factory=dict)
     running_jobs: dict[str, str] = field(default_factory=dict)  # lemma: job
     in_handback: set[str] = field(default_factory=set)
@@ -263,6 +265,7 @@ class AIProverStage:
     # Scheduling ------------------------------------------------------------
 
     def _submit(self, phase: Phase, lemma: Lemma) -> None:
+        phase.submitted.add(lemma.name)
         if self._reuse(phase, lemma):
             return
         with phase.futures_lock:
@@ -358,6 +361,7 @@ class AIProverStage:
         """An unproved lemma without a job that could start one."""
         return (
             not lemma.proved
+            and lemma.name in phase.submitted
             and lemma.name not in phase.sessions_in_flight
             and lemma.name not in phase.in_handback
             and not self._exhausted(lemma)
@@ -513,8 +517,8 @@ class AIProverStage:
                 f"hand-back deferred"
             )
             return
-        if self.agents.claude_budget_left() < 2:
-            logger.info(f"{lemma.name}: Claude budget too low for a hand-back")
+        if self.agents.hosted_budget_left() < 2:
+            logger.info(f"{lemma.name}: hosted-model budget too low for a hand-back")
             return
         limit = self.config.max_handbacks
         # A hand-back takes minutes against a job's 90, so the lemma gives up
@@ -564,7 +568,7 @@ class AIProverStage:
             or lemma.refutation
             or not self._exhausted(lemma)
             or phase.halted()
-            or self.agents.claude_budget_left() < 2
+            or self.agents.hosted_budget_left() < 2
         ):
             return False
         key = (lemma.name, normalize(lemma.statement))
@@ -629,7 +633,7 @@ class AIProverStage:
                 decision.name in phase.in_analysis
                 or any(other.name in phase.in_handback for other in below)
                 or (limit and phase.handbacks >= limit)
-                or self.agents.claude_budget_left() < 2
+                or self.agents.hosted_budget_left() < 2
             ):
                 return
             phase.analysed.add(cdcl.conflict_key(decision, stuck_leaves))
@@ -713,7 +717,7 @@ class AIProverStage:
         """The informal proof a job on `lemma` receives: the direction for
         its statement (`aiprover_direction`), fixed before the statement's
         first job, ahead of the source's proof. Without a direction (none
-        configured, no comments, no Claude budget left, or a failed call)
+        configured, no comments, no hosted-model budget left, or a failed call)
         the source's proof alone."""
         source = self.row["informal_proof"]
         mode = self.config.aiprover_direction
@@ -753,7 +757,7 @@ class AIProverStage:
     ) -> str | None:
         """The captain's informal proof of `lemma`; None without budget or
         after a failed call."""
-        if self.agents.claude_budget_left() < 1:
+        if self.agents.hosted_budget_left() < 1:
             return None
         prompt = prompts.DIRECTION_TEMPLATE.format(
             lemma_name=lemma.name,
@@ -918,6 +922,7 @@ class AIProverStage:
                 phase, lemma, sample, stubs, fixed_names, []
             ),
             probe_seconds=self.config.aiprover_probe_seconds,
+            timeout=0 if lemma.attempts else self.config.aiprover_first_job_seconds,
         )
         with phase.lock:
             for sample in job.samples:

@@ -95,6 +95,8 @@ def launch(project: dict, submit) -> list[str]:
                 "name": member["uuid"],
                 "statement": member["statement"],
                 "proof": member.get("proof", ""),
+                # Kept as given in theorem-proving mode (stages/draft.py).
+                "formal_statement": member.get("formal_statement", ""),
             }
             if member.get("statement")
             else {"uuid": member["uuid"]}

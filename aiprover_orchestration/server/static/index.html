@@ -146,6 +146,10 @@ td { padding: 3px 24px 3px 0; vertical-align: top; }
 .side li button[aria-pressed=true] { color: var(--ink); font-weight: 600; }
 .side small { display: block; color: var(--muted); }
 details { margin: 0 0 12px; } summary { cursor: pointer; color: var(--accent); }
+/* A project's goal: one line until opened. */
+.goal summary { color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.goal[open] summary { white-space: normal; color: var(--accent); }
+.goal p { margin: 4px 0 0; white-space: pre-wrap; }
 .diagram { display: block; width: 100%; height: auto; font-family: var(--font-prose); color: var(--muted); }
 .diagram rect { fill: var(--surface-2); stroke: var(--line); }
 .diagram .orchestrator { fill: var(--warn-soft); stroke: var(--lean); }
@@ -319,15 +323,27 @@ figcaption { font-size: .9rem; line-height: 1.45; color: var(--caption); margin-
         <div data-step="0">
           <label for="run-name">Run name <small>optional; becomes the run identifier</small></label>
           <input id="run-name" maxlength="80">
+          <label>Task</label>
+          <div class="seg" id="run-mode" role="group" aria-label="Task">
+            <button type="button" data-mode="autoformalize" aria-pressed="true">Formalize a proof</button>
+            <button type="button" data-mode="prove" aria-pressed="false">Prove a theorem</button>
+          </div>
+          <small class="models-note" id="run-mode-note"></small>
           <label for="source">Source</label>
           <select id="source"><option value="text">Informal statement</option><option value="dataset">Dataset problem</option></select>
           <div id="form-text">
             <label for="statement">Statement</label>
             <textarea id="statement" placeholder="Setting, definitions and the claim (LaTeX allowed)"></textarea>
             <div class="count" id="statement-count"></div>
-            <label for="proof">Informal proof <small>optional</small></label>
-            <textarea id="proof"></textarea>
-            <div class="count" id="proof-count"></div>
+            <div id="form-proof">
+              <label for="proof">Informal proof <small>optional</small></label>
+              <textarea id="proof"></textarea>
+              <div class="count" id="proof-count"></div>
+            </div>
+            <div id="form-formal" class="hidden">
+              <label for="formal-statement">Lean statement <small>optional; kept exactly as given</small></label>
+              <textarea id="formal-statement" placeholder="Definitions, then theorem name ... := by sorry"></textarea>
+            </div>
           </div>
           <div id="form-uuid" class="hidden">
             <label for="uuid">Problem</label>
@@ -381,6 +397,10 @@ figcaption { font-size: .9rem; line-height: 1.45; color: var(--caption); margin-
         <label for="project-source">Source files <small>optional: one file, or a zip of its files</small></label>
         <input id="project-source" type="file">
         <p class="note">Source files are unverified reference material, available to planning, research, and the orchestrator but not to the provers. LaTeX and other text files work best, PDF files are harder to search, and office documents should be converted first. They do not create results or add to the library, and a large upload slows every run.</p>
+        <label for="project-library">Lean library <small>a new empty file, an existing library, or a zip of Lean files built as a package</small></label>
+        <select id="project-library"></select>
+        <input id="project-library-file" type="file" accept=".zip">
+        <p class="note">A package keeps its modules as separate files, and each verified result adds a module to it. A project on a package uses the Lean version the package is built on.</p>
         <label for="project-lean">Lean version</label>
         <select id="project-lean"></select>
         <label for="project-group">GPU group</label>
@@ -410,7 +430,7 @@ figcaption { font-size: .9rem; line-height: 1.45; color: var(--caption); margin-
     <h3>Research</h3>
     <label for="task-question">Question <small>a session answers, and a second referees the answer</small></label>
     <textarea id="task-question" required></textarea>
-    <label for="task-limit">Claude limit in USD</label>
+    <label for="task-limit">Spending limit in USD</label>
     <input id="task-limit" type="number" min="1" max="200" step="1" value="20" required>
     <div class="row"><button type="submit">Start</button><button type="button" class="plain" id="task-cancel">Cancel</button></div>
   </form>
@@ -470,7 +490,7 @@ figcaption { font-size: .9rem; line-height: 1.45; color: var(--caption); margin-
 <dialog id="resume-dialog">
   <form id="resume-form">
     <h3 id="resume-title"></h3>
-    <label for="resume-limit">Claude limit in USD <small>empty keeps the limit; 0 is unlimited</small></label>
+    <label for="resume-limit">Spending limit in USD <small>empty keeps the limit; 0 is unlimited</small></label>
     <input id="resume-limit" type="number" min="0" step="1">
     <label for="resume-model">Orchestrator <small>empty keeps the model</small></label>
     <select id="resume-model"></select>
@@ -516,7 +536,7 @@ async function start() {
   $("claude-note").innerHTML = me.per_user
     ? (me.claude_account ? `Claude: ${escapeHtml(me.claude_account)} (your own login)`
       : `Claude: not signed in; a run that needs it will ask`)
-    : PAGE === "user" ? `Runs use your own Claude login on a server of your own; see <a href="https://github.com/Logan-Cole-Luna/aiprover-orchestration#3-using-a-running-server" target="_blank">Per-user server</a>.` : "";
+    : PAGE === "user" ? `Runs use your own Claude or Codex login on a server of your own; see <a href="https://github.com/Logan-Cole-Luna/aiprover-orchestration#3-using-a-running-server" target="_blank">Per-user server</a>.` : "";
   $("approver-login").classList.toggle("hidden", me.approver || !me.auth_required);
   $("login").classList.add("hidden");
   $("app").classList.remove("hidden");
@@ -529,8 +549,10 @@ async function start() {
   $("uuid").innerHTML = problems.map(p =>
     `<option value="${p.uuid}">${p.uuid}${p.label ? ": " + escapeHtml(p.label) : ""}</option>`).join("");
   const libraries = await api("/api/libraries").catch(() => []);
-  $("library").innerHTML = `<option value="">none</option>` + libraries.map(l =>
+  const libraryOptions = libraries.map(l =>
     `<option value="${escapeHtml(l.name)}">${escapeHtml(l.name)} (${l.package ? `package, ${l.modules} modules, Lean ${escapeHtml(l.release)}, ` : ""}${l.declarations} declarations)</option>`).join("");
+  $("library").innerHTML = `<option value="">none</option>` + libraryOptions;
+  $("project-library").innerHTML = `<option value="">new, empty</option>` + libraryOptions;
   refreshHealth(); refreshRuns();
   // The run list does not depend on the model choices, so it loads either way.
   if (!catalog) {
@@ -668,7 +690,7 @@ function settingInput(s) {
 
 function buildSettings() {
   let group = "";
-  $("settings").innerHTML = (catalog.settings || []).map(s => {
+  $("settings").innerHTML = (catalog.settings || []).filter(s => s.name !== "mode").map(s => {
     const heading = s.group !== group ? `<h3>${escapeHtml(group = s.group)}</h3>` : "";
     return `${heading}<div><label for="setting-${s.name}">${escapeHtml(s.label)}</label>${settingInput(s)}</div>`;
   }).join("");
@@ -677,6 +699,7 @@ function buildSettings() {
 function chosenSettings() {
   const chosen = {};
   for (const s of (catalog && catalog.settings) || []) {
+    if (s.name === "mode") continue;  // the Task switch (setRunMode)
     const value = $(`setting-${s.name}`).value;
     if (value !== "") chosen[s.name] = s.type === "int" ? Number(value) : JSON.parse(value);
   }
@@ -805,7 +828,7 @@ const queuedText = run => `Queued (#${run.position})${run.resumptions ? `, resum
 
 function actions(run) {
   // A run of another user's server is managed there.
-  if (run.external) return `<span class="note">on a personal server; read only here</span>`;
+  if (run.external) return `<span class="note">managed by ${escapeHtml(run.owner)}'s server; view only here</span>`;
   const buttons = [];
   if (run.state === "awaiting_approval" && me && me.approver) {
     buttons.push(`<button data-approve="${run.run_id}">Approve</button>`,
@@ -836,10 +859,10 @@ function actions(run) {
 const OUTCOMES = {Proved: ["∎", "good"], Disproved: ["¬", "good"], "Lemmas unproved": ["○", "warn"],
                   Running: ["…", "live"], Queued: ["…", "live"], "Awaiting approval": ["…", "live"], Cancelling: ["…", "live"],
                   "Awaiting plan review": ["◆", "warn"], "Verified in lean": ["∎", "good"],
-                  Interrupted: ["/", "quiet"], "Stopped at its Claude limit": ["○", "warn"],
+                  Interrupted: ["/", "quiet"], "Stopped at its spending limit": ["○", "warn"],
                   Cancelled: ["/", "quiet"], Rejected: ["/", "quiet"]};
 const capitalized = text => text[0].toUpperCase() + text.slice(1).replaceAll("_", " ");
-const STOPS = {interrupted: "Interrupted", budget: "Stopped at its Claude limit", infrastructure: "Server failure", stage_failed: "No plan compiled", refused: "Refused by the model"};
+const STOPS = {interrupted: "Interrupted", budget: "Stopped at its spending limit", infrastructure: "Server failure", stage_failed: "No plan compiled", refused: "Refused by the model"};
 const resultOf = run => run.plan_review ? "Awaiting plan review" : STOPS[run.stop] || capitalized(run.state === "finished" ? run.status || "finished" : run.state);
 const SCOPES = {All: () => true, Review: run => run.plan_review, Proved: run => run.settled, Unfinished: run => !run.settled};
 const runTabs = run => ["Progress", ...(run.files.includes("blueprint.json") ? ["Blueprint"] : []),
@@ -1332,7 +1355,7 @@ for (const name of ["resume", "task", "member", "server", "account"]) $(`${name}
 $("resume-form").addEventListener("submit", async event => {
   event.preventDefault();
   const {value: limit} = $("resume-limit"), {value: model} = $("resume-model");
-  const body = {max_claude_usd: limit === "" ? null : Number(limit), gpu_group: $("resume-group").value, findings: $("resume-findings").value,
+  const body = {max_hosted_usd: limit === "" ? null : Number(limit), gpu_group: $("resume-group").value, findings: $("resume-findings").value,
                 orchestrator: model ? {provider: "claude", model, effort: "high"} : null};
   await api(`/api/runs/${event.target.dataset.run}/resume`, {method: "POST", body: JSON.stringify(body)})
     .then(() => { $("resume-dialog").close(); refreshRuns(); refreshHealth(); })
@@ -1367,18 +1390,37 @@ function reviewEntry(project, review, index) {
   return `<li>${escapeHtml(review.claim)}<div class="note">${decided}${claude}</div>
     <div class="row${project.owner ? " hidden" : ""}"><button type="button" class="plain" data-decide="confirmed" ${data}>Confirm</button>
     <button type="button" class="plain" data-decide="rejected" ${data}>Reject</button>
-    <button type="button" class="plain" data-ask ${data}>Ask Claude</button>
+    <button type="button" class="plain" data-ask ${data}>Request a check</button>
     <button type="button" class="plain" data-formalize ${data}>Prove in Lean</button></div></li>`;
 }
+// A goal longer than one line shows its first line; the rest opens on a click,
+// and stays open across the page's refreshes.
+const openGoals = new Set();
+function projectGoal(project) {
+  const goal = (project.goal || "").trim();
+  if (!goal) return "";
+  if (goal.length <= 120 && !goal.includes("\n")) return `<p>${escapeHtml(goal)}</p>`;
+  return `<details class="goal" data-goal="${escapeHtml(project.name)}" ${openGoals.has(project.name) ? "open" : ""}>`
+    + `<summary>${openGoals.has(project.name) ? "Goal" : escapeHtml(goal.split("\n")[0])}</summary>`
+    + `<p>${escapeHtml(goal)}</p></details>`;
+}
+document.addEventListener("toggle", event => {
+  const goal = event.target.dataset?.goal;
+  if (!goal) return;
+  if (event.target.open) openGoals.add(goal); else openGoals.delete(goal);
+  event.target.querySelector("summary").textContent = event.target.open
+    ? "Goal" : event.target.querySelector("p").textContent.split("\n")[0];
+}, true);
+
 function projectCard(project) {
   const data = `data-project="${project.name}"`, link = path => `/api/projects/${project.name}/${path}${PAGE_QUERY}`;
   const idle = `${data} ${project.tasks.some(task => task.state === "running") ? "disabled" : ""}`;
   const change = `class="plain${project.owner ? " hidden" : ""}"`;
-  return `<section class="project"><h2>${escapeHtml(project.title)}${project.owner ? ` <small>copy on a personal server; read only here</small>` : ""}</h2>
-    <div class="note">${MONEY(project.spent_usd)} of Claude${project.research_usd ? `, of which ${MONEY(project.research_usd)} on research` : ""}</div>
-    ${project.goal ? `<p>${escapeHtml(project.goal)}</p>` : ""}
+  return `<section class="project"><h2>${escapeHtml(project.title)}${project.owner ? ` <small>managed by ${escapeHtml(project.owner)}'s server; view only here</small>` : ""}</h2>
+    <div class="note">${MONEY(project.spent_usd)} on hosted models${project.research_usd ? `, of which ${MONEY(project.research_usd)} on research` : ""}</div>
+    ${projectGoal(project)}
     ${openPlan === project.name ? `<div id="blueprint" data-project="${project.name}"></div>` : ""}
-    <table><tr><th>#</th><th>Result</th><th>Role</th><th>Status</th><th>Lemmas</th><th>Claude</th></tr>${project.members.map((member, index) => projectRow(project, member, index)).join("")}</table>
+    <table><tr><th>#</th><th>Result</th><th>Role</th><th>Status</th><th>Lemmas</th><th>Spent</th></tr>${project.members.map((member, index) => projectRow(project, member, index)).join("")}</table>
     <div class="row">
       ${unstarted(project).length && !project.owner ? `<button type="button" data-launch ${data}>Start remaining results</button>` : ""}
       <button type="button" ${change} data-edit ${data}>Add result</button>
@@ -1436,14 +1478,14 @@ $("project-list").addEventListener("click", async event => {
   }
   if (edit !== undefined) { event.preventDefault(); openMember(project, index); }
   if (task !== undefined) { Object.assign($("task-form").dataset, {project: name, milestones: task === PLAN_QUESTION}); $("task-question").value = task; $("task-dialog").showModal(); }
-  if (launch !== undefined && confirm(`Queue the remaining results of ${project.title}? Each run spends Claude and GPU time.`)) projectCall(name, "launch", "POST");
+  if (launch !== undefined && confirm(`Queue the remaining results of ${project.title}? Each run spends hosted-model and GPU time.`)) projectCall(name, "launch", "POST");
   if (paper !== undefined) startTask(name, {kind: "paper"});
   const review = project?.reviews[claim];
   if (decide) {
     const note = prompt(decide === "confirmed" ? "Note (optional)" : "What is wrong with the claim?");
     if (note !== null) projectCall(name, `reviews/${claim}`, "POST", {decision: decide, note});
   }
-  if (ask !== undefined && confirm("Spend up to $10 of Claude on a check of this claim?")) startTask(name, {kind: "check", question: review.claim, max_usd: 10});
+  if (ask !== undefined && confirm("Spend up to $10 of hosted-model calls on a check of this claim?")) startTask(name, {kind: "check", question: review.claim, max_usd: 10});
   if (formalize !== undefined) projectCall(name, "members", "PUT", [...unstarted(project), {uuid: `claim_${Number(claim) + 1}`, role: "main", statement: review.claim}]);
 });
 
@@ -1528,9 +1570,18 @@ $("project-form").addEventListener("submit", async event => {
   event.preventDefault();
   try {
     const [provider, model] = $("project-prover").value.split(":");
+    let library = $("project-library").value;
+    const [zip] = $("project-library-file").files;
+    if (zip) {
+      library = zip.name.replace(/\.zip$/, "").replace(/[^A-Za-z0-9_-]/g, "_");
+      $("project-error").textContent = `Building the library ${library}; a large library takes minutes.`;
+      const query = `?name=${encodeURIComponent(library)}&lean_release=${encodeURIComponent($("project-lean").value)}`;
+      await api("/api/libraries" + query, {method: "POST", body: zip, headers: {"Content-Type": "application/zip"}});
+    }
     const {name} = await api("/api/projects" + PAGE_QUERY, {method: "POST", body: JSON.stringify({
       service: $("project-service").value, title: $("project-title").value, goal: $("project-goal").value, gpu_group: $("project-group").value, lean_release: $("project-lean").value,
-      subagent: {provider, model, effort: ""}})});
+      subagent: {provider, model, effort: ""}, library})});
+    $("project-error").textContent = "";
     const [file] = $("project-source").files;
     if (file) await api(`/api/projects/${name}/source${PAGE_QUERY}&file=${encodeURIComponent(file.name)}`, {method: "POST", body: file});
     $("project-form").reset();
@@ -1562,7 +1613,7 @@ $("run-list").addEventListener("click", async event => {
     refreshRuns();
   }
   if (resume) openResume(allRuns.find(run => run.run_id === resume));
-  if (report && confirm(`Generate the report, informal proof, and blueprint of ${report}? The run enters the queue and retains its proof. The typical Claude cost is about $2.`)) {
+  if (report && confirm(`Generate the report, informal proof, and blueprint of ${report}? The run enters the queue and retains its proof. The typical hosted-model cost is about $2.`)) {
     await api(`/api/runs/${report}/report`, {method: "POST"}).catch(e => alert(e.message));
     refreshRuns(); refreshHealth();
   }
@@ -1675,6 +1726,22 @@ function showView(view) {
 
 const textMode = () => $("source").value === "text";
 
+// The Task switch: formalize the given proof, or have the run find one.
+let runMode = "autoformalize";
+const RUN_MODE_NOTES = {
+  autoformalize: "The run formalizes the statement and translates its proof into Lean.",
+  prove: "The run finds the proof: any given proof is withheld, a Lean statement is kept exactly as given, and the orchestrator drafts the proof that is decomposed into lemmas.",
+};
+function setRunMode(mode) {
+  runMode = mode;
+  for (const button of $("run-mode").children) button.setAttribute("aria-pressed", button.dataset.mode === mode);
+  $("form-proof").classList.toggle("hidden", mode === "prove");
+  $("form-formal").classList.toggle("hidden", mode !== "prove");
+  $("run-mode-note").textContent = RUN_MODE_NOTES[mode];
+}
+$("run-mode").onclick = event => event.target.dataset.mode && setRunMode(event.target.dataset.mode);
+setRunMode("autoformalize");
+
 // The groups of the runs so far, a new group, or none; the choice survives the rebuild.
 function buildGroupChoice() {
   const choice = $("group").value;
@@ -1705,11 +1772,13 @@ function summarizeRun() {
   const upload = $("library-file").files[0];
   const newLibrary = $("new-library").value.trim();
   const changed = Object.keys(chosenSettings()).length;
-  const statement = $("statement").value.trim();
+  const statement = $("statement").value.trim()
+    || (runMode === "prove" ? $("formal-statement").value.trim() : "");
   const rows = [
     ["Run name", $("run-name").value.trim() || "assigned on submission"],
     ["Problem", !textMode() ? $("uuid").value : statement ? `${statement.length.toLocaleString()} characters` : "missing"],
     ["Group", chosenGroup() || "none"],
+    ["Task", runMode === "prove" ? "Prove a theorem" : "Formalize a proof"],
     ["Library", upload ? upload.name : $("library").value || (newLibrary ? `new: ${newLibrary}` : "none")],
     ["Models", ROLES.map(role => `${role}: ${modelLabel(selection(role))}`).join("; ")],
     ["GPU group", $("gpu-group").value],
@@ -1737,14 +1806,15 @@ for (const link of document.querySelectorAll("[data-view]")) {
 for (const field of ["statement", "proof"]) $(field).addEventListener("input", () => countText(field));
 
 $("submit").onclick = async () => {
-  const body = textMode()
-    ? {statement: $("statement").value, proof: $("proof").value}
-    : {uuid: $("uuid").value};
+  const body = !textMode() ? {uuid: $("uuid").value}
+    : runMode === "prove" ? {statement: $("statement").value, formal_statement: $("formal-statement").value}
+    : {statement: $("statement").value, proof: $("proof").value};
   for (const role of ROLES) body[role] = selection(role);
   body.name = $("run-name").value;
   body.group = chosenGroup();
   body.gpu_group = $("gpu-group").value;
   body.settings = chosenSettings();
+  if (runMode === "prove") body.settings.mode = "prove";
   body.lean_release = $("lean-release").value;
   body.page = PAGE;
   $("submit-message").textContent = "";

@@ -57,12 +57,12 @@ from fastapi.responses import (
 )
 from fastapi.staticfiles import StaticFiles
 from starlette.background import BackgroundTask
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 
 from ..lean import releases
 from ..library import api as library_api
 from ..orchestrator import gpu_usage, libraries
-from ..orchestrator.config import FILE_HEADER
+from ..orchestrator.config import FILE_HEADER, current_names
 from ..agents.base import TOKENS_PER_USD
 from ..agents.codex_cli import DEFAULT_CODEX_MODEL
 from ..orchestrator import project as project_file
@@ -601,6 +601,7 @@ class Submission(BaseModel):
     uuid: str = ""
     statement: str = ""
     proof: str = ""
+    formal_statement: str = ""  # Lean, kept as given in theorem-proving mode
     orchestrator: Selection | None = None
     auditor: Selection | None = None
     reviewer: Selection | None = None
@@ -790,11 +791,14 @@ def submit(body: Submission, user: str = Depends(current_user)) -> dict:
         title = book_label(row["informal_statement"]) or body.uuid
     else:
         statement, proof = body.statement.strip(), body.proof.strip()
-        if not statement:
+        formal = body.formal_statement.strip()
+        if not (statement or formal):
             raise HTTPException(
-                400, "give a dataset uuid or an informal statement"
+                400, "give a dataset uuid, an informal statement, or a formal one"
             )
-        if max(len(statement), len(proof)) > MAX_TEXT_CHARS:
+        if formal and run_settings.get("mode") != "prove":
+            raise HTTPException(400, "a formal statement is proved in mode prove")
+        if max(len(statement), len(proof), len(formal)) > MAX_TEXT_CHARS:
             raise HTTPException(413, "statement or proof too long")
         run_id = new_run_id("user", body.name)
         uuid = f"user_{run_id}"
@@ -804,9 +808,10 @@ def submit(body: Submission, user: str = Depends(current_user)) -> dict:
             "domain": "user",
             "informal_statement": statement,
             "informal_proof": proof or "(No informal proof is given.)",
+            **({"formal_statement": formal} if formal else {}),
         }
         dataset = write_problem(run_id, row)
-        title = statement_title(statement)
+        title = statement_title(statement or formal)
 
     try:
         options = library_options(body, run_id) | run_settings
@@ -1124,7 +1129,7 @@ def reportable(job: dict, files: list[str]) -> bool:
 
 
 def spent_limit(job: dict) -> bool:
-    """Whether a run has spent its Claude limit, and so would stop at once.
+    """Whether a run has spent its hosted-model limit, and so would stop at once.
     The final review of a verified proof is exempt."""
     result_dir = run_dir(job, RESULTS_DIR)
     paths = result_dir / "summary.json", result_dir / "benchmark.json"
@@ -1132,7 +1137,9 @@ def spent_limit(job: dict) -> bool:
         servable(job, path) for path in paths
     ):
         return False
-    limit = read_json(paths[0]).get("config", {}).get("max_claude_usd")
+    limit = current_names(read_json(paths[0]).get("config", {})).get(
+        "max_hosted_usd"
+    )
     costs = read_json(paths[1]).get("costs", {})
     cost = (costs.get("hosted_cost_usd") or 0) + (
         costs.get("unpriced_tokens") or 0
@@ -1276,7 +1283,9 @@ def requeued(job: dict) -> dict:
 
 
 class Resumption(BaseModel):
-    max_claude_usd: int | None = None
+    max_hosted_usd: int | None = Field(
+        None, validation_alias=AliasChoices("max_hosted_usd", "max_claude_usd")
+    )
     orchestrator: Selection | None = None
     gpu_group: str = ""
     # A research report for a replan; one command-line argument of the run.
@@ -1297,8 +1306,8 @@ def resumption_settings(body: Resumption, job: dict) -> dict:
         # A run from before model choices keeps the served config.
         selection = job_selection(job)
         selection = selection and models.validate(selection)
-        if body.max_claude_usd is not None:
-            limit = {"max_claude_usd": body.max_claude_usd}
+        if body.max_hosted_usd is not None:
+            limit = {"max_hosted_usd": body.max_hosted_usd}
             options |= settings.validate(limit)
         if body.orchestrator:
             choice = {
@@ -1337,12 +1346,12 @@ def resume_run(
     user: str = Depends(current_user),
 ) -> dict:
     """Queue an ended run again; it continues from its last completed step.
-    A run that has spent its Claude limit needs a higher one."""
+    A run that has spent its hosted-model limit needs a higher one."""
     if not resumable(job):
         raise HTTPException(409, f"run is {job['state']}; it cannot resume")
     check_capacity(user)
-    if body.max_claude_usd is None and spent_limit(job):
-        raise HTTPException(409, "Claude spending limit reached")
+    if body.max_hosted_usd is None and spent_limit(job):
+        raise HTTPException(409, "spending limit reached")
     fields = resumption_settings(body, job)
     set_options(job, **fields.pop("options"))
     if fields:
@@ -1461,6 +1470,7 @@ def project_view(path: Path, account: str = "") -> dict:
         "paper": (path.parent / path.stem / f"{path.stem}_paper.pdf").exists(),
         "source_files": source_files(project, path.parents[2]),
         "spent_usd": round(spent + research, 2),
+        "created": project.get("created", path.stat().st_mtime),
     } | ({"name": f"{account}:{path.stem}", "owner": account} if account else {})
 
 
@@ -1572,7 +1582,7 @@ def list_projects(
             project_view(path, account)
             for path in sorted(folder.glob("*.json"))
         ]
-    return projects
+    return sorted(projects, key=lambda project: project["created"], reverse=True)
 
 
 class NewProject(BaseModel):
@@ -1582,6 +1592,8 @@ class NewProject(BaseModel):
     lean_release: str = ""
     subagent: Selection | None = None
     service: Service = "claude"  # of the orchestrator and its reviewers
+    # A library in libraries/ (a file or a package) instead of a new file.
+    library: str = ""
 
 
 @app.post("/api/projects", status_code=201)
@@ -1594,14 +1606,28 @@ def create_project(
     if page.own_runs and not PER_USER:
         raise HTTPException(403, "this page has no projects")
     name = re.sub(r"[^a-z0-9]+", "_", body.title.lower()).strip("_")
-    library = LIBRARY_DIR / f"{name}.lean"
-    if not name or (PROJECTS_DIR / f"{name}.json").exists() or library.exists():
-        raise HTTPException(400, f"project or library {name} exists")
+    library = LIBRARY_DIR / (body.library or f"{name}.lean")
+    if not name or (PROJECTS_DIR / f"{name}.json").exists():
+        raise HTTPException(400, f"project {name} exists")
+    if body.library and not (LIBRARY_NAME.match(body.library) and library.exists()):
+        raise HTTPException(400, f"unknown library {body.library}")
+    if not body.library and library.exists():
+        raise HTTPException(400, f"library {library.name} exists; select it")
+    release = body.lean_release
+    if body.library and libraries.is_package(f"libraries/{body.library}"):
+        # The project's runs build on the release the package was built on.
+        release = libraries.release(f"libraries/{body.library}")
+        if body.lean_release and body.lean_release != release:
+            raise HTTPException(
+                400, f"library {body.library} is built on Lean {release}"
+            )
+        if release == DEFAULT_LEAN_RELEASE:
+            release = ""
     if body.gpu_group not in page.gpu_groups:
         raise HTTPException(400, f"unknown GPU group {body.gpu_group!r}")
-    if body.lean_release and not releases.is_installed(body.lean_release):
-        raise HTTPException(400, f"Lean {body.lean_release} is not installed")
-    selection = {"lean_release": body.lean_release} if body.lean_release else {}
+    if release and not releases.is_installed(release):
+        raise HTTPException(400, f"Lean {release} is not installed")
+    selection = {"lean_release": release} if release else {}
     if body.subagent:
         selection["subagent"] = body.subagent.model_dump(exclude_none=True)
         check_group(
@@ -1617,7 +1643,8 @@ def create_project(
             selection[role] = choice
     LIBRARY_DIR.mkdir(exist_ok=True)
     PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
-    library.write_text(FILE_HEADER)
+    if not body.library:
+        library.write_text(FILE_HEADER)
     project_file.save({
         "name": name,
         "title": body.title,
@@ -1627,6 +1654,7 @@ def create_project(
         "service": body.service,
         "selection": selection,
         "members": [],
+        "created": time.time(),
     })
     return {"name": name}
 
@@ -1692,6 +1720,7 @@ class Member(BaseModel):
     role: Literal[ROLES] = "main"
     statement: str = Field("", max_length=MAX_TEXT_CHARS)
     proof: str = Field("", max_length=MAX_TEXT_CHARS)
+    formal_statement: str = Field("", max_length=MAX_TEXT_CHARS)
     uses: list[str] = []
 
 
@@ -1720,6 +1749,19 @@ class Task(BaseModel):
 def task_user(request: Request) -> str:
     """Tasks spend without an approval, so they need one's token."""
     return approver(request) if AUTH_REQUIRED else current_user(request)
+
+
+def project_lean(project: dict) -> dict[str, str]:
+    """The Lean of a project's tasks: its runs' release, and its library as
+    their workspace if the library is a package."""
+    environment = {}
+    release = (project.get("selection") or {}).get("lean_release")
+    if release and release != DEFAULT_LEAN_RELEASE:
+        environment["AIPROVER_LEAN_RELEASE"] = release
+    library = f"libraries/{project.get('library', '')}"
+    if project.get("library") and libraries.is_package(library):
+        environment["AIPROVER_LIBRARY_PACKAGE"] = str(libraries.resolve(library))
+    return environment
 
 
 @app.post("/api/projects/{name}/tasks", status_code=201)
@@ -1753,6 +1795,7 @@ def start_task(
             env={
                 **os.environ,
                 **accounts.environment(),
+                **project_lean(project),
                 "PYTHONPATH": str(ROOT),
             },
             start_new_session=True,
@@ -1819,10 +1862,11 @@ def project_library(path: Path = Depends(project_path)) -> FileResponse:
     library = project_file.load(path.stem, path.parent)["library"]
     if not LIBRARY_NAME.match(library):
         raise HTTPException(404, "unknown library")
-    return FileResponse(
-        path.parents[2] / "libraries" / library,
-        media_type="text/plain; charset=utf-8",
-    )
+    target = path.parents[2] / "libraries" / library
+    # A package is shown by its table of contents, one line per declaration.
+    if target.is_dir():
+        target = target / "views" / "toc.md"
+    return FileResponse(target, media_type="text/plain; charset=utf-8")
 
 
 @app.get("/api/projects/{name}/source/{path:path}")

@@ -119,7 +119,7 @@ class ReviewStage:
         reply = self.agents.complete(
             prompts.FINAL_REVIEW_TEMPLATE.format(
                 informal_statement=self.row["informal_statement"],
-                informal_proof=self.row["informal_proof"],
+                informal_proof=self.proof_for("review"),
                 target_statement=(
                     f"{form.definitions}\n\n{form.preamble}\n\n"
                     f"{form.statement}"
@@ -377,7 +377,7 @@ class ReviewStage:
         if earlier:
             logger.info("informalization restored")
             return earlier
-        self._lift_limits(self.config.informal_claude_calls)
+        self._lift_limits(self.config.informal_hosted_calls)
         builder = informal.InformalBuilder(
             self.result_dir / "informal",
             self.slug,

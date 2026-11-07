@@ -14,6 +14,19 @@ LIBRARY_IMPORTS = "".join(
 )
 FILE_HEADER = f"import Mathlib\n{LIBRARY_IMPORTS}set_option autoImplicit false\n\n"
 MAIN_NAME = "solution"
+# Earlier names of settings, which configs, recorded runs, and queued jobs may
+# still hold.
+FORMER_NAMES = {
+    "max_claude_usd": "max_hosted_usd",
+    "max_claude_calls": "max_hosted_calls",
+    "final_claude_calls": "final_hosted_calls",
+    "informal_claude_calls": "informal_hosted_calls",
+}
+
+
+def current_names(values: dict) -> dict:
+    """`values` with each setting under its current name."""
+    return {FORMER_NAMES.get(name, name): value for name, value in values.items()}
 LEAN_ENVIRONMENT = {
     "toolchain": f"leanprover/lean4:{LEAN_RELEASE}",
     "mathlib": (
@@ -139,6 +152,10 @@ class Config:
     # Agent specification per role (captain, auditor, solver, reviewer,
     # writer); see agents/pool.py.
     agents: dict = field(default_factory=dict)
+    # What the run does: "autoformalize" translates the row's informal proof;
+    # "prove" finds a proof (stages/draft.py), of the row's formal statement if
+    # it has one, kept as given, or else of its formalized informal statement.
+    mode: str = "autoformalize"
     workers: int = 4  # parallel solver chains per lemma
     max_repairs: int = 4  # Lean-error feedback rounds per chain
     # Sketch revisions after failed lemmas; a revision that follows the
@@ -151,6 +168,18 @@ class Config:
     # A second model judges each compiled sketch; a REVISE verdict counts as a
     # failed repair round, except in the last round.
     sketch_judge: bool = True
+    # Lean's `plausible` tests each sketch lemma on random instances before
+    # the judge; a counterexample rejects the sketch (stages/sketch.py).
+    lemma_counterexamples: bool = False
+    # Open steps (stages/gaps.py): the sketch names them `gap_...`; they are
+    # attempted after the routine lemmas and remain proof targets, with a
+    # Lean-checked reduction recorded once only gaps are left.
+    gaps: bool = False
+    # Drafts in prove mode, ranked by a judge; a sketch the judge still
+    # rejects passes to the next.
+    approaches: int = 1
+    # The captain proves the routine lemmas it can before AIProver jobs.
+    captain_first: bool = False
     max_audit_rounds: int = 2  # formalization revisions after REVISE
     # Lean probes of each audited statement (fidelity.py); a proof of `False`
     # from its hypotheses is a REVISE that no judge can overrule.
@@ -158,11 +187,11 @@ class Config:
     # Lean checks of one run; limits.LEAN bounds all runs of the machine.
     lean_parallel: int = 6
     lean_timeout: int = 300
-    max_claude_calls: int = 0  # Claude calls per run; 0 = unlimited
+    max_hosted_calls: int = 0  # hosted-model calls per run; 0 = unlimited
     # USD of hosted calls per run at list prices, before the final review,
     # where tokens without a price count at agents.base.TOKENS_PER_USD;
     # 0 = unlimited. No recorded run above 34 USD reached a proof.
-    max_claude_usd: int = 50
+    max_hosted_usd: int = 50
     # AIProver lemma jobs in flight at once; 0 = all pending lemmas. Each job
     # runs `workers` sessions that share one model server.
     aiprover_lemma_concurrency: int = 0
@@ -197,13 +226,16 @@ class Config:
     aiprover_max_retries: int = 2
     # The direction every AIProver job on a lemma statement receives ahead
     # of the source's proof: "captain", an informal proof of the lemma the
-    # captain writes before the statement's first job (one Claude call per
+    # captain writes before the statement's first job (one hosted-model call per
     # statement); "sketch", the comments above the lemma in the captain's
     # reply that stated it (no call); "" for none.
     aiprover_direction: str = "captain"
     # Keep AIProver sessions off the internet (lean/offline.py), for problems
     # whose answer may be published.
     aiprover_offline: bool = False
+    # Session time limit of a lemma's first job (s); 0 = the solver's own.
+    # A short first job finds the easy lemmas before long jobs start.
+    aiprover_first_job_seconds: int = 0
     # Mark the earlier lemmas in a job's context as facts to cite, and list
     # those its direction names, with their statements, in its guidance.
     aiprover_cite_lemmas: bool = True
@@ -223,15 +255,15 @@ class Config:
     # Stuck leaves under one decision that make a conflict; a refuted leaf
     # makes one alone.
     cdcl_conflict_leaves: int = 3
-    # Claude calls kept for the final review and the report: the limit rises
+    # Hosted-model calls kept for the final review and the report: the limit rises
     # to leave this many, so a run that spent its budget on proving is still
     # reviewed.
-    final_claude_calls: int = 8
+    final_hosted_calls: int = 8
     # Failed assemblies returned to the captain before the run ends.
     max_assembly_rounds: int = 3
-    # Claude calls added for the informalization (write, check, revise,
+    # Hosted-model calls added for the informalization (write, check, revise,
     # repairs).
-    informal_claude_calls: int = 6
+    informal_hosted_calls: int = 6
     # Write the report and the informalization at the end of a run. A
     # finished run writes them when resumed with this setting.
     write_reports: bool = False

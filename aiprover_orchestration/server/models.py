@@ -102,8 +102,9 @@ ROLE_DESCRIPTIONS = {
 AIPROVER_ENDPOINT = "http://127.0.0.1:18565/v1"
 AIPROVER_SERVED_MODEL = "aiprover"
 CHAT_REPLY_TOKENS = 24576
-# Claude calls per run: the served config limits them for a Claude orchestrator
-# and auditor; a Claude subagent makes one call per lemma attempt as well.
+# Hosted-model calls per run: the served config limits them for a hosted
+# orchestrator and auditor; a hosted subagent makes one call per lemma attempt
+# as well.
 CLAUDE_SUBAGENT_CALL_LIMIT = 40
 SUBAGENT_TIMEOUT = 5400
 
@@ -326,5 +327,5 @@ def build_config(base_config: Path, selection: dict) -> dict:
     for version in checkpoint_names(selection):
         config |= VERSION_SETTINGS.get(version, {})
     if selection.get("subagent", {}).get("provider") in SERVICE_MODELS:
-        config["max_claude_calls"] = CLAUDE_SUBAGENT_CALL_LIMIT
+        config["max_hosted_calls"] = CLAUDE_SUBAGENT_CALL_LIMIT
     return config

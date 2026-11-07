@@ -11,7 +11,7 @@ library, which the form sets on its own.
 
 from dataclasses import dataclass, fields
 
-from ..orchestrator.config import Config
+from ..orchestrator.config import Config, current_names
 
 
 @dataclass(frozen=True)
@@ -24,6 +24,11 @@ class Setting:
 
 
 SETTINGS = {
+    "mode": Setting(
+        "Mode",
+        "Formalize the given proof, or prove the theorem",
+        choices=("autoformalize", "prove"),
+    ),
     "workers": Setting("Proof search", "Solver chains per lemma", 1, 8),
     "max_repairs": Setting(
         "Proof search", "Lean-error repair rounds per chain", 0, 10
@@ -38,6 +43,16 @@ SETTINGS = {
         "Proof search", "Test the setting before planning"
     ),
     "sketch_judge": Setting("Proof search", "Judge each compiled sketch"),
+    "lemma_counterexamples": Setting(
+        "Proof search", "Test each sketch lemma for counterexamples"
+    ),
+    "gaps": Setting(
+        "Proof search", "Name open steps as gaps, proved after routine lemmas"
+    ),
+    "approaches": Setting("Proof search", "Ranked drafts in prove mode", 1, 4),
+    "captain_first": Setting(
+        "Proof search", "Orchestrator proves short lemmas before AIProver"
+    ),
     "lean_timeout": Setting(
         "Proof search", "Time limit of a Lean check (s)", 30, 1800
     ),
@@ -61,6 +76,10 @@ SETTINGS = {
     ),
     "aiprover_timeout": Setting(
         "AIProver", "Time limit of a session (s; 0: none)", 0, 86400
+    ),
+    "aiprover_first_job_seconds": Setting(
+        "AIProver", "Time limit of a lemma's first job (s; 0: as later jobs)",
+        0, 86400,
     ),
     "aiprover_probe_seconds": Setting(
         "AIProver",
@@ -86,27 +105,27 @@ SETTINGS = {
     "aiprover_relevant_context": Setting(
         "AIProver", "Give a job only the lemmas relevant to it"
     ),
-    "max_claude_calls": Setting(
-        "Claude budget", "Claude calls per run (0: unlimited)", 0, 1000
+    "max_hosted_calls": Setting(
+        "Hosted-model budget", "Hosted-model calls per run (0: unlimited)", 0, 1000
     ),
-    "max_claude_usd": Setting(
-        "Claude budget",
+    "max_hosted_usd": Setting(
+        "Hosted-model budget",
         "USD per run; a model without a price counts 100,000 tokens per USD "
         "(0: unlimited)",
         0,
         100000,
     ),
     "write_reports": Setting(
-        "Claude budget", "Generate the report, informal proof, and blueprint"
+        "Hosted-model budget", "Generate the report, informal proof, and blueprint"
     ),
     "sketch_approval": Setting(
         "Proof search", "Require review of the proof plan before proving"
     ),
-    "final_claude_calls": Setting(
-        "Claude budget", "Calls added for the review and the report", 0, 50
+    "final_hosted_calls": Setting(
+        "Hosted-model budget", "Calls added for the review and the report", 0, 50
     ),
-    "informal_claude_calls": Setting(
-        "Claude budget", "Calls added for the informalization", 0, 50
+    "informal_hosted_calls": Setting(
+        "Hosted-model budget", "Calls added for the informalization", 0, 50
     ),
 }
 CONFIG_DEFAULTS = {option.name: option.default for option in fields(Config)}
@@ -138,6 +157,7 @@ def catalog(served_config: dict) -> list[dict]:
 
 def validate(values: dict) -> dict:
     """The submitted settings, checked; ValueError names the problem."""
+    values = current_names(values)
     for name, value in values.items():
         setting = SETTINGS.get(name)
         if setting is None:

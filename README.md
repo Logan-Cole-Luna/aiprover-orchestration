@@ -178,7 +178,10 @@ the machine's memory and processors. `AIPROVER_MAX_HOSTED`, `AIPROVER_MAX_TOOL_C
 replace the derived limits.
 
 The page submits an informal statement and proof, or a problem of the open
-and OpenAI math datasets, and lists the proved OpenAI problems and the runs
+and OpenAI math datasets. Its Task switch chooses between formalizing the given
+proof and proving the theorem: a run in the second mode withholds any given
+proof, keeps a Lean statement exactly as given, and drafts its own proof before
+decomposing it. The page lists the proved OpenAI problems and the runs
 submitted from it with their Lean files, reports, and traces. Its Guide explains
 the page to readers new to Lean, and its theme also applies to the trace pages. The form offers each Lean version; one that is not
 

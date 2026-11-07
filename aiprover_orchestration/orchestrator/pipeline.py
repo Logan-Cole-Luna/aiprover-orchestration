@@ -51,7 +51,9 @@ from .reports import blueprint
 from .resume import ResumeState, restore_state
 from .stages.aiprover import AIProverStage
 from .stages.assemble import AssembleStage
+from .stages.draft import DraftStage
 from .stages.formalize import FormalizeStage
+from .stages.gaps import GAP_ATTEMPTS, GapStage, is_gap
 from .stages.handback import HandbackStage
 from .stages.prove import ProveStage
 from .stages.review import ReviewStage
@@ -84,6 +86,8 @@ GUIDED_PHASES = ("sketch", "direction", "handback", "conflict")
 
 
 class Orchestration(
+    DraftStage,
+    GapStage,
     FormalizeStage,
     SketchStage,
     ProveStage,
@@ -117,6 +121,7 @@ class Orchestration(
         self.auditor_system = prompts.auditor_system()
         self.reference: Formalization | None = None
         self.reference_attempted = False
+        self.sketch_rejected = ""
         # The reviewer and the report writer default to fresh agents of the
         # captain's model, without its tools.
         captain = {
@@ -182,8 +187,8 @@ class Orchestration(
             system_prompt_ids={
                 text: key for key, text in system_prompts.items()
             },
-            max_claude_calls=config.max_claude_calls,
-            max_claude_usd=config.max_claude_usd,
+            max_hosted_calls=config.max_hosted_calls,
+            max_hosted_usd=config.max_hosted_usd,
         )
         self.library_path = config.library or row.get("library", "")
         self.library = self._load_library()
@@ -295,8 +300,12 @@ class Orchestration(
         return allowed
 
     def _exhausted(self, lemma) -> bool:
-        """No attempts left on `lemma`'s statement in this run."""
-        return lemma.attempts >= self._attempts_allowed(lemma.reviewed_at)
+        """No attempts left on `lemma`'s statement in this run; a gap has
+        `GAP_ATTEMPTS` before its hand-back."""
+        allowed = self._attempts_allowed(lemma.reviewed_at)
+        if self.config.gaps and is_gap(lemma):
+            allowed = min(allowed, lemma.reviewed_at + GAP_ATTEMPTS)
+        return lemma.attempts >= allowed
 
     def _decision(self, event: str, **fields) -> None:
         self.trace.add("decision", event=event, **fields)
@@ -412,11 +421,22 @@ class Orchestration(
                 }
             if self.library and state.formalization is None:
                 self._check_library()
+            prove = self.config.mode == "prove"
+            fixed = prove and bool(self.row.get("formal_statement"))
+            summary["mode"] = self.config.mode
+            if prove:
+                self.withhold_proof()
             audits_spent = (
                 state.audited
                 and state.audit_rounds_done > self.config.max_audit_rounds
             )
-            if state.faithful or audits_spent:
+            if fixed:
+                with self._timed("formalize"):
+                    form = self.fixed_formalization()
+                if form is None:
+                    summary["status"] = "statement_does_not_compile"
+                    return summary
+            elif state.faithful or audits_spent:
                 # A resumed run whose last verdict ended the audit budget
                 # ends as it would have: with its unfaithful formalization.
                 form = state.formalization
@@ -437,11 +457,22 @@ class Orchestration(
                 if facts:
                     form.add_setting_facts(facts)
             summary["formalization"] = asdict(form)
+            if prove:
+                with self._timed("sketch"):
+                    self.row["informal_proof"] = self.draft_approaches(form)
             replans_used = state.replans_started
             assembly_rounds = state.assembly_rounds
             if state.sketch is None:
                 with self._timed("sketch"):
-                    sketch = self.sketch(form)
+                    seed = self.result_dir / "sketch_seed.md"
+                    sketch = self.sketch(
+                        form, seed.read_text() if seed.exists() else ""
+                    )
+                    first = sketch, self.row["informal_proof"]
+                    while self.sketch_rejected and self.next_approach():
+                        sketch = self.sketch(form)
+                    if self.sketch_rejected and sketch is not first[0]:
+                        sketch = self.restore_first_approach(*first)
             else:
                 sketch = state.sketch
                 with self._timed("sketch"):
@@ -486,6 +517,14 @@ class Orchestration(
                     return summary
                 with self._timed("prove"):
                     self.prove(form, sketch)
+                    # Every routine lemma proved: the gaps' turn.
+                    if self._only_gaps_left(sketch):
+                        self.prove(form, sketch)
+                # A checkpoint, not a result: the gaps remain proof targets,
+                # and the replan below continues on them.
+                if self._only_gaps_left(sketch):
+                    with self._timed("assemble"):
+                        summary["reduction"] = self.reduction(form, sketch)
                 if all(lemma.proved for lemma in sketch.lemmas):
                     with self._timed("assemble"):
                         standalone, checks = self.assemble(form, sketch)
@@ -540,7 +579,7 @@ class Orchestration(
             # A verified proof stands even if the review or the report cannot
             # be completed; its status then says so.
             summary["status"] = "review_flagged"
-            self._lift_limits(self.config.final_claude_calls)
+            self._lift_limits(self.config.final_hosted_calls)
             with self._timed("review"):
                 review = self.final_review(form, standalone)
             summary["review"] = review
@@ -600,14 +639,19 @@ class Orchestration(
             except benchmark.ACCOUNTING_ERRORS as error:
                 logger.warning(f"benchmark summary not written: {error}")
 
+    def _only_gaps_left(self, sketch) -> bool:
+        """With `config.gaps`, every unproved lemma is a gap, and one is."""
+        unproved = [lemma for lemma in sketch.lemmas if not lemma.proved]
+        return self.config.gaps and bool(unproved) and all(map(is_gap, unproved))
+
     def _lift_limits(self, calls: int) -> None:
-        """Open the Claude limits for the review and documents of a result,
+        """Open the hosted-model limits for the review and documents of a result,
         which need `calls` more."""
-        self.agents.max_claude_usd = 0
-        if self.agents.max_claude_calls:
-            self.agents.max_claude_calls = max(
-                self.agents.max_claude_calls,
-                self.agents.claude_calls + calls,
+        self.agents.max_hosted_usd = 0
+        if self.agents.max_hosted_calls:
+            self.agents.max_hosted_calls = max(
+                self.agents.max_hosted_calls,
+                self.agents.hosted_calls + calls,
             )
 
     def _extend_library(self, form: Formalization, standalone: str) -> dict:

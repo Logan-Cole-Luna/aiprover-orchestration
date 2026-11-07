@@ -42,6 +42,10 @@ from ...lean.text import (
 )
 from .. import prompts
 from ..config import MAIN_NAME
+
+# Lean's `plausible` reports a falsified statement with this line.
+COUNTEREXAMPLE = "Found a counter-example!"
+COUNTEREXAMPLE_SECONDS = 60
 from ..structures import (
     Formalization,
     Lemma,
@@ -51,6 +55,7 @@ from ..structures import (
     definition_blocks,
     definitions_changed,
     dependency_order,
+    extract_named,
     extract_tag,
     extract_tactics,
     failed_lemma_text,
@@ -192,6 +197,12 @@ class SketchStage:
         compiled one is accepted."""
         feedback = replan_feedback
         compiled = None
+        # The judge's objections to the accepted sketch, if it never accepted
+        # one (the pipeline may then pass to the next approach).
+        self.sketch_rejected = ""
+        # The judge's blocking objections to the previous version, if any.
+        self._judged = ""
+        gaps_note = prompts.GAPS_SKETCH_TEMPLATE if self.config.gaps else ""
         for repair in range(self.config.max_repairs + 1):
             try:
                 reply = self._captain(
@@ -200,7 +211,7 @@ class SketchStage:
                         preamble=form.preamble,
                         signature=form.signature,
                         informal_proof=self.row["informal_proof"],
-                        feedback=feedback,
+                        feedback=gaps_note + feedback,
                     ),
                     phase=f"sketch{repair}",
                 )
@@ -296,8 +307,8 @@ class SketchStage:
                         f"sketch compiles with {len(lemmas)} "
                         f"lemma(s): {names}"
                     )
-                    compiled = candidate, repair
                     issues = self._judge_sketch(form, candidate, repair)
+                    compiled = candidate, repair, issues
                     if issues and repair < self.config.max_repairs:
                         problems.append(
                             "The sketch compiles, but a reviewer rejected "
@@ -316,6 +327,7 @@ class SketchStage:
                             )
                         )
                         continue
+                    self.sketch_rejected = issues
                     return self._accept_sketch(candidate, repair)
                 problems.append(result.error_report())
             logger.info(f"sketch repair {repair}: {problems[0][:200]}")
@@ -329,7 +341,7 @@ class SketchStage:
             raise RuntimeError(
                 "sketch did not compile within the repair budget"
             )
-        candidate, repair = compiled
+        candidate, repair, self.sketch_rejected = compiled
         logger.info(f"accepting the sketch compiled in repair {repair}")
         return self._accept_sketch(candidate, repair)
 
@@ -402,30 +414,139 @@ class SketchStage:
     def _judge_sketch(
         self, form: Formalization, sketch: Sketch, repair: int
     ) -> str:
-        """A second model's objections to a compiled sketch's decomposition
-        (a lemma equivalent to or stronger than the theorem, an open or false
-        lemma, a lemma that is not self-contained or bundles several steps);
-        empty if it accepts the sketch or judging is off."""
+        """A second model's blocking objections to a compiled sketch (a lemma
+        equivalent to or stronger than the theorem, an open lemma, a wrong
+        statement, a missed case), and the lemmas it suspects of being false
+        that a test refutes; empty if it accepts the sketch or judging is
+        off. Advisory notes are recorded but never block. From the second
+        round on, the judge sees its previous objections."""
+        found = self._counterexamples(form, sketch)
         if not self.config.sketch_judge:
-            return ""
+            return found
+        previous = (
+            prompts.JUDGE_PREVIOUS_TEMPLATE.format(issues=self._judged)
+            if getattr(self, "_judged", "")
+            else ""
+        )
         reply = self._captain(
             prompts.SKETCH_JUDGE_TEMPLATE.format(
                 signature=form.signature,
-                informal_proof=self.row["informal_proof"],
+                informal_proof=self.proof_for("judge"),
                 lemmas=stub_listing(sketch.lemmas),
                 main_proof=sketch.main_proof,
+                previous=previous,
             ),
             phase=f"judge_sketch{repair}",
         )
         verdict = extract_tag(reply, "verdict").upper()
         issues = extract_tag(reply, "issues")
+        names = set(extract_tag(reply, "suspect").split())
+        suspects = [lemma for lemma in sketch.lemmas if lemma.name in names]
         self._decision(
-            "sketch_judged", repair=repair, verdict=verdict, issues=issues
+            "sketch_judged",
+            repair=repair,
+            verdict=verdict,
+            issues=issues,
+            notes=extract_tag(reply, "notes"),
+            suspects=[lemma.name for lemma in suspects],
         )
         logger.info(f"sketch judge {repair}: verdict {verdict}")
-        if verdict.startswith("ACCEPT"):
+        refuted = self._test_suspects(form, sketch, suspects, issues)
+        blocking = "" if verdict.startswith("ACCEPT") else (
+            issues or "verdict: " + (verdict or "none given")
+        )
+        self._judged = blocking
+        return "\n\n".join(filter(None, [found, refuted, blocking]))
+
+    def _test_suspects(
+        self, form: Formalization, sketch: Sketch, suspects: list[Lemma], reasons: str
+    ) -> str:
+        """The suspected lemmas that a counterexample search or a Lean proof
+        of their negation refutes, with the evidence; empty if none is."""
+        if not suspects:
             return ""
-        return issues or "verdict: " + (verdict or "none given")
+        found = self._counterexamples(form, sketch, suspects)
+        reply = self._captain(
+            prompts.REFUTE_SUSPECTS_TEMPLATE.format(
+                definitions=form.definitions,
+                lemmas=stub_listing(sketch.lemmas),
+                suspects=", ".join(f"`{lemma.name}`" for lemma in suspects),
+                reasons=reasons or "(none given)",
+            ),
+            phase="refute_suspects",
+        )
+        proofs = extract_named(reply, "refutation")
+        helpers = extract_named(reply, "helpers")
+        refuted = []
+        for lemma in suspects:
+            proof = extract_tactics(
+                f"<p>{proofs.get(lemma.name, '')}</p>", "p"
+            )
+            if not proof:
+                continue
+            text, problems = self._refutation(
+                form,
+                f"suspect_{lemma.name}",
+                "\n\n".join([*lemma.definitions, lemma.statement]),
+                lemma.name,
+                drop_imports(helpers.get(lemma.name, "")),
+                proof,
+            )
+            if not problems:
+                refuted.append(
+                    f"lemma `{lemma.name}` is false: Lean accepts this proof "
+                    f"of its negation:\n{text}"
+                )
+        self._decision(
+            "suspects_tested",
+            suspects=[lemma.name for lemma in suspects],
+            counterexamples=found,
+            refuted=len(refuted),
+        )
+        logger.info(
+            f"suspected lemmas {[lemma.name for lemma in suspects]}: "
+            f"{len(refuted)} refuted, counterexamples: {bool(found)}"
+        )
+        return "\n\n".join(filter(None, [found, *refuted]))
+
+    def _counterexamples(
+        self, form: Formalization, sketch: Sketch, lemmas: list[Lemma] | None = None
+    ) -> str:
+        """Lemmas that Lean's `plausible` falsifies on random small instances,
+        with the instance it found: `lemmas`, or every lemma of the sketch
+        when the check is on. A lemma whose types `plausible` cannot sample
+        yields no evidence either way."""
+        if lemmas is None:
+            if not self.config.lemma_counterexamples:
+                return ""
+            lemmas = sketch.lemmas
+        shown: set[str] = set()
+        definitions = [
+            block for lemma in sketch.lemmas for block in new_definitions(lemma, shown)
+        ]
+
+        def test(lemma: Lemma) -> str:
+            body = "\n\n".join([*definitions, f"{lemma.statement} := by\n  plausible"])
+            result = self._check(
+                f"counterexample_{lemma.name}",
+                self._standalone(form, body),
+                timeout=COUNTEREXAMPLE_SECONDS,
+                lemma=lemma.name,
+            )
+            output = result.output
+            if COUNTEREXAMPLE not in output:
+                return ""
+            instance = output.split(COUNTEREXAMPLE, 1)[1].split("-----", 1)[0]
+            return f"lemma `{lemma.name}` is false: {COUNTEREXAMPLE}{instance.rstrip()}"
+
+        with ThreadPoolExecutor(self.config.lean_parallel) as pool:
+            found = [text for text in pool.map(test, lemmas) if text]
+        if found:
+            self._decision(
+                "counterexamples", lemmas=len(found), found="\n\n".join(found)
+            )
+            logger.info(f"plausible falsified {len(found)} lemma(s)")
+        return "\n\n".join(found)
 
     def _sketch_body(
         self, form: Formalization, sketch: Sketch, use_proofs: bool = False
@@ -499,6 +620,8 @@ class SketchStage:
             refuted=sorted(refuted),
             spent=[lemma.name for lemma in spent],
         )
+        if self.config.mode == "prove" and not resumed:
+            self.row["informal_proof"] = self.redraft(form, feedback)
         new_sketch = self.sketch(form, feedback, excluded, sketch.lemmas)
         for lemma, before in reinstated(sketch.lemmas, new_sketch.lemmas):
             # A dropped lemma that a kept proof uses returns with

@@ -91,7 +91,7 @@ BACKENDS = {
 }
 
 
-# Roles whose Claude agent has Lean tools unless its specification says
+# Roles whose CLI agent (Claude or Codex) has Lean tools unless its specification says
 # otherwise, and the captain phases that have none by default: the judges
 # assess text, and tools would let them consult more than they are shown;
 # a direction is written from the job's inputs, as the prover sees them.
@@ -172,12 +172,12 @@ class AgentPool:
         calls_path: Path,
         trace=None,
         system_prompt_ids: dict[str, str] | None = None,
-        max_claude_calls: int = 0,
-        max_claude_usd: int = 0,
+        max_hosted_calls: int = 0,
+        max_hosted_usd: int = 0,
     ):
         self.agents = agents
-        self.max_claude_calls = max_claude_calls
-        self.max_claude_usd = max_claude_usd
+        self.max_hosted_calls = max_hosted_calls
+        self.max_hosted_usd = max_hosted_usd
         self.calls_path = Path(calls_path)
         self.calls_path.parent.mkdir(parents=True, exist_ok=True)
         self.trace = trace
@@ -186,9 +186,9 @@ class AgentPool:
         self.system_prompt_ids = system_prompt_ids or {}
         self._lock = threading.Lock()
         self.num_calls: dict[str, int] = {}
-        self.claude_calls = 0
+        self.hosted_calls = 0
         # Calls under way, which the budget counts before they are billed.
-        self._claude_calls_reserved = 0
+        self._hosted_calls_reserved = 0
         self.usage_by_model: dict[str, dict] = {}
         # Hosted tokens without a price, which the USD limit converts.
         self.unpriced_tokens = 0
@@ -242,7 +242,7 @@ class AgentPool:
         # The budget counts the calls to hosted models that are billed: a
         # refusal or a call stopped at its limit is billed, a failure on a
         # rate limit or outage is not.
-        self.claude_calls += hosted and (error is None or refused or limited)
+        self.hosted_calls += hosted and (error is None or refused or limited)
         # The reported totals cover the calls the trace keeps.
         if is_untraced(error, refused):
             return
@@ -336,47 +336,54 @@ class AgentPool:
         self.check_spend_limit()
         with self._lock:
             if (
-                self.max_claude_calls
-                and self._claude_calls_used() >= self.max_claude_calls
+                self.max_hosted_calls
+                and self._hosted_calls_used() >= self.max_hosted_calls
             ):
                 raise BudgetExhausted(
-                    f"hosted model call budget of {self.max_claude_calls} "
+                    f"hosted model call budget of {self.max_hosted_calls} "
                     f"exhausted"
                 )
-            self._claude_calls_reserved += 1
+            self._hosted_calls_reserved += 1
         try:
             yield
         finally:
             with self._lock:
-                self._claude_calls_reserved -= 1
+                self._hosted_calls_reserved -= 1
 
-    def _claude_usd_spent(self) -> bool:
+    def _hosted_usd_spent(self) -> bool:
         priced = sum(
             total["cost_usd"] for total in self.usage_by_model.values()
         )
         spent = priced + self.unpriced_tokens / TOKENS_PER_USD
-        return bool(self.max_claude_usd) and self.max_claude_usd <= spent
+        return bool(self.max_hosted_usd) and self.max_hosted_usd <= spent
 
     def check_spend_limit(self) -> None:
         """Stop the run if it has spent its limit."""
         with self._lock:
-            if self._claude_usd_spent():
+            if self._hosted_usd_spent():
+                priced = sum(
+                    total["cost_usd"] for total in self.usage_by_model.values()
+                )
                 raise BudgetExhausted(
-                    f"Spend limit of {self.max_claude_usd} USD reached"
+                    f"Spending limit of ${self.max_hosted_usd} reached: "
+                    f"${priced:.2f} at known prices and "
+                    f"{self.unpriced_tokens:,} tokens without a price, counted "
+                    f"at {TOKENS_PER_USD:,} per USD. Resume the run with a "
+                    "higher limit."
                 )
 
-    def _claude_calls_used(self) -> int:
-        return self.claude_calls + self._claude_calls_reserved
+    def _hosted_calls_used(self) -> int:
+        return self.hosted_calls + self._hosted_calls_reserved
 
-    def claude_budget_left(self) -> int:
+    def hosted_budget_left(self) -> int:
         """Billed calls to hosted models left in the run's budget (large if
         unlimited)."""
         with self._lock:
-            if self._claude_usd_spent():
+            if self._hosted_usd_spent():
                 return 0
-            if not self.max_claude_calls:
+            if not self.max_hosted_calls:
                 return 1 << 30
-            return self.max_claude_calls - self._claude_calls_used()
+            return self.max_hosted_calls - self._hosted_calls_used()
 
     def record(
         self,

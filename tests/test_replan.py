@@ -15,7 +15,8 @@ from aiprover_orchestration.orchestrator.structures import (
 
 class Stage(SketchStage):
     config = SimpleNamespace(
-        lean_parallel=1, lean_timeout=300, sketch_feedback=""
+        lean_parallel=1, lean_timeout=300, sketch_feedback="",
+        mode="autoformalize",
     )
     state = ResumeState(lean_timeouts=1)
     result_dir = Path("/nonexistent")
@@ -122,7 +123,10 @@ class ChangedLemmaTest(unittest.TestCase):
 class SketchReplyTest(unittest.TestCase):
     def rejected(self, reply, excluded=None, earlier=()):
         stage = Stage(None)
-        stage.config = SimpleNamespace(max_repairs=0, sketch_judge=False)
+        stage.config = SimpleNamespace(
+            max_repairs=0, sketch_judge=False, lemma_counterexamples=False,
+            gaps=False,
+        )
         stage.row = {"informal_proof": ""}
         stage._captain = lambda *args, **fields: reply
         stage._standalone = lambda form, body: body
