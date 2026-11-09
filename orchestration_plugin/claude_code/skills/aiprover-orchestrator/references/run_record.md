@@ -24,7 +24,7 @@ field. The file is only appended to.
 |---|---|
 | `trace_start RUN PROBLEM.json SLUG MODEL` | header: problem, models, pipeline algorithm, Lean environment, role prompts, served config |
 | `traced_check RUN STAGE LABEL FILE [opts]` | `lean_check` step from `aiprover check --json` |
-| `traced_job RUN STAGE LEMMA JOB ROUND` | `model_call` step of the solver with the job's samples |
+| `traced_job RUN STAGE LEMMA JOB ROUND` | `model_call` step of the prover with the job's samples |
 | `traced_subagent RUN STAGE LABEL ROLE MODEL PROMPT REPLY` | `model_call` step of a subagent |
 | `trace_step RUN <jq options> FILTER` | any other step, in particular decisions |
 
@@ -46,9 +46,9 @@ pipeline:
 | `sketch_rejected` | sketch | `repair`, `problems` |
 | `aiprover_job_started` | prove | `lemma`, `statement`, `aiprover_job` |
 | `aiprover_job_grown` | prove | `lemma`, `aiprover_job`, `sessions` |
-| `lemma_proved` | prove | `lemma`, `worker` (sample index, or `"captain"`), `round`, `helpers`, `proof` |
-| `solver_budget_exhausted` | prove | `lemma`, `aiprover_job`, `errors`, `attempts` |
-| `lemma_handback` | prove | `lemma`, `action` (proof, split, restate, retry), `diagnosis`; `statement` and `previous_statement` for restate; `new_lemmas` for split |
+| `lemma_proved` | prove | `lemma`, `worker` (sample index, or `"orchestrator"`), `round`, `helpers`, `proof` |
+| `prover_budget_exhausted` | prove | `lemma`, `aiprover_job`, `errors`, `attempts` |
+| `lemma_escalation` | prove | `lemma`, `action` (proof, split, restate, retry), `diagnosis`; `statement` and `previous_statement` for restate; `new_lemmas` for split |
 | `replan` | sketch | `proved`, `failed` (lemma names) |
 | `lemma_reused` | sketch | `lemma` |
 | `final_verification` | assemble | `checks` (`references/gates.md`), `solution` (the standalone text) |

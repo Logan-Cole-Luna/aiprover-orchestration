@@ -1,13 +1,13 @@
 r"""Render a run's trace as two self-contained, linked HTML pages.
 
 The trace is `trace.json`, or the line record `trace.jsonl` of a run
-driven by the `aiprover-captain` skill.
+driven by the `aiprover-orchestrator` skill.
 
 trace.html (template `trace_view.html`) walks a reader chapter by chapter
 through the problem, the orchestration algorithm, the prompts, and every
 model call, Lean check and decision of the run. trace_replay.html (template
 `trace_replay.html`) animates the run top to bottom on the trace's own clock, from the input
-problem through the captain's steps and the parallel solver lanes to the
+problem through the orchestrator's steps and the parallel prover lanes to the
 verified proof. Both pages share `trace_common.css`, `trace_common.js` and the
 style in `trace_theme.css`. The trace is embedded verbatim, except that absolute
 paths of Lean attempt files are shortened to their file names, and the
@@ -37,7 +37,8 @@ from ...agents.aiprover import (
     split_session_reasoning,
 )
 from ...paths import AIPROVER_JOBS
-from ...utils.files import read_json, write_atomic
+from ...utils.files import read_json, read_record, write_atomic
+from ...utils.vocabulary import modernize
 from ..benchmark import run_costs
 from ..trace import Trace
 
@@ -91,7 +92,7 @@ def add_sample_records(trace: dict) -> dict:
             )
             if not summary_path.exists():
                 continue
-            summary = json.loads(summary_path.read_text())
+            summary = modernize(json.loads(summary_path.read_text()))
             sample.setdefault("ending", session_ending(summary))
             sample.setdefault("check", lean_check_summary(summary.get("check")))
             lean_file = Path(summary.get("lean_file") or "")
@@ -114,8 +115,8 @@ def live_session(directory: Path) -> dict:
     """Progress of one AIProver session from its directory: its harness
     state, and its model replies so far (records of the reasoning proxy);
     once its summary exists, its turns."""
-    state = read_json(directory / "state.json")
-    summary = read_json(directory / "summary.json")
+    state = read_record(directory / "state.json")
+    summary = read_record(directory / "summary.json")
     reasoning = directory / "reasoning.jsonl"
     replies = (
         sum(1 for _ in reasoning.open(errors="replace"))

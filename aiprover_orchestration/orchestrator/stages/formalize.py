@@ -1,14 +1,14 @@
 """Formalization and blind audit.
 
-The captain formalizes the informal result until it compiles; Lean probes
+The orchestrator formalizes the informal result until it compiles; Lean probes
 the statement (fidelity.py), and a proof of `False` from its hypotheses
-returns to formalization at once. An auditor writes a read-back of the Lean
+returns to formalization at once. A checker writes a read-back of the Lean
 code without seeing the source, and each judge compares the read-back and
 the Lean evidence with the source: first the `judge` role, a model other
-than the captain's when configured, then the captain. Every judge must
+than the orchestrator's when configured, then the orchestrator. Every judge must
 return FAITHFUL. REVISE returns to formalization with the read-back and the
 issues as feedback. The optional `formalizer` role writes a reference
-formalization of the source, without seeing the captain's, which Lean
+formalization of the source, without seeing the orchestrator's, which Lean
 compares with the statement.
 
 Related published work (tags defined in docs/lit_review/lit_review.md §6):
@@ -67,11 +67,11 @@ class FormalizeStage:
                 )
             else:
                 form.readback = self.agents.complete(
-                    prompts.AUDITOR_TEMPLATE.format(
+                    prompts.CHECKER_TEMPLATE.format(
                         theorem_name=form.theorem_name, lean_code=lean_code
                     ),
-                    system_prompt=self.auditor_system,
-                    role="auditor",
+                    system_prompt=self.checker_system,
+                    role="checker",
                     phase=f"audit{audit_round}",
                     round=audit_round,
                 )
@@ -90,9 +90,9 @@ class FormalizeStage:
             feedback = prompts.FORMALIZE_FEEDBACK_TEMPLATE.format(
                 definitions=self._own_definitions(form),
                 statement=form.statement,
-                problems="Auditor read-back:\n"
+                problems="Checker read-back:\n"
                 + form.readback
-                + "\n\nCaptain review:\n"
+                + "\n\nOrchestrator review:\n"
                 + form.issues,
             )
             last_form, form = form, None
@@ -102,7 +102,7 @@ class FormalizeStage:
         self, form: Formalization, lean_code: str, audit_round: int
     ) -> None:
         """Set the verdict of the panel: the `judge` role, if configured, and
-        the captain. The first REVISE decides, which spares the later judge."""
+        the orchestrator. The first REVISE decides, which spares the later judge."""
         prompt = prompts.JUDGE_READBACK_TEMPLATE.format(
             informal_statement=self.row["informal_statement"],
             informal_proof=self.row["informal_proof"],
@@ -110,7 +110,7 @@ class FormalizeStage:
             readback=form.readback,
             evidence=form.evidence,
         )
-        roles = ["captain"]
+        roles = ["orchestrator"]
         if "judge" in self.agents.agents:
             roles.insert(0, "judge")
         for role in roles:
@@ -190,11 +190,11 @@ class FormalizeStage:
         return self.reference
 
     def _formalize_until_compiles(
-        self, feedback: str, role: str = "captain"
+        self, feedback: str, role: str = "orchestrator"
     ) -> Formalization:
-        """A compiling formalization by `role`. Only the captain's enters
+        """A compiling formalization by `role`. Only the orchestrator's enters
         the run's state: the reference is recorded under its own events."""
-        event = "formalization" if role == "captain" else "reference"
+        event = "formalization" if role == "orchestrator" else "reference"
         for repair in range(self.config.max_repairs + 1):
             template = (
                 prompts.FORMALIZE_LIBRARY_TEMPLATE
@@ -211,7 +211,7 @@ class FormalizeStage:
                 ),
                 role=role,
                 phase=f"formalize{repair}",
-                system_prompt=prompts.CAPTAIN_SYSTEM,
+                system_prompt=prompts.ORCHESTRATOR_SYSTEM,
             )
             definitions = drop_imports(extract_tag(reply, "definitions"))
             statement_block = drop_imports(extract_tag(reply, "statement"))

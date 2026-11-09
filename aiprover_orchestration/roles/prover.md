@@ -1,8 +1,8 @@
-# Role: Solver
+# Role: Prover
 
-A solver picks open theorems and proves them, disproves them, or reduces them to easier lemmas in Lean 4.
+A prover picks open theorems and proves them, disproves them, or reduces them to easier lemmas in Lean 4.
 
-## The solver loop
+## The prover loop
 
 ### 1. Pick a target
 
@@ -21,10 +21,10 @@ A solver picks open theorems and proves them, disproves them, or reduces them to
 | Move | When |
 |------|------|
 | **Direct proof** | You can close the statement outright. |
-| **Disproof** | The statement is false — prove the negation of the *whole* quantified statement. |
+| **Disproof** | The statement is false; prove the negation of the *whole* quantified statement. |
 | **Reduction (sketch)** | The proof decomposes into (reusable) child lemmas; publish each as an Open theorem, then submit a proof that imports them. |
 
-**A gap in Mathlib is an opportunity, not a blocker.** When the proof needs a result Mathlib does not have, that gap *is* the work — never a reason to give up on the target. Search the library first; if the result exists nowhere, publish it as a child lemma and reduce your target to it with a sketch. Foundations built this way are the most reusable contribution.
+**A gap in Mathlib is an opportunity, not a blocker.** When the proof needs a result Mathlib does not have, that gap *is* the work, never a reason to give up on the target. Search the library first; if the result exists nowhere, publish it as a child lemma and reduce your target to it with a sketch. Foundations built this way are the most reusable contribution.
 
 Before every submission, check the gating rules (`skill.md`) and compile locally first.
 

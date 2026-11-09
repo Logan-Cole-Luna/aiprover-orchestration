@@ -125,10 +125,10 @@ class SketchReplyTest(unittest.TestCase):
         stage = Stage(None)
         stage.config = SimpleNamespace(
             max_repairs=0, sketch_judge=False, lemma_counterexamples=False,
-            gaps=False,
+            open_subgoals=False,
         )
         stage.row = {"informal_proof": ""}
-        stage._captain = lambda *args, **fields: reply
+        stage._orchestrator = lambda *args, **fields: reply
         stage._standalone = lambda form, body: body
         stage._sketch_body = lambda form, sketch: ""
         stage._check = lambda *args, **fields: SimpleNamespace(

@@ -41,7 +41,7 @@ function interruptedSteps(all) {
     const unrun = (job.samples || []).length > 0
       && job.samples.every(x => x.status === "cancelled" || x.status === "infra");
     const ended = window.some(s => s.event === "lemma_proved"
-      || (s.event === "solver_budget_exhausted" && !unrun));
+      || (s.event === "prover_budget_exhausted" && !unrun));
     if (ended) continue;
     // Only after an interruption: a job still running in a live trace is kept.
     if (!all.some(s => s.index > job.index && s.event === "resumed")) continue;
@@ -77,7 +77,7 @@ for (const step of steps) {
 const jobOf = step => (isJob(step) ? step : jobOfStep.get(step.index)) || null;
 const jobNumber = job => (jobsByLemma.get(job.lemma) || []).indexOf(job) + 1;
 
-// A chat solver's step belongs to the latest call on the same lemma, worker and
+// A chat prover's step belongs to the latest call on the same lemma, worker and
 // round recorded at or before it (a later sketch repeats these keys).
 const chatCallOf = step => step.kind === "model_call" ? step
   : calls.filter(c => c.lemma === step.lemma && c.worker === step.worker && c.round === step.round
@@ -141,26 +141,26 @@ function sampleOutcome(job, k) {
 const sampleLanes = () => [...Array(Math.max(1, ...calls.filter(isJob).map(jobSamples))).keys()];
 // Sessions of one job; jobs may run different numbers of sessions.
 const jobLanes = job => [...Array(jobSamples(job)).keys()];
-// Captain calls on a lemma the solvers kept failing on, and their decisions.
-const handbackLemma = call => (/^handback\/(.+)$/.exec(call.label || "") || [])[1] || null;
-const isHandback = step => step?.kind === "model_call" && handbackLemma(step) != null;
-// The trace records the orchestrator as "captain"; pages show the former.
-const roleName = text => String(text).replace(/captain( \(orchestrator model\))?/g, "orchestrator");
-const captainCheck = step => step.kind === "lean_check" && (step.worker === "captain" || /_restated$/.test(step.label || ""));
+// Orchestrator calls on a lemma the provers kept failing on, and their decisions.
+const escalationLemma = call => (/^escalation\/(.+)$/.exec(call.label || "") || [])[1] || null;
+const isEscalation = step => step?.kind === "model_call" && escalationLemma(step) != null;
+// The trace records the orchestrator as "orchestrator"; pages show the former.
+const roleName = text => String(text).replace(/orchestrator( \(orchestrator model\))?/g, "orchestrator");
+const orchestratorCheck = step => step.kind === "lean_check" && (step.worker === "orchestrator" || /_restated$/.test(step.label || ""));
 
 // Who proved a lemma, for the lemma_proved decision `win`.
 function winnerText(win) {
-  if (win.worker === "captain") return "the orchestrator, after a hand-back";
+  if (win.worker === "orchestrator") return "the orchestrator, after an escalation";
   if (win.worker === "manual") return "a proof from its parts, written by hand";
   const job = jobOf(win);
   return job ? `AIProver job ${jobNumber(job)}, sample ${win.worker}`
-    : `solver ${win.worker}, round ${win.round}`;
+    : `prover ${win.worker}, round ${win.round}`;
 }
 // Why a lemma has a further attempt after `previous`: Lean errors for a chat
-// solver; for AIProver a new job, after a replan (a new sketch) or else a
+// prover; for AIProver a new job, after a replan (a new sketch) or else a
 // retry of the same statement (a resumption does not change the attempt).
 function transitionText(previous, next) {
-  if (!isJob(next)) return solverOutcome(previous).state === "fail" ? "errors" : "";
+  if (!isJob(next)) return proverOutcome(previous).state === "fail" ? "errors" : "";
   const between = decisions.filter(d => d.index > previous.index && d.index < next.index);
   if (between.some(d => d.event === "replan")) return "replan";
   return "retry";
@@ -182,11 +182,11 @@ for (const call of calls) {
     callOfCheck.set(check.index, call);
   }
 }
-const rejections = eventsOf("solver_attempt_rejected");
+const rejections = eventsOf("prover_attempt_rejected");
 const lemmaWins = new Map(eventsOf("lemma_proved").map(d => [d.lemma, d]));
 
-// Outcome of one solver call, for colouring the timeline and step lists.
-function solverOutcome(call) {
+// Outcome of one prover call, for colouring the timeline and step lists.
+function proverOutcome(call) {
   const win = lemmaWins.get(call.lemma);
   const check = checkOfCall.get(call.index);
   const late = win && call.index > win.index;
@@ -428,21 +428,21 @@ const EVENT_TEXT = {
   formalization_compiled: "Formalization compiles",
   formalization_rejected: "Formalization rejected",
   audit_verdict: "Audit verdict",
-  setting_checked: "Setting checked",
+  vacuity_checked: "Vacuity checked",
   theorem_refuted: "Theorem refuted",
   sketch_judged: "Sketch judged",
   sketch_accepted: "Sketch accepted",
   sketch_rejected: "Sketch rejected",
   lemma_proved: "Lemma proved",
-  solver_attempt_rejected: "Attempt rejected before Lean",
-  solver_budget_exhausted: "Solver chain exhausted its budget",
+  prover_attempt_rejected: "Attempt rejected before Lean",
+  prover_budget_exhausted: "Prover chain exhausted its budget",
   replan: "Sketch revision requested",
   lemma_reused: "Proved lemma reused",
   lemma_recheck_failed: "Kept proof failed its recheck",
-  lemma_handback: "Lemma handed back to the orchestrator",
+  lemma_escalation: "Lemma escalated to the orchestrator",
   assembly_rejected: "Assembly failed; returned to the orchestrator",
   early_revision: "Attempts used: lemma revised early",
-  lemma_direction: "Orchestrator's direction for the lemma's jobs",
+  lemma_guidance: "Orchestrator's guidance for the lemma's jobs",
   conflict: "Conflict analysed (CDCL)",
   backjump: "Backjump: subtree retracted, decision restated",
   clause_learned: "Clause learned",
@@ -460,11 +460,11 @@ const manualSplit = step => (step.new_lemmas || []).length > 0
 function stepTitle(step) {
   if (step.kind === "model_call") {
     if (isJob(step)) return `AIProver job ${jobNumber(step)} · ${step.lemma}`;
-    if (step.lemma != null) return `solver ${step.worker} · ${step.lemma} · round ${step.round}`;
+    if (step.lemma != null) return `prover ${step.worker} · ${step.lemma} · round ${step.round}`;
     return `${roleName(step.role)} · ${step.label}`;
   }
   if (step.kind === "lean_check") return `Lean check · ${step.file}`;
-  if (step.event === "lemma_handback" && manualSplit(step)) return "Lemma split by hand";
+  if (step.event === "lemma_escalation" && manualSplit(step)) return "Lemma split by hand";
   return EVENT_TEXT[step.event] || step.event;
 }
 
@@ -472,7 +472,7 @@ function stepResult(step) {
   if (step.kind === "model_call") {
     if (step.error) return `<span class="pill fail">error</span>`;
     if (step.lemma != null) {
-      const { state } = solverOutcome(step);
+      const { state } = proverOutcome(step);
       const label = state === "pending" && isJob(step) ? jobSummary(step)
         : { win: "proof kept", ok: "compiles", fail: "Lean errors",
             late: "after lemma proved", rejected: "rejected", pending: "no proof returned" }[state];
@@ -596,7 +596,7 @@ function extractedCheckHTML(outcome) {
     ${errors.length ? diagnosticsHTML(errors.join("\n")) : ""}`;
 }
 
-// A Lean check of a chat model's code (captain or chat solver).
+// A Lean check of a chat model's code (orchestrator or chat prover).
 function chatCheckHTML(check) {
   if (!check) return `<p class="muted">Lean did not check this reply.</p>`;
   const errors = check.errors || [];
@@ -665,12 +665,12 @@ function reasoningHTML(sample) {
     <span class="muted">${escapeHTML(r.time || "")}</span>${r.truncated ? ` <span class="pill fail">stopped at the reply token cap</span>` : ""}</div>${reasoningBlock(r.reasoning || "", true)}</div>`).join("");
 }
 
-// Drawer panels of an AIProver job, for one sample (a solver lane) or all.
+// Drawer panels of an AIProver job, for one sample (a prover lane) or all.
 function jobPanels(job, sampleIndex) {
   const lanes = sampleIndex == null ? jobLanes(job) : [sampleIndex];
   const per = render => lanes.map(k => {
     const outcome = sampleOutcome(job, k);
-    const head = lanes.length > 1 ? `<h4 class="lanehead">solver ${k}</h4>` : "";
+    const head = lanes.length > 1 ? `<h4 class="lanehead">prover ${k}</h4>` : "";
     return head + render(outcome.sample || {}, outcome, k);
   }).join("");
   return [
@@ -696,7 +696,7 @@ function stepDetail(step, sampleIndex = null) {
     meta.push(`<span>AIProver job <b>${jobNumber(job)}</b> on <b>${escapeHTML(job.lemma)}</b></span>`);
     if (sampleIndex != null) {
       const o = sampleOutcome(job, sampleIndex);
-      meta.push(`<span>solver <b>${sampleIndex}</b></span>`,
+      meta.push(`<span>prover <b>${sampleIndex}</b></span>`,
         `<span>duration <b>${formatDuration(o.end - o.start)}</b></span>`,
         o.turns != null ? `<span>turns <b>${o.turns}</b></span>` : "",
         o.sample?.ending ? `<span>ended <b>${escapeHTML(o.sample.ending)}</b></span>` : "",
@@ -714,8 +714,8 @@ function stepDetail(step, sampleIndex = null) {
       `<span>output tokens <b>${(step.usage?.outputTokens ?? 0).toLocaleString()}</b></span>`,
       `<span>cost <b>${formatUSD(step.cost_usd)}</b></span>`);
     const check = checkOfCall.get(step.index);
-    const note = step.role === "auditor"
-      ? `<p class="note">The auditor's message contains only Lean code. Its system prompt is the auditor playbook.</p>` : "";
+    const note = step.role === "checker"
+      ? `<p class="note">The checker's message contains only Lean code. Its system prompt is the checker playbook.</p>` : "";
     const linked = check ? `<p class="note">The code in this reply was compiled in ${stepLink(check)}: ${stepResult(check)}</p>` : "";
     const panels = [
       ["response", "Reply", step.error ? `<pre class="plain errors">${escapeHTML(step.error)}</pre>` : taggedHTML(step.response || "")],

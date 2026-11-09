@@ -41,15 +41,15 @@ def digest(text: str) -> str:
 
 
 def compute_rows(costs: dict) -> list[tuple[str, str]]:
-    """Report rows for the solver's GPU time and the hosted models' cost."""
-    solver = costs["solver"]
+    """Report rows for the prover's GPU time and the hosted models' cost."""
+    prover = costs["prover"]
     rows = []
-    if solver["jobs"]:
+    if prover["jobs"]:
         compute = (
-            f"{solver['sessions']} AIProver sessions in {solver['jobs']} "
-            f"jobs, {solver['session_hours']:.0f} session-hours"
+            f"{prover['sessions']} AIProver sessions in {prover['jobs']} "
+            f"jobs, {prover['session_hours']:.0f} session-hours"
         )
-        gpu = solver["gpu"]
+        gpu = prover["gpu"]
         if "gpu_hours" in gpu:
             bound = "at least " if gpu["state"] == "partial" else ""
             compute += (
@@ -153,7 +153,7 @@ class ReviewStage:
     def credits(self, sketch: Sketch) -> dict[str, str]:
         """Who proved each declaration of the solution, from the trace."""
         steps = self.trace.document["steps"]
-        solver_model = self.agents.agents["solver"].model
+        prover_model = self.agents.agents["prover"].model
         credits = {}
         for lemma in sketch.lemmas:
             proved = next(
@@ -167,8 +167,8 @@ class ReviewStage:
             )
             if proved is None:
                 continue
-            if proved.get("worker") == "captain":
-                text = "proved by the captain after a hand-back"
+            if proved.get("worker") == "orchestrator":
+                text = "proved by the orchestrator after an escalation"
             elif proved.get("worker") == "manual":
                 text = "proved from its parts by a proof written by hand"
             else:
@@ -183,14 +183,14 @@ class ReviewStage:
                     f"proved by AIProver, job {len(jobs)}, "
                     f"session {proved['worker']}"
                     if jobs
-                    else f"proved by solver {proved['worker']} "
-                    f"({solver_model}), "
+                    else f"proved by prover {proved['worker']} "
+                    f"({prover_model}), "
                     f"round {proved.get('round', 0)}"
                 )
             credits[lemma.name] = text
             for _, helper, _ in split_declarations(lemma.helpers):
                 credits[helper] = f"helper of {lemma.name}, {text}"
-        credits[MAIN_NAME] = "main proof from the captain's sketch"
+        credits[MAIN_NAME] = "main proof from the orchestrator's sketch"
         return credits
 
     def _costs(self) -> dict:
@@ -246,8 +246,8 @@ class ReviewStage:
             (
                 "Agents",
                 escape(
-                    f"captain {agents['captain'].model}; solvers "
-                    f"{agents['solver'].model}; report "
+                    f"orchestrator {agents['orchestrator'].model}; provers "
+                    f"{agents['prover'].model}; report "
                     f"{agents['writer'].model}"
                 ),
             ),

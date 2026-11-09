@@ -1,11 +1,11 @@
 {
   "agents": {
-    "captain": {
+    "orchestrator": {
       "backend": "claude",
       "model": "claude-haiku-4-5-20251001",
       "timeout": 2400
     },
-    "auditor": {
+    "checker": {
       "backend": "openai_compatible",
       "model": "qwen3-4b-instruct",
       "base_url": "http://127.0.0.1:8000/v1",
@@ -13,7 +13,7 @@
       "top_p": 0.8,
       "max_tokens": 4096
     },
-    "solver": {
+    "prover": {
       "backend": "aiprover",
       "model": "qwen3-4b-instruct",
       "config": "configs/aiprover/local.toml",

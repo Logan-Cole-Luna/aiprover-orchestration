@@ -1,4 +1,4 @@
-"""Hand-back and conflict analysis with scripted captain replies and real
+"""Escalation and conflict analysis with scripted orchestrator replies and real
 Lean, and the replay of their decisions on resume."""
 
 import unittest
@@ -28,12 +28,12 @@ SPLIT = (
 
 
 @requires_lean
-class HandbackTest(TemporaryDirectoryTest):
+class EscalationTest(TemporaryDirectoryTest):
 
-    def handback(self, replies, lemma, sketch):
+    def escalation(self, replies, lemma, sketch):
         run = self.orchestration(ScriptedPool(replies))
         phase = aiprover_phase(run, sketch)
-        run._handback(phase, lemma)
+        run._escalation(phase, lemma)
         return run, phase.pool.lemmas
 
     def test_split_with_definitions_and_replay(self):
@@ -44,12 +44,12 @@ class HandbackTest(TemporaryDirectoryTest):
             "<split>theorem goal_part : (2 : Nat) + 2 = {name} := by sorry"
             "</split><proof>exact goal_part</proof>"
         )
-        run, submitted = self.handback(
+        run, submitted = self.escalation(
             [split.format(name="four"), split.format(name="goal_four")],
             goal,
             sketch,
         )
-        self.assertEqual(run.agents.phases, ["handback/goal"] * 2)
+        self.assertEqual(run.agents.phases, ["escalation/goal"] * 2)
         self.assertTrue(goal.proved)
         part = sketch.lemmas[0]
         self.assertEqual(part.definitions, ("def goal_four : Nat := 4",))
@@ -81,11 +81,11 @@ class HandbackTest(TemporaryDirectoryTest):
         def at_limit():
             raise AgentLimitReached("error_max_turns")
 
-        run, _ = self.handback(
+        run, _ = self.escalation(
             [at_limit, "<proof>rfl</proof>"], goal, Sketch([goal], "trivial")
         )
         self.assertFalse(goal.proved)
-        self.assertIn(("lemma_handback", "rejected"), self.decisions(run))
+        self.assertIn(("lemma_escalation", "rejected"), self.decisions(run))
 
     def test_restate_refused_after_a_proof_found_meanwhile(self):
         other = Lemma("other", "theorem other : (1 : Nat) = 2", attempts=3)
@@ -93,21 +93,21 @@ class HandbackTest(TemporaryDirectoryTest):
         sketch = Sketch([other, user], "trivial")
 
         def reply():
-            # `user` is proved from `other` while the captain answers.
+            # `user` is proved from `other` while the orchestrator answers.
             user.proof, user.proved = "exact (fun _ => trivial) other", True
             return "<restate>theorem other : (1 : Nat) = 1</restate>"
 
         run = self.orchestration(ScriptedPool([reply, "<retry/>"]))
-        run._handback(aiprover_phase(run, sketch), other)
+        run._escalation(aiprover_phase(run, sketch), other)
         self.assertEqual(other.statement, "theorem other : (1 : Nat) = 2")
-        self.assertIn(("lemma_handback", "retry"), self.decisions(run))
+        self.assertIn(("lemma_escalation", "retry"), self.decisions(run))
 
     def conflict_run(self, replies, config):
-        """A split of `goal` whose child is stuck, and a run whose captain
+        """A split of `goal` whose child is stuck, and a run whose orchestrator
         answers its conflict analysis with `replies`."""
         goal = Lemma("goal", GOAL)
         sketch = Sketch([goal], "trivial")
-        first, _ = self.handback([SPLIT], goal, sketch)
+        first, _ = self.escalation([SPLIT], goal, sketch)
         child = sketch.lemmas[0]
         child.handed_back = True
         run = self.orchestration(ScriptedPool(replies), config)
@@ -129,7 +129,7 @@ class HandbackTest(TemporaryDirectoryTest):
         self.assertFalse(goal.proved)
         self.assertEqual(phase.pool.lemmas, [goal])
         self.assertEqual(len(run.clauses.clauses()), 2)
-        # The trace of the hand-back and the backjump replays to the same
+        # The trace of the escalation and the backjump replays to the same
         # sketch.
         run.trace.document["steps"].insert(
             0,

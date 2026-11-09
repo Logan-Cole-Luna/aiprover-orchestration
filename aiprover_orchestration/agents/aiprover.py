@@ -1,4 +1,4 @@
-"""AIProver harness as a solver backend.
+"""AIProver harness as a prover backend.
 
 An AIProver call is a complete agentic Lean session: the evolved hevo harness
 (`AIProver/AIProver_plugin`) drives a model through lean-lsp tools for
@@ -242,7 +242,7 @@ class CliTimeout(AgentCallError):
 
 
 class AIProverAgent(Agent):
-    """Solver backed by AIProver jobs.
+    """Prover backed by AIProver jobs.
 
     Options: `config` (path of the aiprover.toml, relative to the
     orchestration root), `cli` (path of the plugin's `bin/aiprover`;
@@ -304,7 +304,7 @@ class AIProverAgent(Agent):
 
     def complete_once(self, prompt: str, system_prompt: str):
         raise NotImplementedError(
-            "AIProverAgent serves the solver role through solve()"
+            "AIProverAgent serves the prover role through solve()"
         )
 
     def _cli(

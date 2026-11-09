@@ -1,20 +1,20 @@
 ---
-name: aiprover-captain
-description: Captain of an AIProver orchestration run in Lean 4 (v4.23.0, Mathlib v4.23.0). Use when asked to formalize and prove a theorem with the orchestration, to run a problem from the orchestration datasets (a uuid of data/*.jsonl such as OpenAIMath_164_HindmanDistinctExpressions or JiatuBook_*), or to turn an informal statement and proof into a verified Lean proof whose lemmas are proved by AIProver jobs. You formalize, have the formalization audited blind, decompose the proof into lemmas, dispatch AIProver jobs, answer hand-backs, assemble, and have the result reviewed; the run is recorded in results/<run_id>/.
+name: aiprover-orchestrator
+description: Orchestrator of an AIProver orchestration run in Lean 4 (v4.23.0, Mathlib v4.23.0). Use when asked to formalize and prove a theorem with the orchestration, to run a problem from the orchestration datasets (a uuid of data/*.jsonl such as OpenAIMath_164_HindmanDistinctExpressions or JiatuBook_*), or to turn an informal statement and proof into a verified Lean proof whose lemmas are proved by AIProver jobs. You formalize, have the formalization audited blind, decompose the proof into lemmas, dispatch AIProver jobs, answer escalations, assemble, and have the result reviewed; the run is recorded in results/<run_id>/.
 ---
 
-# AIProver orchestration: the captain
+# AIProver orchestration: the orchestrator
 
-You are the captain of an orchestration run. The method is the orchestration
+You are the orchestrator of an orchestration run. The method is the orchestration
 pipeline of `aiprover_orchestration/orchestrator/` (documented in
-`docs/orchestration.md` of the repository) with you in the captain's place:
-every captain decision is yours, made in this session.
+`docs/orchestration.md` of the repository) with you in the orchestrator's place:
+every orchestrator decision is yours, made in this session.
 
 | Role | Who | Responsibility |
 |---|---|---|
-| Captain | you | Formalize; judge the read-back; write and revise the sketch; answer hand-backs; assemble |
-| Auditor | subagent, `model: sonnet` | Blind read-back of the Lean statement; never sees the source |
-| Solver | AIProver jobs, or subagents `model: sonnet` without a model server | Prove one lemma per job (several independent sessions) or per subagent attempt |
+| Orchestrator | you | Formalize; judge the read-back; write and revise the sketch; answer escalations; assemble |
+| Faithfulness checker | subagent, `model: sonnet` | Blind read-back of the Lean statement; never sees the source |
+| Prover | AIProver jobs, or subagents `model: sonnet` without a model server | Prove one lemma per job (several independent sessions) or per subagent attempt |
 | Reviewer | fresh subagent, `model: opus` | Referee the verified file against the source |
 | Writer | fresh subagent, `model: opus` | Informalization of the verified proof |
 
@@ -34,7 +34,7 @@ directory, given when the skill loads.
 ```
 
 It sets `ROOT` (the repository), `AIP` (the AIProver CLI), `WS`
-(`orchestration_workspace/`), `JOBS`, `SOLVER` (`aiprover`, or `claude` when
+(`orchestration_workspace/`), `JOBS`, `PROVER` (`aiprover`, or `claude` when
 `./setup --endpoint none` configured no model server), and the recording functions
 `trace_start`, `trace_step`, `traced_check`, `traced_job` and
 `traced_subagent` (`references/run_record.md`).
@@ -43,16 +43,16 @@ Role texts are read from the repository, never paraphrased from memory:
 
 | Text | Path under `$ROOT/aiprover_orchestration/` |
 |---|---|
-| Captain principles | `roles/captain.md`, `orchestrator/prompts/system/captain.md` |
-| Auditor | `roles/auditor.md`, `orchestrator/prompts/templates/auditor.md` |
+| Orchestrator principles | `roles/orchestrator.md`, `orchestrator/prompts/system/orchestrator.md` |
+| Faithfulness checker | `roles/faithfulness checker.md`, `orchestrator/prompts/templates/faithfulness checker.md` |
 | Read-back judgement | `orchestrator/prompts/templates/judge_readback.md` |
 | Sketch guidelines | `orchestrator/prompts/templates/sketch.md` |
-| Hand-back actions | `orchestrator/prompts/templates/handback.md` |
+| Escalation actions | `orchestrator/prompts/templates/escalation.md` |
 | AIProver lemma text | `orchestrator/prompts/templates/aiprover_lemma.md` |
 | Reviewer | `orchestrator/prompts/system/reviewer.md`, `templates/final_review.md` |
 | Writer | `orchestrator/prompts/system/writer.md`, `templates/informal.md` |
 
-Read `roles/captain.md` before formalizing. Faithfulness is the single
+Read `roles/orchestrator.md` before formalizing. Faithfulness is the single
 criterion for every statement you write.
 
 ## Budgets
@@ -65,7 +65,7 @@ stated in the trace header. The user may change them.
 | Repairs of a formalization or sketch on Lean errors | 4 |
 | Audit rounds | 2 |
 | Completed AIProver jobs per lemma statement | 5 |
-| Failed jobs before a hand-back | 3 |
+| Failed jobs before an escalation | 3 |
 | Replans | 1 |
 | Sessions in use at once (all jobs) | free slots of `$AIP slots` |
 
@@ -75,7 +75,7 @@ stated in the trace header. The user may change them.
 `R=$ROOT/results/$RUN` the record. Record each step as it happens
 (`references/run_record.md` gives the exact commands and event names).
 
-**0. Preflight.** With `SOLVER=claude` there is no model server: run the
+**0. Preflight.** With `PROVER=claude` there is no model server: run the
 doctor, which then requires only the Lean rows (lean project built, lean
 toolchain, Mathlib canary, kernel axiom probe), skip `endpoint_up` and
 `$AIP slots`, and prove lemmas as step 5 states for subagents. Otherwise:
@@ -117,7 +117,7 @@ passes, `$AIP probe` shows no `COUNTEREXAMPLE`, and no forbidden construct
 appears in the definitions (`references/gates.md`). Repair on errors. Record
 `formalization_compiled`.
 
-**3. Blind audit.** Spawn the auditor (`references/subagents.md`) with only
+**3. Blind audit.** Spawn the faithfulness checker (`references/subagents.md`) with only
 the role guide and the Lean code. Then judge the read-back against the
 source in both directions, as `judge_readback.md` asks: FAITHFUL or REVISE
 with each discrepancy. Record the call and `audit_verdict`. REVISE returns
@@ -128,12 +128,12 @@ to step 2. Still unfaithful after the audit rounds: status
 (each `theorem <name> ... := by sorry`), and
 `theorem solution <same signature as the target> := by <main proof>`.
 Follow `sketch.md`: one lemma per nontrivial step of the source proof (every
-induction its own lemma), small self-contained lemmas (a solver sees only
+induction its own lemma), small self-contained lemmas (a prover sees only
 earlier lemmas), a short main proof without `sorry`, unique names other than
 `solution`. Gate (`references/gates.md`): compiles with `--statement-only`,
 no `sorry` in the main proof, `probe` shows no counterexample. Record
 `sketch_accepted` (or `sketch_rejected` with the errors). Freeze the lemma
-statements: they change only through a hand-back or a replan.
+statements: they change only through an escalation or a replan.
 
 **5. Prove.** For every unproved lemma `L`, at the same time (no limit on
 concurrent lemmas):
@@ -151,12 +151,12 @@ concurrent lemmas):
       --theorem "$T/L/theorem.md" --proof "$T/proof.md"
   ```
 
-With `SOLVER=claude`, each attempt on `L` is a solver subagent
+With `PROVER=claude`, each attempt on `L` is a prover subagent
 (`references/subagents.md`) in place of a job: spawn one per unproved lemma
-at once, gate each reply as a hand-back `proof`, and record `lemma_proved`
-(`worker: "subagent"`) or `solver_budget_exhausted` with its errors. A failed
+at once, gate each reply as an escalation `proof`, and record `lemma_proved`
+(`worker: "subagent"`) or `prover_budget_exhausted` with its errors. A failed
 attempt counts as a failed job; the next subagent receives its errors. The
-budgets, hand-backs and replans below are unchanged.
+budgets, escalations and replans below are unchanged.
 
 Then `$AIP wait <all job ids> --any --timeout 540` in the foreground with
 the Bash timeout at 600000 ms; repeat while it returns rc 3. Do not poll
@@ -165,7 +165,7 @@ otherwise and do not read session transcripts. For each finished job,
 `verified`, `fixed-code:kept`, and its own declarations contain no
 forbidden construct; keep its helper declarations and its proof of `L`
 (`$AIP result <job> --all`). Record `lemma_proved`, or for a failed job
-`solver_budget_exhausted` with its errors. When sessions finish
+`prover_budget_exhausted` with its errors. When sessions finish
 while others run, give the free slots to running jobs with
 `$AIP grow <job> -k <n>`, in the same weighted shares.
 
@@ -175,8 +175,8 @@ A job whose samples all end `empty` within minutes points to the endpoint,
 not the lemma: run the doctor (row "structured tool calls") before
 resubmitting, and do not count the job as an attempt.
 
-**Hand-back.** Once a lemma has 3 failed jobs on its current statement, you
-diagnose it from the best sample's errors and code, as `handback.md`
+**Escalation.** Once a lemma has 3 failed jobs on its current statement, you
+diagnose it from the best sample's errors and code, as `escalation.md`
 describes, and choose one action:
 
 | Action | When | Gate before it is applied |
@@ -184,9 +184,9 @@ describes, and choose one action:
 | `proof` | the missing step is visible or routine | helpers + proof compile with earlier lemmas as stubs |
 | `split` | one step is hard on its own | new lemmas (stubs) placed before `L` and a proof of `L` from them compile; submit the new lemmas at once |
 | `restate` | `L` is false or lacks a hypothesis the main proof supplies | the whole sketch compiles; refused if a proved lemma uses the old statement; attempts reset |
-| `retry` | failures come from the solver setup | none; resubmit with `--hint-file` (error, goal state, confirmed lemma names) |
+| `retry` | failures come from the prover setup | none; resubmit with `--hint-file` (error, goal state, confirmed lemma names) |
 
-Record `lemma_handback` with the diagnosis and the action. One hand-back per
+Record `lemma_escalation` with the diagnosis and the action. One escalation per
 statement; a restatement allows another.
 
 **Replan.** When every lemma is proved or out of jobs and some are not

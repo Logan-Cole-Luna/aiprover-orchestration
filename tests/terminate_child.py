@@ -16,7 +16,7 @@ from tests.support import FORM, ScriptedPool, orchestration
 def main(directory: Path) -> None:
     for signum in (signal.SIGTERM, signal.SIGINT):
         signal.signal(signum, terminate)
-    solver = AIProverAgent(
+    prover = AIProverAgent(
         "fake",
         config=str(directory / "aiprover.toml"),
         cli=str(directory / "bin" / "aiprover"),
@@ -24,8 +24,8 @@ def main(directory: Path) -> None:
     )
     run = orchestration(
         directory,
-        ScriptedPool(solver=solver, budget=0),
-        Config(aiprover_handback_after=0),
+        ScriptedPool(prover=prover, budget=0),
+        Config(aiprover_escalation_after=0),
     )
     lemmas = [
         Lemma("lem_a", "theorem lem_a : True"),

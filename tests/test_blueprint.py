@@ -89,8 +89,8 @@ class PlanReviewTest(TemporaryDirectoryTest):
     def check_guidance_reaches_the_guided_phases_only(self):
         run = self.run_with(sketch_guidance="prefer induction")
         run.agents.replies = ["", ""]
-        run._captain("prompt", "direction/a")
-        run._captain("prompt", "judge0")
+        run._orchestrator("prompt", "guidance/a")
+        run._orchestrator("prompt", "judge0")
         self.assertIn("prefer induction", run.agents.prompts[0])
         self.assertEqual(run.agents.prompts[1], "prompt")
 

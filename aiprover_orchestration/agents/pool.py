@@ -1,6 +1,6 @@
 """Pluggable model backends for the orchestration roles.
 
-Each role (captain, auditor, solver, reviewer, writer) is served by an agent
+Each role (orchestrator, checker, prover, reviewer, writer) is served by an agent
 built from a specification in the run configuration:
 
     {"backend": "claude", "model": "claude-sonnet-5"}
@@ -20,13 +20,13 @@ set, otherwise through the logged-in `claude` CLI (Claude subscription);
 `openai_compatible` covers any server that implements the OpenAI chat
 completions schema, such as a local vLLM server or a provider's API, with
 Lean tools if its specification sets `tools`. `aiprover` runs the AIProver
-harness (a full agentic Lean session per call; solver role only) with the
+harness (a full agentic Lean session per call; prover role only) with the
 model named in its own configuration. `python` loads a user-defined
 subclass of `Agent`, so a custom agent can replace any role without changes
 to the pipeline.
 
 `tools` gives an agent Lean tools (agents/common.py, agents/session_tools.py);
-`role_spec` sets the defaults: on for a service's captain except its judge
+`role_spec` sets the defaults: on for a service's orchestrator except its judge
 phases, off for other roles and for a chat server, which may not support them.
 
 `AgentPool` routes each call to the agent of its role, retries transient
@@ -92,11 +92,11 @@ BACKENDS = {
 
 
 # Roles whose CLI agent (Claude or Codex) has Lean tools unless its specification says
-# otherwise, and the captain phases that have none by default: the judges
+# otherwise, and the orchestrator phases that have none by default: the judges
 # assess text, and tools would let them consult more than they are shown;
-# a direction is written from the job's inputs, as the prover sees them.
-TOOL_ROLES = ("captain",)
-TOOLLESS_PHASES = ("judge", "direction")
+# the guidance is written from the job's inputs, as the prover sees them.
+TOOL_ROLES = ("orchestrator",)
+TOOLLESS_PHASES = ("judge", "guidance")
 # Spend limit of one sketch call, in USD: above the 4.81 of the costliest
 # sketch call of a proved run.
 SKETCH_BUDGET_USD = 6.0
@@ -123,7 +123,7 @@ def role_spec(role: str, spec: dict) -> dict:
 def build_agent(spec: dict) -> Agent:
     """Instantiate the agent described by one role specification. Its
     `phases` maps phase-label prefixes to option overrides, each served by a
-    variant agent (e.g. a smaller model for the captain's judge phase)."""
+    variant agent (e.g. a smaller model for the orchestrator's judge phase)."""
     phases = spec.get("phases") or {}
     base = {key: value for key, value in spec.items() if key != "phases"}
     agent = _build(base)

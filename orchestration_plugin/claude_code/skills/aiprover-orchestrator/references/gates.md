@@ -24,8 +24,8 @@ definitions, in accepted proofs and in the final file, nothing is allowed.
 | Formalize | header, definitions, `theorem <slug> ... := by sorry` | `traced_check ... --statement-only` PASS; `$AIP probe` without `COUNTEREXAMPLE`; definitions free of forbidden constructs |
 | Sketch | header, definitions, lemma stubs, `theorem solution` | `traced_check ... --statement-only` PASS; no `sorry` in the text of `solution`; names unique and not `solution`; `probe` without `COUNTEREXAMPLE` on the lemmas |
 | Lemma sample | AIProver's answer | status `verified`, `fixed-code:kept`, no forbidden construct in the declarations the answer adds |
-| Hand-back `proof`, `split` | context + helpers + the lemma with its proof | `traced_check ... --statement-only` PASS (earlier lemmas are stubs); the lemma's own proof has no `sorry` |
-| Hand-back `restate`, replan | the whole sketch | as for the sketch |
+| Escalation `proof`, `split` | context + helpers + the lemma with its proof | `traced_check ... --statement-only` PASS (earlier lemmas are stubs); the lemma's own proof has no `sorry` |
+| Escalation `restate`, replan | the whole sketch | as for the sketch |
 | Assemble | `<slug>_standalone.lean` | `traced_check` PASS without `--statement-only` (compiles, no `sorry`, standard axioms `propext`, `Classical.choice`, `Quot.sound` only), then the module check below |
 
 `probe` results: `COUNTEREXAMPLE` means the statement is false as written.

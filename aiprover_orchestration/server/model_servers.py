@@ -56,7 +56,7 @@ CHECKPOINTS = {
 class GpuGroup:
     """A group of runs sharing a model server. A group without a Slurm job
     name uses a persistent server (the DGX), which is never submitted; a
-    group without a solver config has no model server (CPU only)."""
+    group without a prover config has no model server (CPU only)."""
 
     name: str
     # Slurm job name of the group's server jobs.
@@ -66,7 +66,7 @@ class GpuGroup:
     # ssh-mode AIProver config: opens and probes the tunnel.
     tunnel_config: Path | None = None
     # AIProver config of the group's runs (through the proxy).
-    solver_config: str = ""
+    prover_config: str = ""
     # Reasoning proxy (server/reasoning_proxy.py).
     proxy_port: int = 0
     # Groups whose model servers this group's runs also use: its reasoning
@@ -77,7 +77,7 @@ class GpuGroup:
 
     @property
     def serverless(self) -> bool:
-        return not self.solver_config
+        return not self.prover_config
 
     @property
     def endpoint(self) -> str:
@@ -105,7 +105,7 @@ def dgx_configs() -> tuple[Path, str, int]:
     return DEVICE_CONFIG, "orchestration_plugin/aiprover.toml", proxy_port
 
 
-DGX_CONFIG, DGX_SOLVER_CONFIG, DGX_PROXY_PORT = dgx_configs()
+DGX_CONFIG, DGX_PROVER_CONFIG, DGX_PROXY_PORT = dgx_configs()
 
 CUSTOM_DIR = STATE_DIR / "model_servers"
 SERVER_NAME = re.compile(r"[A-Za-z0-9_-]{1,40}")
@@ -230,7 +230,7 @@ GPU_GROUPS = {
         "",
         "",
         DGX_CONFIG,
-        DGX_SOLVER_CONFIG,
+        DGX_PROVER_CONFIG,
         DGX_PROXY_PORT,
         hardware="dgx",
     ),
@@ -246,14 +246,14 @@ def config_name(config: str) -> str:
     return Path(config).stem.removeprefix("aiprover_").replace("_logged", "")
 
 
-def group_of_solver(solver_config: str) -> GpuGroup | None:
+def group_of_prover(prover_config: str) -> GpuGroup | None:
     """The GPU group whose runs use this AIProver config."""
-    name = config_name(solver_config)
+    name = config_name(prover_config)
     return next(
         (
             group
             for group in GPU_GROUPS.values()
-            if group.solver_config and config_name(group.solver_config) == name
+            if group.prover_config and config_name(group.prover_config) == name
         ),
         None,
     )

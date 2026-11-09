@@ -29,8 +29,8 @@ import sys
 from pathlib import Path
 
 from ..paths import CONFIG_DIR, ROOT
-from ..server.model_servers import GpuGroup, group_of_solver, sharing_key
-from ..utils.files import read_json, read_jsonl, write_atomic
+from ..server.model_servers import GpuGroup, group_of_prover, sharing_key
+from ..utils.files import read_json, read_jsonl, read_record, write_atomic
 from .trace import Trace
 
 HARDWARE = CONFIG_DIR / "orchestrator" / "gpu_hardware.json"
@@ -50,33 +50,33 @@ UNTRACED_SERVER = "dgx"
 SESSION_OUTPUT = ("agent.log", ".hevo_ticks")
 
 
-def solver_of(trace: dict) -> dict:
-    """The run configuration's solver agent."""
+def prover_of(trace: dict) -> dict:
+    """The run configuration's prover agent."""
     agents = (trace.get("config") or {}).get("agents") or {}
-    return agents.get("solver") or {}
+    return agents.get("prover") or {}
 
 
-def solver_group(trace: dict) -> GpuGroup | None:
-    return group_of_solver(solver_of(trace).get("config") or "")
+def prover_group(trace: dict) -> GpuGroup | None:
+    return group_of_prover(prover_of(trace).get("config") or "")
 
 
 def server_of(trace: dict) -> str:
     """The key in the hardware table of the run's model server; empty for a
     run without one. A config of no GPU group is identified by its file name,
     and a server missing from the table leaves the run unrecorded."""
-    solver = solver_of(trace)
-    if solver.get("backend") != "aiprover":
+    prover = prover_of(trace)
+    if prover.get("backend") != "aiprover":
         return ""
-    group = solver_group(trace)
+    group = prover_group(trace)
     if group and group.hardware:
         return group.hardware
-    name = Path(solver.get("config") or "").stem
+    name = Path(prover.get("config") or "").stem
     return next((key for key in read_json(HARDWARE) if key in name), name)
 
 
 def sharing_of(trace: dict) -> str:
     """Key of the model servers that the run's sessions compete for."""
-    group = solver_group(trace)
+    group = prover_group(trace)
     return sharing_key(group) if group else server_of(trace)
 
 
@@ -188,12 +188,12 @@ def running_spans(session: list, down: list) -> list[list[float]]:
     return spans + [[end - remaining, end, count]]
 
 
-def is_solver_call(step: dict) -> bool:
+def is_prover_call(step: dict) -> bool:
     return step["kind"] == "model_call" and step.get("backend") == "aiprover"
 
 
 def counted_samples(step: dict) -> list[dict]:
-    """The samples of a solver call; sessions cut off by a lost model server
+    """The samples of a prover call; sessions cut off by a lost model server
     are not counted."""
     return [
         sample
@@ -208,7 +208,7 @@ def job_starts(steps: list[dict]) -> list[dict]:
     jobs again under their names."""
     first = {}
     for step in steps:
-        if step.get("event") == "aiprover_job_started" or is_solver_call(step):
+        if step.get("event") == "aiprover_job_started" or is_prover_call(step):
             first.setdefault(step.get("aiprover_job") or step["index"], step)
     return list(first.values())
 
@@ -278,7 +278,7 @@ def open_sessions(trace: dict) -> list[list[float]]:
     epoch = epoch_of(trace)
     down = outages(trace)
     calls = {
-        step.get("aiprover_job"): step for step in filter(is_solver_call, steps)
+        step.get("aiprover_job"): step for step in filter(is_prover_call, steps)
     }
     stores = job_stores()
     jobs = []
@@ -288,7 +288,7 @@ def open_sessions(trace: dict) -> list[list[float]]:
         if found:
             for session in found:
                 jobs += running_spans(session, down)
-        elif is_solver_call(step):
+        elif is_prover_call(step):
             jobs += call_sessions(step, epoch)
         else:
             jobs += traced_span(step, calls.get(name), trace, epoch)
@@ -401,7 +401,7 @@ def write_spans(result_dir: Path, trace: dict) -> dict:
     sampled, active = sampled_spans(result_dir / "metrics.jsonl")
     sessions = open_sessions(trace)
     start = started_at(trace)
-    group = solver_group(trace)
+    group = prover_group(trace)
     spans = {
         "run_id": trace.get("run_id") or result_dir.name,
         "server": server_of(trace),
@@ -413,7 +413,7 @@ def write_spans(result_dir: Path, trace: dict) -> dict:
         "sessions": sessions,
         "active": active,
         "coverage": round(coverage(sessions, sampled), 3),
-        "solver_calls": sum(map(is_solver_call, trace.get("steps", []))),
+        "prover_calls": sum(map(is_prover_call, trace.get("steps", []))),
         "jobs": job_names(trace),
     }
     write_record(result_dir / SPANS_FILE, spans)
@@ -506,7 +506,7 @@ def refresh(result_dir: Path, trace: dict) -> None:
     if not spans["server"]:
         write_usage(result_dir, spans, [])
         return
-    runs = {path: read_json(path / SPANS_FILE) for path in peers(result_dir)}
+    runs = {path: read_record(path / SPANS_FILE) for path in peers(result_dir)}
     runs[result_dir] = spans
     pool = charging_pool(runs)
     charge(result_dir, spans, pool)
@@ -528,10 +528,10 @@ def usage_of(result_dir: Path) -> dict:
     or whose hardware is not listed, "partial" when part of it was sampled
     or its server belongs to a pool, so that the figures are lower bounds,
     "measured" otherwise, and empty before the run's usage is computed."""
-    usage = read_json(Path(result_dir) / USAGE_FILE)
+    usage = read_record(Path(result_dir) / USAGE_FILE)
     if not usage:
         return {"state": ""}
-    if not usage["server"] or not usage["solver_calls"]:
+    if not usage["server"] or not usage["prover_calls"]:
         return {"state": "none"}
     hardware = hardware_of(usage["server"], usage["started"])
     if not usage["recorded"] or not hardware:

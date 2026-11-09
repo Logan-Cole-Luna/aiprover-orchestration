@@ -1,8 +1,8 @@
 {
   "agents": {
-    "captain": {"backend": "claude", "model": "claude-sonnet-5"},
-    "auditor": {"backend": "claude", "model": "claude-haiku-4-5-20251001"},
-    "solver":  {"backend": "claude", "model": "claude-haiku-4-5-20251001"}
+    "orchestrator": {"backend": "claude", "model": "claude-sonnet-5"},
+    "checker": {"backend": "claude", "model": "claude-haiku-4-5-20251001"},
+    "prover":  {"backend": "claude", "model": "claude-haiku-4-5-20251001"}
   },
   "workers": 4,
   "max_repairs": 4,

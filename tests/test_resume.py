@@ -23,7 +23,7 @@ def job(lemma: str, job_id: str, *statuses: str) -> list[dict]:
             "aiprover_job": job_id,
             "samples": [{"status": status} for status in statuses],
         },
-        decision("solver_budget_exhausted", lemma=lemma, aiprover_job=job_id),
+        decision("prover_budget_exhausted", lemma=lemma, aiprover_job=job_id),
     ]
 
 
@@ -86,7 +86,7 @@ class SketchChangesTest(unittest.TestCase):
         steps = [
             SKETCH,
             decision(
-                "lemma_handback",
+                "lemma_escalation",
                 lemma="b",
                 action="split",
                 new_lemmas=["theorem b1 : True"],

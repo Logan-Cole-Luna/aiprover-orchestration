@@ -307,15 +307,15 @@ class SessionRestrictionsTest(unittest.TestCase):
         with self.subTest("a USD limit converts tokens without a price"):
             with tempfile.TemporaryDirectory() as directory:
                 pool = AgentPool(
-                    {"captain": SimpleNamespace(hosted=True)},
+                    {"orchestrator": SimpleNamespace(hosted=True)},
                     Path(directory) / "calls.jsonl",
                     max_hosted_usd=1,
                 )
-                pool._accumulate("captain", True, {"m": {"outputTokens": 99_999}})
+                pool._accumulate("orchestrator", True, {"m": {"outputTokens": 99_999}})
                 self.assertGreater(pool.hosted_budget_left(), 0)
-                pool._accumulate("captain", False, {"m": {"outputTokens": 9}})
+                pool._accumulate("orchestrator", False, {"m": {"outputTokens": 9}})
                 self.assertGreater(pool.hosted_budget_left(), 0)
-                pool._accumulate("captain", True, {"m": {"outputTokens": 1}})
+                pool._accumulate("orchestrator", True, {"m": {"outputTokens": 1}})
                 with self.assertRaises(BudgetExhausted):
                     pool.check_spend_limit()
         with self.subTest("a usage limit waits for its reset"):
@@ -336,16 +336,16 @@ class SessionRestrictionsTest(unittest.TestCase):
             )
             self.assertTrue(failure.refused)
             self.assertFalse(failure.retryable)
-        with self.subTest("the hand-back needs no particular service"):
+        with self.subTest("the escalation needs no particular service"):
             codex = {"provider": "codex", "model": "gpt-6.1-sol", "effort": ""}
             selection = models.validate({"orchestrator": codex})
-            self.assertEqual(selection["handback"]["provider"], "codex")
-            self.assertTrue(selection["handback"]["tools"])
+            self.assertEqual(selection["escalation"]["provider"], "codex")
+            self.assertTrue(selection["escalation"]["tools"])
             config = models.build_config(
                 models.Path("configs/orchestrator/aiprover_vista_served.json"),
                 selection | {"orchestrator": selection["orchestrator"]},
             )
-            phase = config["agents"]["captain"]["phases"]["handback"]
+            phase = config["agents"]["orchestrator"]["phases"]["escalation"]
             self.assertEqual(phase["backend"], "codex")
         with self.subTest("a provider's API can serve any role with tools"):
             servers = {

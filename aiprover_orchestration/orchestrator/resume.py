@@ -34,14 +34,14 @@ class ResumeState:
     formalize_feedback: str = ""  # set when the latest verdict is REVISE
     sketch: Sketch | None = None
     replans_started: int = 0
-    assembly_rounds: int = 0  # failed assemblies returned to the captain
+    assembly_rounds: int = 0  # failed assemblies returned to the orchestrator
     lean_timeouts: int = 0  # each doubles the limits of recheck and assembly
-    # Why assembly rejected a lemma's proof, until the captain answers.
+    # Why assembly rejected a lemma's proof, until the orchestrator answers.
     assembly_failures: dict[str, str] = field(default_factory=dict)
     replan_pending: bool = (
         False  # a replan began but no new sketch was accepted
     )
-    setting_checked: bool = False
+    vacuity_checked: bool = False
     setting_facts: str = ""  # proved facts appended to the definitions
     # Compiled refutation per (lemma name, statement).
     refutations: dict[tuple[str, str], str] = field(default_factory=dict)
@@ -57,12 +57,12 @@ class ResumeState:
     # Last failed attempts per lemma of the current sketch: (errors, attempts).
     failures: dict[str, tuple[str, str]] = field(default_factory=dict)
     # Completed attempts without a proof (AIProver jobs, or prove phases of
-    # chat solvers) per statement (`statement_key`), over every sketch of the
+    # chat provers) per statement (`statement_key`), over every sketch of the
     # run: the attempt budget is the run's, not the sketch's.
     attempts: dict[str, int] = field(default_factory=dict)
-    # (lemma name, statement) pairs already handed back to the captain.
+    # (lemma name, statement) pairs already escalated to the orchestrator.
     handed_back: set[tuple[str, str]] = field(default_factory=set)
-    # Attempts per statement at the captain's last retry.
+    # Attempts per statement at the orchestrator's last retry.
     reviewed_at: dict[str, int] = field(default_factory=dict)
     # Knowledge carried per lemma (knowledge.py).
     knowledge: dict[str, str] = field(default_factory=dict)
@@ -90,7 +90,7 @@ class ResumeState:
         lemma.attempts = self.attempts[key]
 
     def record_review(self, lemma: Lemma) -> None:
-        """The captain asked for a retry of `lemma` at its current attempts."""
+        """The orchestrator asked for a retry of `lemma` at its current attempts."""
         lemma.reviewed_at = lemma.attempts
         self.reviewed_at[statement_key(lemma.statement)] = lemma.attempts
 
@@ -218,7 +218,7 @@ def restore_state(document: dict) -> ResumeState:
             state.resumable_jobs[(step["lemma"], step["statement"])] = step[
                 "aiprover_job"
             ]
-        elif event == "solver_budget_exhausted" and step.get("aiprover_job"):
+        elif event == "prover_budget_exhausted" and step.get("aiprover_job"):
             state.resumable_jobs = {
                 key: job
                 for key, job in state.resumable_jobs.items()
@@ -252,14 +252,14 @@ def restore_state(document: dict) -> ResumeState:
                     prompts.FORMALIZE_FEEDBACK_TEMPLATE.format(
                         definitions=form.definitions,
                         statement=form.statement,
-                        problems="Auditor read-back:\n"
+                        problems="Checker read-back:\n"
                         + form.readback
-                        + "\n\nCaptain review:\n"
+                        + "\n\nOrchestrator review:\n"
                         + form.issues,
                     )
                 )
-        elif event == "setting_checked":
-            state.setting_checked = True
+        elif event == "vacuity_checked":
+            state.vacuity_checked = True
             state.setting_facts = step["facts"]
         elif event == "theorem_refuted":
             state.sketch = Sketch([], "", refutation=step["refutation"])
@@ -307,7 +307,7 @@ def restore_state(document: dict) -> ResumeState:
                 {name: normalize(text) for name, text in statement_of.items()},
             )
         elif (
-            event == "solver_budget_exhausted" and step["lemma"] in statement_of
+            event == "prover_budget_exhausted" and step["lemma"] in statement_of
         ):
             samples = (last_job.get(step["lemma"]) or {}).get("samples") or []
             stopped = samples and all(
@@ -328,11 +328,11 @@ def restore_state(document: dict) -> ResumeState:
             key = statement_key(statement_of[step["lemma"]])
             state.attempts[key] = state.attempts.get(key, 0) + 1
         elif (
-            event == "lemma_handback"
+            event == "lemma_escalation"
             and state.sketch is not None
             and step["lemma"] in statement_of
         ):
-            # Apply the captain's change to the sketch as the run did.
+            # Apply the orchestrator's change to the sketch as the run did.
             target = next(
                 lemma
                 for lemma in state.sketch.lemmas

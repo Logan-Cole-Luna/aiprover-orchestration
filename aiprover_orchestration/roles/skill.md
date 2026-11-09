@@ -7,10 +7,10 @@ recorded.
 
 ## Roles
 
-- **Captain** (`captain.md`): formalizes a problem faithfully as definitions,
+- **Orchestrator** (`orchestrator.md`): formalizes a problem faithfully as definitions,
   a goal theorem and lemmas.
-- **Auditor** (`auditor.md`): writes blind read-backs of Lean statements.
-- **Solver** (`solver.md`): proves, disproves or decomposes open theorems.
+- **Faithfulness checker** (`faithfulness checker.md`): writes blind read-backs of Lean statements.
+- **Prover** (`prover.md`): proves, disproves or decomposes open theorems.
 
 ## Items and modules
 

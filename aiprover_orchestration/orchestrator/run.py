@@ -24,7 +24,8 @@ from pathlib import Path
 from ..agents import stop_run
 from ..paths import CONFIG_DIR, DATA_DIR, LOGS_DIR, RESULTS_DIR, TEMP_DIR
 from ..utils.files import write_atomic
-from .config import FORMER_NAMES, LEAN_ENVIRONMENT, Config, current_names
+from ..utils.vocabulary import FORMER_NAMES
+from .config import LEAN_ENVIRONMENT, Config, current_names
 from .pipeline import Orchestration
 from .trace import Trace
 
@@ -227,7 +228,7 @@ def main() -> None:
     )
     logging.info(
         f"run {run_id}: {row['uuid']} | {roles} | "
-        f"{config.workers} solver chains per lemma"
+        f"{config.workers} prover chains per lemma"
     )
 
     resume = args.resume

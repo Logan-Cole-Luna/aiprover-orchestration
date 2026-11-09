@@ -1,6 +1,6 @@
 """Conflict-driven learning over the lemma tree, after CDCL SAT solvers.
 
-A conflict-driven clause-learning (CDCL) solver assigns variables, and when an
+A conflict-driven clause-learning (CDCL) prover assigns variables, and when an
 assignment leads to a conflict it analyses the conflict, learns a clause that
 excludes its cause, and backjumps to the decision level of that cause rather
 than undoing only the last decision. The orchestration searches a tree of
@@ -8,11 +8,11 @@ decisions as well, and the same three mechanisms apply:
 
     CDCL                   orchestration
     decision               a sketch lemma, a split, the encoding of a lemma
-    unit propagation       closing easy leaves cheaply (the captain with Lean
+    unit propagation       closing easy leaves cheaply (the orchestrator with Lean
                            tools) before spending AIProver sessions
     conflict               several leaves under one decision stuck, or a leaf
                            refuted
-    conflict analysis      the captain names the shared cause (`analyse`)
+    conflict analysis      the orchestrator names the shared cause (`analyse`)
     learned clause         a run-wide fact every later job and prompt
                            receives (`LearnedClause`, `ClauseStore`)
     backjump               retract the subtree under the decision that caused
@@ -43,13 +43,13 @@ from .structures import Lemma, recorded_lemmas, refers_to
 #   refuted        a statement whose negation compiled; never state it again
 #   failed_route   an approach tried for a statement and why it failed
 #   conflict_cause the decision a backjump retracted, and the shared cause
-#   fact           any other fact the captain learned (an absent Mathlib
+#   fact           any other fact the orchestrator learned (an absent Mathlib
 #                  declaration, a working lemma, a pitfall of the encoding)
 CLAUSE_KINDS = ("refuted", "failed_route", "conflict_cause", "fact")
-# Clause text per prompt: a solver job repeats its prompt in every session,
-# while a captain prompt is long already and the captain acts on routes.
+# Clause text per prompt: a prover job repeats its prompt in every session,
+# while an orchestrator prompt is long already and the orchestrator acts on routes.
 MAX_CLAUSES_CHARS = 4000
-CAPTAIN_CLAUSES_CHARS = 8000
+ORCHESTRATOR_CLAUSES_CHARS = 8000
 # Kinds that hold for every lemma of the run, shown before any other.
 RUN_WIDE_KINDS = ("refuted", "conflict_cause")
 MAX_CLAUSE_CHARS = 400
@@ -136,7 +136,7 @@ class ClauseStore:
     @classmethod
     def from_steps(cls, steps: list[dict]) -> "ClauseStore":
         """The clauses recorded in a trace: `clause_learned` decisions, and
-        refutations of lemmas from hand-backs recorded before clauses
+        refutations of lemmas from escalations recorded before clauses
         existed."""
         store = cls()
         statement_of: dict[str, str] = {}
@@ -145,12 +145,12 @@ class ClauseStore:
                 continue
             event = step.get("event")
             if event == "sketch_accepted" or (
-                event == "lemma_handback" and step.get("action") == "split"
+                event == "lemma_escalation" and step.get("action") == "split"
             ):
                 key = "lemmas" if event == "sketch_accepted" else "new_lemmas"
                 for lemma in recorded_lemmas(step.get(key) or []):
                     statement_of[lemma.name] = lemma.statement
-            elif event == "lemma_handback":
+            elif event == "lemma_escalation":
                 if step.get("action") == "restate":
                     statement_of[step["lemma"]] = step["statement"]
                 elif step.get("action") == "refute":
@@ -216,7 +216,7 @@ def branch_names(focus: list[Lemma], lemmas: list[Lemma]) -> set[str]:
 
 
 def context_lemmas(lemma: Lemma, lemmas: list[Lemma]) -> list[Lemma]:
-    """The lemmas before `lemma` that its solvers receive: the sketch's own
+    """The lemmas before `lemma` that its provers receive: the sketch's own
     lemmas, and the lemmas split from `lemma`'s parent or from one of its
     ancestors. Lemmas split from other branches serve only the proofs in
     those branches."""
@@ -240,13 +240,13 @@ def ancestors(lemma: Lemma, lemmas: list[Lemma]) -> list[Lemma]:
     return chain
 
 
-def stuck(lemma: Lemma, handback_after: int) -> bool:
-    """An unproved lemma the solvers and the captain have failed on: refuted,
-    handed back without success, or past two hand-back intervals."""
+def stuck(lemma: Lemma, escalation_after: int) -> bool:
+    """An unproved lemma the provers and the orchestrator have failed on: refuted,
+    escalated without success, or past two escalation intervals."""
     return not lemma.proved and (
         bool(lemma.refutation)
         or lemma.handed_back
-        or lemma.attempts >= 2 * max(1, handback_after)
+        or lemma.attempts >= 2 * max(1, escalation_after)
     )
 
 
@@ -269,7 +269,7 @@ def conflict(
     lemma: Lemma,
     lemmas: list[Lemma],
     threshold: int,
-    handback_after: int,
+    escalation_after: int,
     analysed: set[tuple],
 ) -> tuple[Lemma, list[Lemma]] | None:
     """The decision to analyse for a conflict around `lemma`, and its stuck
@@ -279,7 +279,7 @@ def conflict(
     for ancestor in ancestors(lemma, lemmas):
         below = subtree(ancestor.name, lemmas)
         stuck_leaves = [
-            other for other in below if stuck(other, handback_after)
+            other for other in below if stuck(other, escalation_after)
         ]
         if len(stuck_leaves) < threshold and not any(
             other.refutation for other in stuck_leaves

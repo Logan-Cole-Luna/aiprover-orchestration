@@ -1,15 +1,15 @@
-"""The captain during the AIProver phase: hand-back and conflict analysis.
+"""The orchestrator during the AIProver phase: escalation and conflict analysis.
 
-A lemma the solvers keep failing on is handed back to the captain
-(`_handback`), who proves, splits, restates or refutes it, or asks for a
-retry. A hand-back whose reply stopped at its spend or turn limit may not
+A lemma the provers keep failing on is escalated to the orchestrator
+(`_escalation`), who proves, splits, restates or refutes it, or asks for a
+retry. An escalation whose reply stopped at its spend or turn limit may not
 prove the lemma directly: it is split, restated, retried or refuted, so the
-solvers take the parts. Conflict-driven learning (cdcl.py): when several leaves under one
-decision are stuck, the captain analyses the conflict (`_conflict`). What it
+provers take the parts. Conflict-driven learning (cdcl.py): when several leaves under one
+decision are stuck, the orchestrator analyses the conflict (`_conflict`). What it
 learns is recorded as clauses that every later job receives, and when the
 cause lies in the decision it backjumps: the subtree is retracted, its
 running jobs are cancelled, and the decision is restated. Every proof,
-statement and refutation the captain proposes is checked by Lean before it
+statement and refutation the orchestrator proposes is checked by Lean before it
 is applied; one repair is allowed.
 
 Related published work (tags defined in docs/lit_review/lit_review.md §6):
@@ -42,13 +42,13 @@ from ..structures import (
 logger = logging.getLogger(__name__)
 
 
-class HandbackStage:
+class EscalationStage:
 
-    def _captain_repairs(
+    def _orchestrator_repairs(
         self, prompt: str, phase: str, apply, on_limit=None
     ) -> list[str]:
-        """Ask the captain, and once more with the problems of a rejected
-        reply (HANDBACK_REPAIR_TEMPLATE) while the budget allows.
+        """Ask the orchestrator, and once more with the problems of a rejected
+        reply (ESCALATION_REPAIR_TEMPLATE) while the budget allows.
         `apply(reply)` applies a reply and returns its problems, empty when
         it was accepted. A reply stopped at the call's spend or turn limit
         is rejected; `on_limit()` returns the note for the second call, and
@@ -59,7 +59,7 @@ class HandbackStage:
             if repair and self.agents.hosted_budget_left() < 1:
                 break
             try:
-                reply = self._captain(prompt + feedback, phase=phase)
+                reply = self._orchestrator(prompt + feedback, phase=phase)
             except AgentLimitReached as error:
                 problems = [f"the reply stopped at its limit: {error}"[:500]]
                 logger.info(f"{phase}: {problems[0][:200]}")
@@ -71,7 +71,7 @@ class HandbackStage:
             if not problems:
                 return []
             logger.info(f"{phase}: reply rejected: {problems[0][:200]}")
-            feedback = prompts.HANDBACK_REPAIR_TEMPLATE.format(
+            feedback = prompts.ESCALATION_REPAIR_TEMPLATE.format(
                 reply=reply, errors="\n".join(problems)[:6000]
             )
         return problems
@@ -85,7 +85,7 @@ class HandbackStage:
         label: str,
         without: frozenset = frozenset(),
     ) -> tuple[Lemma | None, list[str]]:
-        """The lemma a captain's <tag> states in place of `target`, if the
+        """The lemma an orchestrator's <tag> states in place of `target`, if the
         sketch compiles with it (and without the lemmas `without`); else
         None and the problems."""
         new = parse_lemmas(
@@ -115,9 +115,9 @@ class HandbackStage:
             return None, [result.error_report()]
         return new[0], []
 
-    def _handback(self, phase, lemma: Lemma) -> None:
-        """Hand `lemma`, which the solvers keep failing on, back to the
-        captain. New lemmas of a split go to solvers at once."""
+    def _escalation(self, phase, lemma: Lemma) -> None:
+        """Hand `lemma`, which the provers keep failing on, back to the
+        orchestrator. New lemmas of a split go to provers at once."""
         form, sketch = phase.form, phase.sketch
         with phase.lock:
             if not phase.present(lemma):
@@ -128,18 +128,18 @@ class HandbackStage:
             names = {other.name for other in sketch.lemmas}
             other_helpers = proved_helper_names(sketch.lemmas, lemma)
         retries = self._retries_spent(phase, lemma)
-        # Cleared when a reply stops at the hand-back's spend or turn limit.
+        # Cleared when a reply stops at the escalation's spend or turn limit.
         direct_proof = True
         situation = (
-            prompts.HANDBACK_ASSEMBLY.format(
+            prompts.ESCALATION_ASSEMBLY.format(
                 lemma_name=lemma.name, problem=lemma.assembly_failure
             )
             if lemma.assembly_failure
-            else prompts.HANDBACK_SOLVERS.format(
+            else prompts.ESCALATION_PROVERS.format(
                 attempts=lemma.attempts, lemma_name=lemma.name
             )
         )
-        prompt = prompts.HANDBACK_TEMPLATE.format(
+        prompt = prompts.ESCALATION_TEMPLATE.format(
             situation=situation,
             lemma_name=lemma.name,
             definitions=form.definitions,
@@ -148,7 +148,7 @@ class HandbackStage:
             main_proof=sketch.main_proof,
             informal_proof=self.row["informal_proof"],
             failed=failed_lemma_text(lemma),
-            knowledge=self._for_captain(lemma.knowledge) or "(none)",
+            knowledge=self._for_orchestrator(lemma.knowledge) or "(none)",
             clauses=self._clauses_text([lemma], list(sketch.lemmas)),
             clause_output=self._clause_output(),
             retry_note=prompts.NO_RETRY.format(retries=retries)
@@ -158,7 +158,7 @@ class HandbackStage:
 
         def record(action: str, diagnosis: str, **fields) -> None:
             self._decision(
-                "lemma_handback",
+                "lemma_escalation",
                 lemma=lemma.name,
                 action=action,
                 diagnosis=diagnosis,
@@ -167,7 +167,7 @@ class HandbackStage:
 
         def used_by_proofs() -> bool:
             """Whether a proved lemma uses `lemma` (call with `phase.lock`
-            held): other lemmas are proved while the captain answers."""
+            held): other lemmas are proved while the orchestrator answers."""
             return any(
                 refers_to(other.helpers + "\n" + other.proof, lemma.name)
                 for other in sketch.lemmas
@@ -194,7 +194,7 @@ class HandbackStage:
                 self.state.load_attempts(lemma)
                 if "<knowledge>" not in reply:
                     lemma.knowledge = ""
-            logger.info(f"{lemma.name} restated by the captain")
+            logger.info(f"{lemma.name} restated by the orchestrator")
             record(
                 "restate",
                 diagnosis,
@@ -213,13 +213,13 @@ class HandbackStage:
                 helpers,
                 refutation,
                 lemma=lemma.name,
-                worker="captain",
+                worker="orchestrator",
             )
             if rejections:
                 return rejections
             with phase.lock:
                 lemma.refutation = text
-            logger.info(f"{lemma.name} refuted by the captain")
+            logger.info(f"{lemma.name} refuted by the orchestrator")
             self._learn(
                 cdcl.LearnedClause(
                     "refuted",
@@ -238,7 +238,7 @@ class HandbackStage:
             split_block: str,
             definitions: str,
         ) -> list[str]:
-            """The captain's proof, from new lemmas if it splits, which may
+            """The orchestrator's proof, from new lemmas if it splits, which may
             state facts about the split's new `definitions`."""
             if not split_block and not direct_proof:
                 return [
@@ -282,14 +282,14 @@ class HandbackStage:
                 lemma,
                 helpers,
                 proof,
-                f"{lemma.name}_captain",
-                worker="captain",
+                f"{lemma.name}_orchestrator",
+                worker="orchestrator",
             )
             if result.timed_out:
                 # The machine, not the reply: the run stops and its resume
-                # repeats this hand-back.
+                # repeats this escalation.
                 raise AgentCallError(
-                    f"Lean check of the hand-back of {lemma.name} timed out"
+                    f"Lean check of the escalation of {lemma.name} timed out"
                 )
             if problem:
                 return [problem]
@@ -306,7 +306,7 @@ class HandbackStage:
             action = "split" if new_lemmas else "proof"
             new_names = [other.name for other in new_lemmas]
             logger.info(
-                f"{lemma.name}: captain {action}"
+                f"{lemma.name}: orchestrator {action}"
                 + (f" into {new_names}" if new_lemmas else "")
             )
             record(
@@ -315,7 +315,7 @@ class HandbackStage:
                 new_lemmas=[other.statement for other in new_lemmas],
                 **({"new_definitions": definitions} if definitions else {}),
             )
-            self._record_proof(lemma, "captain")
+            self._record_proof(lemma, "orchestrator")
             for other in new_lemmas:
                 self._submit(phase, other)
             return []
@@ -344,9 +344,9 @@ class HandbackStage:
             if "<retry" in reply and retries:
                 return [f"retry is not available after {retries} retries"]
             if "<retry" in reply:
-                logger.info(f"{lemma.name}: captain asks for a retry")
-                # The captain reviews the lemma again after as many further
-                # failures as led to this hand-back.
+                logger.info(f"{lemma.name}: orchestrator asks for a retry")
+                # The orchestrator reviews the lemma again after as many further
+                # failures as led to this escalation.
                 with phase.lock:
                     lemma.handed_back = False
                     self.state.record_review(lemma)
@@ -367,8 +367,8 @@ class HandbackStage:
                 lemma_name=lemma.name
             )
 
-        problems = self._captain_repairs(
-            prompt, f"handback/{lemma.name}", apply, on_limit
+        problems = self._orchestrator_repairs(
+            prompt, f"escalation/{lemma.name}", apply, on_limit
         )
         if problems:
             record("rejected", "", problems=problems[:5])
@@ -377,11 +377,11 @@ class HandbackStage:
         self, phase, decision: Lemma, stuck_leaves: list[Lemma]
     ) -> None:
         """Conflict analysis at `decision`, whose subtree has the stuck
-        leaves `stuck_leaves`. The captain names the cause and records
+        leaves `stuck_leaves`. The orchestrator names the cause and records
         learned clauses. If the cause lies in the decision, it backjumps:
         the subtree is retracted, and the decision is restated (checked by
         Lean against the sketch without the subtree) and handed to
-        solvers."""
+        provers."""
         with phase.lock:
             listing = marked_listing(
                 phase.sketch.lemmas, decision, "the decision"
@@ -390,7 +390,7 @@ class HandbackStage:
         stuck = "\n\n".join(
             failed_lemma_text(other)
             + "\n<notes>\n"
-            + self._for_captain(other.knowledge)[: knowledge.MAX_CHARS // 2]
+            + self._for_orchestrator(other.knowledge)[: knowledge.MAX_CHARS // 2]
             + "\n</notes>"
             for other in stuck_leaves
         )
@@ -500,7 +500,7 @@ class HandbackStage:
             self._submit(phase, decision)
             return []
 
-        problems = self._captain_repairs(
+        problems = self._orchestrator_repairs(
             prompt, f"conflict/{decision.name}", apply
         )
         if problems:
@@ -554,7 +554,7 @@ class HandbackStage:
                     helpers,
                     proof,
                     f"{name}_conflict",
-                    worker="captain",
+                    worker="orchestrator",
                 )
                 if result.timed_out:
                     raise AgentCallError(
@@ -570,7 +570,7 @@ class HandbackStage:
                 leaf.helpers, leaf.proof = helpers, proof
                 leaf.proved = True
             logger.info(f"{name}: proved in conflict analysis")
-            self._record_proof(leaf, "captain")
+            self._record_proof(leaf, "orchestrator")
         return problems
 
 
@@ -584,7 +584,7 @@ def marked_listing(lemmas: list[Lemma], target: Lemma, mark: str) -> str:
 
 
 def extract_clauses(reply: str) -> list[str]:
-    """The learned clauses of a captain's reply, one per <clause> tag."""
+    """The learned clauses of an orchestrator's reply, one per <clause> tag."""
     return [
         " ".join(fact.split())
         for fact in re.findall(r"<clause>(.*?)</clause>", reply, re.S)

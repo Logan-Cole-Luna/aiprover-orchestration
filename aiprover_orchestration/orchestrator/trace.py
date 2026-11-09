@@ -15,8 +15,8 @@ drops such calls recorded earlier (`without_untraced_calls`).
     python -m aiprover_orchestration.orchestrator.trace results/<run_id> ...
 
 removes them from the traces of runs that are not in progress; `--rewind N`
-also drops the steps from index N on (`rewound`), and `--refused-handbacks`
-the hand-backs the captain's model refused.
+also drops the steps from index N on (`rewound`), and `--refused-escalations`
+the escalations the orchestrator's model refused.
 """
 
 import argparse
@@ -29,6 +29,7 @@ import time
 from pathlib import Path
 
 from ..utils.files import write_atomic
+from ..utils.vocabulary import modernize
 
 # Interval between writes of a running trace. A write serializes the whole
 # document, hundreds of MB for a long run, so it happens in the background
@@ -130,15 +131,15 @@ def rewound(document: dict, at_step: int) -> dict:
     return _without_steps(document, removed)
 
 
-def without_refused_handbacks(document: dict) -> dict:
-    """The trace document without hand-backs the captain's model refused, so
+def without_refused_escalations(document: dict) -> dict:
+    """The trace document without escalations the orchestrator's model refused, so
     that a resume hands those lemmas back again."""
     return _without_steps(
         document,
         {
             position
             for position, step in enumerate(document.get("steps", []))
-            if step.get("event") == "lemma_handback"
+            if step.get("event") == "lemma_escalation"
             and step.get("action") == "refused"
         },
     )
@@ -225,17 +226,17 @@ class Trace:
         packed = path.with_name(path.name + ".gz")
         lines = path.with_suffix(".jsonl")
         if path.suffix != ".jsonl" and path.exists():
-            return json.loads(path.read_text())
+            return modernize(json.loads(path.read_text()))
         if packed.exists():
-            return json.loads(gzip.decompress(packed.read_bytes()))
+            return modernize(json.loads(gzip.decompress(packed.read_bytes())))
         if lines.exists():
-            return Trace.from_lines(lines)
+            return modernize(Trace.from_lines(lines))
         return None
 
     @staticmethod
     def from_lines(path: Path) -> dict:
         """The trace document of a line record, as written by the
-        `aiprover-captain` skill: the header on the first line, then one
+        `aiprover-orchestrator` skill: the header on the first line, then one
         step per line. A line without `kind` updates the header (`outcome`,
         `finished`). Steps are indexed in order; a step's `time` (Unix
         seconds) gives its `elapsed_seconds` from the header's `time`."""
@@ -317,9 +318,9 @@ def main() -> None:
         "--rewind", type=int, help="drop the steps from this index on"
     )
     parser.add_argument(
-        "--refused-handbacks",
+        "--refused-escalations",
         action="store_true",
-        help="drop hand-backs the captain's model refused",
+        help="drop escalations the orchestrator's model refused",
     )
     parser.add_argument(
         "--drop-jobs",
@@ -344,8 +345,8 @@ def main() -> None:
         repaired = without_untraced_calls(document)
         if args.rewind is not None:
             repaired = rewound(repaired, args.rewind)
-        if args.refused_handbacks:
-            repaired = without_refused_handbacks(repaired)
+        if args.refused_escalations:
+            repaired = without_refused_escalations(repaired)
         if args.drop_jobs:
             repaired = without_jobs(repaired, set(args.drop_jobs))
         if args.reinstate:

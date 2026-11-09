@@ -29,7 +29,7 @@ class ClaudeLimitTest(unittest.TestCase):
     def test_a_run_stops_at_its_spend_limit(self):
         with TemporaryDirectory() as directory:
             pool = AgentPool(
-                {"captain": SimpleNamespace(hosted=True)},
+                {"orchestrator": SimpleNamespace(hosted=True)},
                 Path(directory) / "calls.jsonl",
                 max_hosted_usd=50,
             )
@@ -38,11 +38,11 @@ class ClaudeLimitTest(unittest.TestCase):
         pool.usage_by_model = {"model": {"cost_usd": 50}}
         self.assertEqual(pool.hosted_budget_left(), 0)
         with self.assertRaises(BudgetExhausted):
-            with pool._budget_reservation(pool.agents["captain"]):
+            with pool._budget_reservation(pool.agents["orchestrator"]):
                 pass
 
     def test_a_sketch_call_has_a_spend_limit(self):
-        spec = role_spec("captain", {"backend": "claude"})
+        spec = role_spec("orchestrator", {"backend": "claude"})
         self.assertEqual(spec["phases"]["sketch"]["max_budget_usd"], 6.0)
 
 

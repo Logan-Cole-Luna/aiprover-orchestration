@@ -1,5 +1,5 @@
 {
-  description = "AIProver orchestration: tools of the aiprover-captain skill and the AIProver harness virtualenvs";
+  description = "AIProver orchestration: tools of the aiprover-orchestrator skill and the AIProver harness virtualenvs";
 
   inputs = {
     # The darwin-stable channel, as in the flywheel superproject; it serves Linux as well.
@@ -65,7 +65,7 @@
             packages = [ self.packages.${system}.tools ];
             shellHook = ''
               export AIPROVER_ORCHESTRATION_ROOT="$PWD"
-              echo "aiprover orchestration: run ./setup once; then ask Claude Code for an aiprover-captain run"
+              echo "aiprover orchestration: run ./setup once; then ask Claude Code for an aiprover-orchestrator run"
             '';
           };
         }

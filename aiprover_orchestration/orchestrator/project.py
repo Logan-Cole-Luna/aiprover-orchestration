@@ -256,7 +256,7 @@ class PaperBuilder(LatexBuilder):
 
 class ProposalBuilder(PaperBuilder):
     """The project's paper while no result has a run: a proposal for the
-    expert's feedback, written from the latest milestone plan."""
+    expert's feedback, written from the latest blueprint."""
 
     def __init__(self, project: dict, report: str):
         super().__init__(project, [])
@@ -269,7 +269,7 @@ class ProposalBuilder(PaperBuilder):
         return ""
 
     def write_prompt(self) -> str:
-        milestones = "\n".join(
+        blueprint = "\n".join(
             f"- {m['uuid']} ({m['role']}; uses: {', '.join(m.get('uses', [])) or 'none'})"
             f" {m['statement']}"
             for m in self.project["members"]
@@ -280,7 +280,7 @@ class ProposalBuilder(PaperBuilder):
         return prompts.PROPOSAL_TEMPLATE.format(
             title=self.project.get("title", ""),
             goal=self.project.get("goal", ""),
-            milestones=milestones,
+            blueprint=blueprint,
             open_items=open_items or "(none)",
             report=self.report,
         )
@@ -289,18 +289,20 @@ class ProposalBuilder(PaperBuilder):
         return prompts.PROPOSAL_CHECK_TEMPLATE.format(report=self.report, body=text.body)
 
 
-def milestone_report(project: dict) -> str:
-    """The latest task report that proposed milestones, or empty."""
+def blueprint_report(project: dict) -> str:
+    """The latest task report that proposed a blueprint, or empty. Reports
+    before the rename tag its theorems `<milestone>`."""
     for task in reversed(project["tasks"]):
         path = PROJECTS_DIR / project["name"] / "tasks" / task["id"] / "report.md"
-        if path.exists() and "<milestone" in (text := path.read_text()):
+        text = path.read_text() if path.exists() else ""
+        if re.search(r"<(?:theorem|milestone) ", text):
             return text
     return ""
 
 
 def paper(project: dict, models: dict[str, str]) -> dict:
     """Write the project's paper from its members' informalizations; before
-    any member has a run, a proposal from the milestone plan instead."""
+    any member has a run, a proposal from the blueprint instead."""
     unfinished = [
         member["uuid"]
         for member in project["members"]
@@ -310,7 +312,7 @@ def paper(project: dict, models: dict[str, str]) -> dict:
         ).exists()
     ]
     started = any(member.get("run") for member in project["members"])
-    report = "" if started else milestone_report(project)
+    report = "" if started else blueprint_report(project)
     if unfinished and not report:
         raise SystemExit(
             f"members without an informalization: {unfinished}; choose Generate "

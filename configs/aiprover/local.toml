@@ -1,4 +1,4 @@
-# AIProver harness configuration for the orchestration solvers.
+# AIProver harness configuration for the orchestration provers.
 # Read by AIProver/AIProver_plugin (bin/aiprover) through $AIPROVER_CONFIG.
 # The model is the local vLLM server of scripts/serve_local.sh; replace api_base and
 # model to drive the harness with another OpenAI-compatible endpoint.

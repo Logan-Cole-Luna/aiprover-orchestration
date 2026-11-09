@@ -52,6 +52,7 @@ from ..lean import releases
 from ..orchestrator import libraries
 from ..orchestrator.config import current_names
 from ..utils.sqlite import SqliteStore
+from ..utils.vocabulary import modernize
 from . import accounts, model_servers, models
 from .model_servers import run_command
 
@@ -60,9 +61,9 @@ PROBLEM_DIR = STATE_DIR / "problems"
 # Every JSONL file in data/ is offered as a source of problems.
 DATASET = DATA_DIR / "val_JiatuBook_unlabelled.jsonl"
 CONFIG = CONFIG_DIR / "orchestrator" / "aiprover_vista_served.json"
-# Per-phase captain settings applied to a run whose options set
-# `captain_phases` (our own runs); other runs use the selected model as is.
-CAPTAIN_PHASES = CONFIG_DIR / "orchestrator" / "captain_phases.json"
+# Per-phase orchestrator settings applied to a run whose options set
+# `orchestrator_phases` (our own runs); other runs use the selected model as is.
+ORCHESTRATOR_PHASES = CONFIG_DIR / "orchestrator" / "orchestrator_phases.json"
 
 POLL_SECONDS = 5
 BACKEND_RETRY_SECONDS = 60
@@ -97,7 +98,7 @@ OPEN_STATES = ("awaiting_approval", "queued", "running", "cancelling")
 SERVER_OPTIONS = (
     "after",
     "aiprover_timeout",
-    "captain_phases",
+    "orchestrator_phases",
     "documents_only",
     "lean_release",
     "source_dir",
@@ -241,7 +242,7 @@ def group_config(config: dict, group: model_servers.GpuGroup) -> dict:
         ):
             continue
         if spec.get("backend") == "aiprover":
-            spec["config"] = group.solver_config
+            spec["config"] = group.prover_config
         elif (
             spec.get("backend") == "openai_compatible"
             and spec.get("model") == models.AIPROVER_SERVED_MODEL
@@ -253,7 +254,7 @@ def group_config(config: dict, group: model_servers.GpuGroup) -> dict:
 def job_selection(job: dict) -> dict:
     """Models chosen for a job; empty for a job submitted before the choice
     existed, which runs with the served config."""
-    return json.loads(job.get("agents") or "null") or {}
+    return modernize(json.loads(job.get("agents") or "null") or {})
 
 
 def library_search(environment: dict, agents: dict, name: str) -> None:
@@ -300,7 +301,7 @@ def release_environment(
 
 def job_checkpoint(job: dict) -> str | None:
     """Checkpoint the model server must serve for `job`; None if it needs none.
-    The served config's solver uses the trained model."""
+    The served config's prover uses the trained model."""
     if json.loads(job.get("options") or "{}").get("documents_only"):
         return None
     selection = job_selection(job)
@@ -374,7 +375,7 @@ def progress_count(run_id: str) -> int:
     """Durable steps of a run (decisions a resume restores) in its trace."""
     path = RESULTS_DIR / run_id / "trace.json"
     try:
-        steps = json.loads(path.read_text()).get("steps", [])
+        steps = modernize(json.loads(path.read_text())).get("steps", [])
     except (OSError, json.JSONDecodeError):
         return 0
     return sum(step.get("event") in PROGRESS_EVENTS for step in steps)
@@ -843,38 +844,38 @@ class Worker(threading.Thread):
         config = group_config(
             models.build_config(CONFIG, job_selection(job)), group
         )
-        options = json.loads(job.get("options") or "{}")
+        options = current_names(json.loads(job.get("options") or "{}"))
         if "aiprover_timeout" in options:
             timeout = int(options["aiprover_timeout"]) or NO_TIME_LIMIT
             for spec in config["agents"].values():
                 if spec.get("backend") == "aiprover":
                     spec["timeout"] = timeout
-        captain = config["agents"]["captain"]
-        if "source_dir" in options and captain.get("tools"):
-            captain["source_dir"] = options["source_dir"]
-        phases = options.get("captain_phases")
+        orchestrator = config["agents"]["orchestrator"]
+        if "source_dir" in options and orchestrator.get("tools"):
+            orchestrator["source_dir"] = options["source_dir"]
+        phases = options.get("orchestrator_phases")
         if phases:
             # `true` selects the default phases, a name the file
-            # captain_phases_<name>.json.
+            # orchestrator_phases_<name>.json.
             path = (
-                CAPTAIN_PHASES
+                ORCHESTRATOR_PHASES
                 if phases is True
-                else CAPTAIN_PHASES.with_name(f"captain_phases_{phases}.json")
+                else ORCHESTRATOR_PHASES.with_name(f"orchestrator_phases_{phases}.json")
             )
             # The selection's choices (the judges' tools) are kept. The files
             # name Claude models, which another backend's phases do not take.
-            selected = captain.get("phases") or {}
-            captain["phases"] = {
+            selected = orchestrator.get("phases") or {}
+            orchestrator["phases"] = {
                 prefix: {
                     key: value
                     for key, value in overrides.items()
-                    if key != "model" or captain["backend"] == "claude"
+                    if key != "model" or orchestrator["backend"] == "claude"
                 }
                 for prefix, overrides in json.loads(path.read_text()).items()
             }
             for prefix, overrides in selected.items():
-                captain["phases"][prefix] = {
-                    **captain["phases"].get(prefix, {}),
+                orchestrator["phases"][prefix] = {
+                    **orchestrator["phases"].get(prefix, {}),
                     **overrides,
                 }
         environment = {"AIPROVER_CONFIG": str(group.tunnel_config)}

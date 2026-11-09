@@ -4,10 +4,10 @@ Each pending lemma goes to AIProver jobs, up to `aiprover_attempts_per_lemma`
 completed jobs per lemma statement over the run, across sketches and resumes
 (`ResumeState.attempts`). Jobs share `aiprover_session_slots` sessions,
 weighted towards lemmas with more failures. Every sample's proof passes the
-same Lean gate as chat solvers. After `aiprover_handback_after` failures a
-lemma is handed back to the captain, and several stuck leaves under one
-decision start a conflict analysis (`stages/handback.py`). A lemma whose
-statement has used its attempts is handed back once more (early revision)
+same Lean gate as chat provers. After `aiprover_escalation_after` failures a
+lemma is escalated to the orchestrator, and several stuck leaves under one
+decision start a conflict analysis (`stages/escalation.py`). A lemma whose
+statement has used its attempts is escalated once more (early revision)
 instead of waiting for the replan. A refuted lemma
 ends the phase once the running jobs return, and the sketch is revised. A
 later lemma whose statement equals a proved one retracted by a backjump
@@ -72,7 +72,7 @@ REBALANCE_SECONDS = 60
 MAX_LEMMA_JOBS = 256
 # Longest wait of a lemma before it looks at the free slots again.
 SLOT_WAIT_SECONDS = 15
-# Failed samples' code kept for the captain and the replan: the most
+# Failed samples' code kept for the orchestrator and the replan: the most
 # complete ones, each cut to a length.
 MAX_ATTEMPTS_KEPT = 2
 MAX_ATTEMPT_CHARS = 6000
@@ -85,37 +85,37 @@ class Phase:
 
     form: Formalization
     sketch: Sketch
-    solver: AIProverAgent
+    prover: AIProverAgent
     # Declarations found and searches that failed, over the run's sessions.
     mathlib: knowledge.MathlibMap
     # The run's own declarations, which sessions must not look for in
     # Mathlib.
     run_names: set[str]
-    # Hand-backs and conflict analyses so far in the run, including earlier
+    # Escalations and conflict analyses so far in the run, including earlier
     # sketches and runs before a resume.
-    handbacks: int
+    escalations: int
     # Conflicts analysed: (decision, statement, stuck leaves).
     analysed: set[tuple]
     # Statements revised after their last attempt: (lemma, statement).
     revised: set[tuple] = field(default_factory=set)
-    # Captain retries per lemma since its last restatement.
+    # Orchestrator retries per lemma since its last restatement.
     retries: Counter = field(default_factory=Counter)
-    # The captain's informal proof of each lemma statement for its jobs:
-    # (lemma, statement): direction.
-    directions: dict[tuple, str] = field(default_factory=dict)
+    # The orchestrator's informal proof of each lemma statement for its jobs:
+    # (lemma, statement): guidance.
+    guidance: dict[tuple, str] = field(default_factory=dict)
     lock: threading.Lock = field(default_factory=threading.Lock)
     # Lemmas submitted to this phase; the others wait for a later phase.
     submitted: set[str] = field(default_factory=set)
     sessions_in_flight: dict[str, int] = field(default_factory=dict)
     running_jobs: dict[str, str] = field(default_factory=dict)  # lemma: job
-    in_handback: set[str] = field(default_factory=set)
+    in_escalation: set[str] = field(default_factory=set)
     in_analysis: set[str] = field(default_factory=set)  # decisions
     # Proved lemmas retracted by a backjump, by normalized statement, for
     # reuse, and the names of every retracted lemma.
     retracted: dict[str, Lemma] = field(default_factory=dict)
     retracted_names: set[str] = field(default_factory=set)
     # Set once a lemma is refuted: the sketch must change, so no further job
-    # or hand-back starts and the phase ends with the running jobs.
+    # or escalation starts and the phase ends with the running jobs.
     refuted: threading.Event = field(default_factory=threading.Event)
     # Set after a failure (lost endpoint, interruption): lemmas not yet
     # started are skipped rather than run against a dead server.
@@ -152,14 +152,14 @@ class AIProverStage:
         phase = Phase(
             form=form,
             sketch=sketch,
-            solver=self.agents.agents["solver"],
+            prover=self.agents.agents["prover"],
             mathlib=knowledge.MathlibMap.from_steps(steps),
             run_names=knowledge.declared_names(
                 form.definitions + "\n" + form.preamble
             ),
-            handbacks=sum(
+            escalations=sum(
                 step["kind"] == "decision"
-                and step.get("event") in ("lemma_handback", "conflict")
+                and step.get("event") in ("lemma_escalation", "conflict")
                 for step in steps
             ),
             analysed={
@@ -178,16 +178,16 @@ class AIProverStage:
                 if step["kind"] == "decision"
                 and step.get("event") == "early_revision"
             },
-            directions={
-                (step["lemma"], normalize(step["statement"])): step["direction"]
+            guidance={
+                (step["lemma"], normalize(step["statement"])): step["guidance"]
                 for step in steps
                 if step["kind"] == "decision"
-                and step.get("event") == "lemma_direction"
+                and step.get("event") == "lemma_guidance"
             },
         )
         for step in steps:
             if step["kind"] == "decision" and step.get("event") == (
-                "lemma_handback"
+                "lemma_escalation"
             ):
                 if step.get("action") == "retry":
                     phase.retries[step["lemma"]] += 1
@@ -211,10 +211,10 @@ class AIProverStage:
         pending: list[tuple[int, Lemma]],
     ) -> None:
         """Prove each pending lemma with AIProver jobs. A split from a
-        hand-back adds new lemmas to this phase."""
+        escalation adds new lemmas to this phase."""
         phase = self._aiprover_phase(form, sketch)
         # Read once here, before the lemma threads ask for it together.
-        phase.solver.total_slots
+        phase.prover.total_slots
         # Concurrent lemma jobs; 0 for no limit, under which a lemma added
         # by a split starts at once rather than after a running lemma.
         concurrency = self.config.aiprover_lemma_concurrency or MAX_LEMMA_JOBS
@@ -257,7 +257,7 @@ class AIProverStage:
                 with phase.lock:
                     jobs = list(phase.running_jobs.values())
                 for job in jobs:
-                    phase.solver.cancel(job)
+                    phase.prover.cancel(job)
                 raise
             finally:
                 phase.finished.set()
@@ -294,13 +294,13 @@ class AIProverStage:
 
     def _jobs(self, phase: Phase, lemma: Lemma) -> None:
         """Jobs on `lemma` until it is proved or out of attempts. The
-        hand-back comes before the next job, so a lemma restored with enough
-        failures (after a resume) goes to the captain first."""
+        escalation comes before the next job, so a lemma restored with enough
+        failures (after a resume) goes to the orchestrator first."""
         while not lemma.proved and not phase.stopped.is_set():
-            # At the limit no hand-back is made, so that further jobs would
+            # At the limit no escalation is made, so that further jobs would
             # spend the statement's attempts without one.
             self.agents.check_spend_limit()
-            self._maybe_handback(phase, lemma)
+            self._maybe_escalation(phase, lemma)
             samples = not self._exhausted(lemma) and self._claim_sessions(
                 phase, lemma
             )
@@ -354,8 +354,8 @@ class AIProverStage:
         server, otherwise what this machine and its harness allow."""
         slots = self.config.aiprover_session_slots
         if slots:
-            return slots * phase.solver.servers()
-        return min(phase.solver.total_slots or math.inf, SESSIONS.limit())
+            return slots * phase.prover.servers()
+        return min(phase.prover.total_slots or math.inf, SESSIONS.limit())
 
     def _startable(self, phase: Phase, lemma: Lemma) -> bool:
         """An unproved lemma without a job that could start one."""
@@ -363,7 +363,7 @@ class AIProverStage:
             not lemma.proved
             and lemma.name in phase.submitted
             and lemma.name not in phase.sessions_in_flight
-            and lemma.name not in phase.in_handback
+            and lemma.name not in phase.in_escalation
             and not self._exhausted(lemma)
             and not phase.refuted.is_set()
         )
@@ -404,7 +404,7 @@ class AIProverStage:
         sessions each."""
         slots = self.config.aiprover_session_slots
         limit = self.config.aiprover_job_sessions or math.inf
-        solver = phase.solver
+        prover = phase.prover
         while slots and not phase.finished.wait(REBALANCE_SECONDS):
             if phase.stopped.is_set():
                 return
@@ -416,11 +416,11 @@ class AIProverStage:
                 ):
                     continue
             live = {
-                name: solver.live_sessions(job) for name, job in jobs.items()
+                name: prover.live_sessions(job) for name, job in jobs.items()
             }
             free = min(
                 self._capacity(phase) - sum(live.values()),
-                solver.free_slots(),
+                prover.free_slots(),
             )
             with phase.lock:
                 for name, count in live.items():
@@ -457,7 +457,7 @@ class AIProverStage:
                 if held is None or share < 1:
                     continue
                 share = held.take(share)
-                added = share > 0 and solver.grow(job, share)
+                added = share > 0 and prover.grow(job, share)
                 held.release(share - added)
                 if not added:
                     continue
@@ -475,10 +475,10 @@ class AIProverStage:
                 if left < 1:
                     break
 
-    # The captain: hand-back, conflict analysis, backjump -------------------
+    # The orchestrator: escalation, conflict analysis, backjump -------------------
 
-    def _maybe_handback(self, phase: Phase, lemma: Lemma) -> None:
-        handback_after = self.config.aiprover_handback_after
+    def _maybe_escalation(self, phase: Phase, lemma: Lemma) -> None:
+        escalation_after = self.config.aiprover_escalation_after
         self._analyse_conflict(phase, lemma)
         with phase.lock:
             # A leaf under a decision being analysed waits for the analysis,
@@ -489,15 +489,15 @@ class AIProverStage:
             )
         # Retried more often than allowed (before the limit existed).
         over = phase.retries[lemma.name] > self.config.aiprover_max_retries > 0
-        # A proof that assembly rejected goes to the captain at once.
+        # A proof that assembly rejected goes to the orchestrator at once.
         over = over or bool(lemma.assembly_failure)
         if (
             waiting
-            or not handback_after
+            or not escalation_after
             or lemma.proved
             or lemma.handed_back
             or (
-                lemma.attempts - lemma.reviewed_at < handback_after
+                lemma.attempts - lemma.reviewed_at < escalation_after
                 and not over
             )
             or phase.halted()
@@ -510,56 +510,56 @@ class AIProverStage:
             and not self._exhausted(lemma)
         ):
             # No session left code or notes: a setup failure (clock, stalled
-            # replies); retry before asking the captain. A lemma without
-            # attempts left goes to the captain regardless.
+            # replies); retry before asking the orchestrator. A lemma without
+            # attempts left goes to the orchestrator regardless.
             logger.info(
                 f"{lemma.name}: no code in the last attempt; "
-                f"hand-back deferred"
+                f"escalation deferred"
             )
             return
         if self.agents.hosted_budget_left() < 2:
-            logger.info(f"{lemma.name}: hosted-model budget too low for a hand-back")
+            logger.info(f"{lemma.name}: hosted-model budget too low for an escalation")
             return
-        limit = self.config.max_handbacks
-        # A hand-back takes minutes against a job's 90, so the lemma gives up
+        limit = self.config.max_escalations
+        # An escalation takes minutes against a job's 90, so the lemma gives up
         # its share of the slots meanwhile.
         with phase.lock:
-            allowed = not limit or phase.handbacks < limit
+            allowed = not limit or phase.escalations < limit
             if allowed:
-                phase.in_handback.add(lemma.name)
-                phase.handbacks += 1
+                phase.in_escalation.add(lemma.name)
+                phase.escalations += 1
         if not allowed:
-            logger.info(f"{lemma.name}: hand-back limit of {limit} reached")
+            logger.info(f"{lemma.name}: escalation limit of {limit} reached")
             return
         try:
-            self._handback(phase, lemma)
+            self._escalation(phase, lemma)
             lemma.assembly_failure = ""
             if lemma.refutation:
                 phase.refuted.set()
         except AgentRefusal as error:
-            # The captain's model refuses this prompt (a safety classifier),
+            # The orchestrator's model refuses this prompt (a safety classifier),
             # so asking again would fail the same way: the lemma continues
-            # without a hand-back instead of the run stopping and repeating
+            # without an escalation instead of the run stopping and repeating
             # it on every resume.
             logger.warning(
-                f"{lemma.name}: hand-back refused by the model; "
+                f"{lemma.name}: escalation refused by the model; "
                 f"continuing without it"
             )
             lemma.handed_back = True
             lemma.assembly_failure = ""
             self._decision(
-                "lemma_handback",
+                "lemma_escalation",
                 lemma=lemma.name,
                 action="refused",
                 diagnosis=str(error)[:300],
             )
         finally:
             with phase.lock:
-                phase.in_handback.discard(lemma.name)
+                phase.in_escalation.discard(lemma.name)
 
     def _revise(self, phase: Phase, lemma: Lemma) -> bool:
         """Hand `lemma` back once more when its statement has used its
-        attempts, so that the captain may split, restate, prove, refute or
+        attempts, so that the orchestrator may split, restate, prove, refute or
         retry it now rather than at the replan (once per statement). True
         if jobs on it should continue."""
         if (
@@ -572,22 +572,22 @@ class AIProverStage:
         ):
             return False
         key = (lemma.name, normalize(lemma.statement))
-        limit = self.config.max_handbacks
+        limit = self.config.max_escalations
         with phase.lock:
             if (
                 key in phase.revised
                 or not phase.present(lemma)
-                or lemma.name in phase.in_handback
+                or lemma.name in phase.in_escalation
                 or any(
                     other.name in phase.in_analysis
                     for other in cdcl.ancestors(lemma, phase.sketch.lemmas)
                 )
-                or (limit and phase.handbacks >= limit)
+                or (limit and phase.escalations >= limit)
             ):
                 return False
             phase.revised.add(key)
-            phase.in_handback.add(lemma.name)
-            phase.handbacks += 1
+            phase.in_escalation.add(lemma.name)
+            phase.escalations += 1
         logger.info(f"{lemma.name}: attempts used; early revision")
         self._decision(
             "early_revision",
@@ -596,7 +596,7 @@ class AIProverStage:
             attempts=lemma.attempts,
         )
         try:
-            self._handback(phase, lemma)
+            self._escalation(phase, lemma)
             if lemma.refutation:
                 phase.refuted.set()
         except AgentRefusal as error:
@@ -606,7 +606,7 @@ class AIProverStage:
             )
         finally:
             with phase.lock:
-                phase.in_handback.discard(lemma.name)
+                phase.in_escalation.discard(lemma.name)
         return not lemma.proved and not self._exhausted(lemma)
 
     def _analyse_conflict(self, phase: Phase, lemma: Lemma) -> None:
@@ -621,24 +621,24 @@ class AIProverStage:
                 lemma,
                 phase.sketch.lemmas,
                 self.config.cdcl_conflict_leaves,
-                self.config.aiprover_handback_after,
+                self.config.aiprover_escalation_after,
                 phase.analysed,
             )
             if found is None:
                 return
             decision, stuck_leaves = found
             below = cdcl.subtree(decision.name, phase.sketch.lemmas)
-            limit = self.config.max_handbacks
+            limit = self.config.max_escalations
             if (
                 decision.name in phase.in_analysis
-                or any(other.name in phase.in_handback for other in below)
-                or (limit and phase.handbacks >= limit)
+                or any(other.name in phase.in_escalation for other in below)
+                or (limit and phase.escalations >= limit)
                 or self.agents.hosted_budget_left() < 2
             ):
                 return
             phase.analysed.add(cdcl.conflict_key(decision, stuck_leaves))
             phase.in_analysis.add(decision.name)
-            phase.handbacks += 1
+            phase.escalations += 1
         try:
             self._conflict(phase, decision, stuck_leaves)
         except AgentRefusal as error:
@@ -654,7 +654,7 @@ class AIProverStage:
         """Look for conflicts over the whole tree every interval. Lemma
         threads check before each job, but with a concurrency limit a stuck
         leaf may wait hours for a thread; analysis must not."""
-        handback_after = self.config.aiprover_handback_after
+        escalation_after = self.config.aiprover_escalation_after
         while self.config.cdcl and not phase.finished.wait(REBALANCE_SECONDS):
             if phase.halted():
                 return
@@ -662,7 +662,7 @@ class AIProverStage:
                 open_leaves = [
                     other
                     for other in phase.sketch.lemmas
-                    if cdcl.stuck(other, handback_after)
+                    if cdcl.stuck(other, escalation_after)
                 ]
             for leaf in open_leaves:
                 if phase.finished.is_set() or phase.stopped.is_set():
@@ -670,7 +670,7 @@ class AIProverStage:
                 try:
                     self._analyse_conflict(phase, leaf)
                 except Exception as error:  # noqa: BLE001
-                    # A failed captain call loses this analysis, not the run;
+                    # A failed orchestrator call loses this analysis, not the run;
                     # the leaves' own threads still report failures.
                     logger.warning(
                         f"conflict analysis near {leaf.name} failed: "
@@ -689,7 +689,7 @@ class AIProverStage:
             job = phase.running_jobs.get(other.name)
             if job:
                 threading.Thread(
-                    target=phase.solver.cancel, args=(job,), daemon=True
+                    target=phase.prover.cancel, args=(job,), daemon=True
                 ).start()
         return removed
 
@@ -714,52 +714,52 @@ class AIProverStage:
     def _directed_proof(
         self, phase: Phase, lemma: Lemma, context: str, key: tuple
     ) -> str:
-        """The informal proof a job on `lemma` receives: the direction for
-        its statement (`aiprover_direction`), fixed before the statement's
-        first job, ahead of the source's proof. Without a direction (none
+        """The informal proof a job on `lemma` receives: the guidance for
+        its statement (`aiprover_guidance`), fixed before the statement's
+        first job, ahead of the source's proof. Without guidance (none
         configured, no comments, no hosted-model budget left, or a failed call)
         the source's proof alone."""
         source = self.row["informal_proof"]
-        mode = self.config.aiprover_direction
+        mode = self.config.aiprover_guidance
         if not mode:
             return source
         with phase.lock:
-            direction = phase.directions.get(key)
-        if direction is None:
-            direction = (
+            guidance = phase.guidance.get(key)
+        if guidance is None:
+            guidance = (
                 self._sketch_note(lemma)
                 if mode == "sketch"
-                else self._captain_direction(lemma, context, source)
+                else self._orchestrator_guidance(lemma, context, source)
             )
-            if direction is None:
+            if guidance is None:
                 return source
             with phase.lock:
-                phase.directions[key] = direction
+                phase.guidance[key] = guidance
             self._decision(
-                "lemma_direction",
+                "lemma_guidance",
                 lemma=lemma.name,
                 statement=lemma.statement,
-                direction=direction,
+                guidance=guidance,
                 source=mode,
             )
-        if not direction:
+        if not guidance:
             return source
         if self.config.aiprover_condensed_prompt:
             return prompts.DIRECTION_ONLY.format(
-                lemma_name=lemma.name, direction=direction
+                lemma_name=lemma.name, guidance=guidance
             )
         return prompts.DIRECTED_PROOF.format(
-            lemma_name=lemma.name, direction=direction, informal_proof=source
+            lemma_name=lemma.name, guidance=guidance, informal_proof=source
         )
 
-    def _captain_direction(
+    def _orchestrator_guidance(
         self, lemma: Lemma, context: str, source: str
     ) -> str | None:
-        """The captain's informal proof of `lemma`; None without budget or
+        """The orchestrator's informal proof of `lemma`; None without budget or
         after a failed call."""
         if self.agents.hosted_budget_left() < 1:
             return None
-        prompt = prompts.DIRECTION_TEMPLATE.format(
+        prompt = prompts.GUIDANCE_TEMPLATE.format(
             lemma_name=lemma.name,
             theorem_text=self.row["informal_statement"],
             context=context.rstrip(),
@@ -767,11 +767,11 @@ class AIProverStage:
             informal_proof=source,
         )
         try:
-            return self._captain(
-                prompt, phase=f"direction/{lemma.name}"
+            return self._orchestrator(
+                prompt, phase=f"guidance/{lemma.name}"
             ).strip()
         except (AgentCallError, BudgetExhausted) as error:
-            logger.warning(f"{lemma.name}: no direction: {error}")
+            logger.warning(f"{lemma.name}: no guidance: {error}")
             return None
 
     def _job_context(
@@ -792,7 +792,7 @@ class AIProverStage:
         return stubs, self._standalone(fixed, stubs)
 
     def _cited_lemmas(self, earlier: list[Lemma], proof_text: str) -> str:
-        """The earlier lemmas a job's direction names, with their
+        """The earlier lemmas a job's guidance names, with their
         statements, as facts to cite; empty without any."""
         if not self.config.aiprover_cite_lemmas:
             return ""
@@ -804,7 +804,7 @@ class AIProverStage:
         )
 
     def _sketch_note(self, lemma: Lemma) -> str:
-        """The comment lines directly above `lemma` in the latest captain
+        """The comment lines directly above `lemma` in the latest orchestrator
         reply that stated it (a sketch, a replan or a split), without the
         comment markers; empty if there are none."""
         pattern = re.compile(
@@ -814,7 +814,7 @@ class AIProverStage:
             re.M,
         )
         for step in reversed(self.trace.document["steps"]):
-            if step["kind"] != "model_call" or step.get("role") != "captain":
+            if step["kind"] != "model_call" or step.get("role") != "orchestrator":
                 continue
             match = pattern.search(step.get("response") or "")
             if match:
@@ -828,7 +828,7 @@ class AIProverStage:
         """One AIProver job on `lemma`; the first sample that passes the Lean
         gate proves it. The job receives the definitions and earlier lemmas
         as fixed context and the lemma as fixed statement."""
-        solver = phase.solver
+        prover = phase.prover
         with phase.lock:
             lemmas = phase.sketch.lemmas
             earlier = (
@@ -845,16 +845,16 @@ class AIProverStage:
         with phase.lock:
             resume_job = self.state.resumable_jobs.pop(key, None)
         stubs, context = self._job_context(phase, earlier, lemma)
-        # The captain writes a direction from the whole context.
+        # The orchestrator writes the guidance from the whole context.
         proof_text = self._directed_proof(phase, lemma, context, key)
         with phase.lock:
-            directed = bool(phase.directions.get(key))
+            directed = bool(phase.guidance.get(key))
         if directed and self.config.aiprover_condensed_prompt:
             named = named_lemmas(earlier, proof_text)
             condensed = self._job_context(phase, named, lemma, proof_text)
             # A resumed job keeps the context its sessions started with,
             # condensed or not.
-            if not resume_job or solver.job_matches(
+            if not resume_job or prover.job_matches(
                 resume_job, condensed[1], statement
             ):
                 earlier, (stubs, context) = named, condensed
@@ -888,7 +888,7 @@ class AIProverStage:
                 aiprover_job=job_id,
             )
 
-        job = solver.solve(
+        job = prover.solve(
             name=f"{self.run_id}_{lemma.name}"[:60],
             theorem_text=prompts.AIPROVER_LEMMA_TEMPLATE.format(
                 lemma_name=lemma.name,
@@ -932,7 +932,7 @@ class AIProverStage:
         )
         best = next((sample.lean for sample in ranked if sample.lean), "")
         self.agents.record(
-            "solver",
+            "prover",
             f"{lemma.name}/aiprover",
             job.problem,
             Completion(text=best, error=job.error),
@@ -956,7 +956,7 @@ class AIProverStage:
                 return
         # A lost model server is an infrastructure failure, not a failed
         # lemma: the run stops and resumes this lemma instead of replanning.
-        if not solver.endpoint_up():
+        if not prover.endpoint_up():
             raise AgentCallError(
                 f"AIProver endpoint unavailable during {lemma.name}"
             )
@@ -984,7 +984,7 @@ class AIProverStage:
     ) -> None:
         """Count a job that did not prove `lemma`, and keep its errors, the
         samples' own code (most complete first) and their notes for the
-        next jobs, the captain and the replan."""
+        next jobs, the orchestrator and the replan."""
         with phase.lock:
             self.state.count_attempt(lemma)
         lemma.last_errors = "\n\n".join(errors)[:3000]
@@ -1012,7 +1012,7 @@ class AIProverStage:
             f"{[sample.status for sample in job.samples]}"
         )
         self._decision(
-            "solver_budget_exhausted",
+            "prover_budget_exhausted",
             lemma=lemma.name,
             worker=0,
             aiprover_job=job.job,

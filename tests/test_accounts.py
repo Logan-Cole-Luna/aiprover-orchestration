@@ -30,7 +30,7 @@ accounts.read_account = lambda service: None
 choice = {"provider": "codex", "model": "gpt-6.1-sol"}
 reply = TestClient(app).post("/api/runs", json={
     "statement": "S", "page": "user", "gpu_group": "cpu",
-    "orchestrator": choice, "subagent": choice, "auditor": choice,
+    "orchestrator": choice, "subagent": choice, "checker": choice,
     "reviewer": choice, "writer": choice,
 })
 print(json.dumps([reply.status_code, reply.json()["detail"]]))

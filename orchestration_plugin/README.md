@@ -1,8 +1,8 @@
-# aiprover-captain plugin
+# aiprover-orchestrator plugin
 
 A Claude Code skill that runs the orchestration method
 (`aiprover_orchestration/orchestrator/`, `docs/orchestration.md`) with the
-session's agent as captain. The session's subagents act as auditor, reviewer
+session's agent as orchestrator. The session's subagents act as faithfulness checker, reviewer
 and writer; lemmas are proved by AIProver jobs. The skill makes no
 programmatic model calls.
 
@@ -101,7 +101,7 @@ fix. The skill runs `aiprover doctor` itself before every run.
 
 Restart the Claude Code app (or VS Code). `/plugin` lists
 `aiprover-orchestration`. Open the repository and ask for a problem to be run
-with the aiprover-captain skill: by uuid of `data/*.jsonl`, or with an
+with the aiprover-orchestrator skill: by uuid of `data/*.jsonl`, or with an
 informal statement and proof. `data/openai_math.jsonl` (five problems of the
 OpenAI math release) is in git as a sample set, for example
 `OpenAIMath_164_HindmanDistinctExpressions`; copy other problem files to a
@@ -117,7 +117,7 @@ and doctor only), or edit `endpoint.toml` and run `setup.sh endpoint doctor`.
 | `endpoint.toml` | written by `./setup`: the connection to the model server and the local proxy (not in git) |
 | `aiprover.toml` | written by `./setup`: the harness (through the proxy), runtime, paths (not in git) |
 | `setup.sh` | the steps inside the environment: Lean, plugin, doctor |
-| `claude_code/skills/aiprover-captain/SKILL.md` | the captain procedure |
+| `claude_code/skills/aiprover-orchestrator/SKILL.md` | the orchestrator procedure |
 | `…/references/` | Lean gates, subagent prompts, run record |
 | `…/scripts/env.sh` | repository paths, tools on `PATH`, recording functions |
 | `../flake.nix`, `../nix/` | the Nix environment: tools, virtualenvs, the lean-lsp-mcp patches |

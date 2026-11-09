@@ -1,13 +1,13 @@
 {
   "agents": {
-    "captain": {
+    "orchestrator": {
       "backend": "claude",
       "model": "claude-opus-5-5",
       "timeout": 2400,
       "effort": "high",
       "max_output_tokens": 128000
     },
-    "auditor": {
+    "checker": {
       "backend": "claude",
       "model": "claude-sonnet-5-5"
     },
@@ -25,7 +25,7 @@
       "effort": "high",
       "max_output_tokens": 128000
     },
-    "solver": {
+    "prover": {
       "backend": "aiprover",
       "model": "aiprover",
       "config": "configs/aiprover/vista_logged.toml",
@@ -59,7 +59,7 @@
   "aiprover_attempts_per_lemma": 5,
   "aiprover_session_slots": 8,
   "aiprover_job_sessions": 3,
-  "aiprover_handback_after": 2,
-  "max_handbacks": 12,
+  "aiprover_escalation_after": 2,
+  "max_escalations": 12,
   "final_hosted_calls": 8
 }

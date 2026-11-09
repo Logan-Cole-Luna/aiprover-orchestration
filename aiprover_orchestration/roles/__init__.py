@@ -1,4 +1,4 @@
-"""Role guides: captain, auditor, solver, and the library agent guide (skill)."""
+"""Role guides: orchestrator, checker, prover, and the library agent guide (skill)."""
 
 from pathlib import Path
 

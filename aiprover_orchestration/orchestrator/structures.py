@@ -42,7 +42,7 @@ class Formalization:
         return f"theorem {self.theorem_name}{self.signature}:= by sorry"
 
     def add_setting_facts(self, facts: str) -> None:
-        """Append facts proved by the setting check to the definitions. The
+        """Append facts proved by the vacuity check to the definitions. The
         facts were compiled after the preamble and may rely on its `open`
         commands, so they join the definitions under it."""
         self.definitions = "\n\n".join(
@@ -58,14 +58,14 @@ class Lemma:
     proof: str = ""
     proved: bool = False
     last_errors: str = ""
-    last_attempts: str = ""  # the solvers' last failed code, for a replan
+    last_attempts: str = ""  # the provers' last failed code, for a replan
     attempts: int = 0  # completed AIProver jobs that did not prove it
-    handed_back: bool = False  # handed back to the captain for this statement
-    reviewed_at: int = 0  # attempts when the captain last asked for a retry
+    handed_back: bool = False  # escalated to the orchestrator for this statement
+    reviewed_at: int = 0  # attempts when the orchestrator last asked for a retry
     knowledge: str = ""  # notes carried to the next jobs (knowledge.py)
     refutation: str = ""  # compiled Lean proof of the statement's negation
     parent: str = ""  # the lemma this one was split from (cdcl.py)
-    # Why assembly rejected its proof; the captain answers this first.
+    # Why assembly rejected its proof; the orchestrator answers this first.
     assembly_failure: str = ""
     # Lean definitions its statement may use, introduced by splits above it,
     # outermost first; each block is placed once, before the first lemma
@@ -377,7 +377,7 @@ def carry_definitions(
 
 
 def failed_lemma_text(lemma: Lemma) -> str:
-    """A failed lemma as listed in the replan and hand-back prompts."""
+    """A failed lemma as listed in the replan and escalation prompts."""
     if lemma.refutation:
         return (
             f"{lemma.statement}\nThis lemma is FALSE. Lean accepted this "

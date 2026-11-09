@@ -40,7 +40,7 @@ COMPLETED = "completed_problems"
 IN_PROGRESS = "ip_problems"
 EXCLUDED = {"trace.json", "trace.html", "trace_replay.html"}
 # Fields that quote a failed model call: its error, and the diagnosis of a
-# hand-back the model refused. A model call's error, or one naming the call
+# escalation the model refused. A model call's error, or one naming the call
 # (`<backend> call failed (<role>/<phase>): ...`), quotes the provider's
 # message verbatim; a shared copy keeps the call and the HTTP status.
 ERROR_FIELDS = {"error", "diagnosis"}
@@ -81,8 +81,8 @@ python -m aiprover_orchestration.orchestrator.run --run-id <run_id> --resume \\
 Requirements: the aiprover_orchestration repository with its Lean workspace
 (the release of each run's `lean_environment` in its `trace.json`), a Claude API
 key, and an AIProver model endpoint. The
-recorded config names our solver config (`agents.solver.config`); to use
-another endpoint, copy `config.json`, point `agents.solver.config` to an
+recorded config names our prover config (`agents.prover.config`); to use
+another endpoint, copy `config.json`, point `agents.prover.config` to an
 AIProver config of your own and pass it with `--config`. AIProver jobs that
 were in progress on our machine are submitted afresh.
 

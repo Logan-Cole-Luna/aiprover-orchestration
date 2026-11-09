@@ -153,7 +153,7 @@ details { margin: 0 0 12px; } summary { cursor: pointer; color: var(--accent); }
 .diagram { display: block; width: 100%; height: auto; font-family: var(--font-prose); color: var(--muted); }
 .diagram rect { fill: var(--surface-2); stroke: var(--line); }
 .diagram .orchestrator { fill: var(--warn-soft); stroke: var(--lean); }
-.diagram .solver { fill: var(--accent-soft); stroke: var(--accent); }
+.diagram .prover { fill: var(--accent-soft); stroke: var(--accent); }
 .diagram .proved { fill: var(--ok-soft); stroke: var(--ok); }
 .diagram .gate { fill: var(--ok); stroke: none; }
 .diagram .session { fill: var(--accent); stroke: none; } .diagram .session.done { fill: var(--ok); }
@@ -437,16 +437,16 @@ figcaption { font-size: .9rem; line-height: 1.45; color: var(--caption); margin-
 </dialog>
 <dialog id="member-dialog">
   <form id="member-form">
-    <h3>Result</h3>
+    <h3>Theorem to prove</h3>
     <label for="member-name">Name</label>
     <input id="member-name" required pattern="[A-Za-z0-9_-]+" maxlength="80">
     <label for="member-role">Role</label>
-    <select id="member-role"><option>main</option><option>background</option></select>
-    <label for="member-statement">Statement</label>
+    <select id="member-role"><option value="main">Main: a contribution of the project</option><option value="background">Background: an established result the others use</option></select>
+    <label for="member-statement">Statement to prove</label>
     <textarea id="member-statement"></textarea>
-    <label for="member-proof">Informal proof <small>optional</small></label>
+    <label for="member-proof">Informal proof <small>optional: a proof to follow, if you have one</small></label>
     <textarea id="member-proof"></textarea>
-    <label for="member-uses">Depends on <small>names of earlier results, separated by commas</small></label>
+    <label for="member-uses">Depends on <small>names of earlier theorems, separated by commas</small></label>
     <input id="member-uses">
     <div class="row"><button type="submit">Save</button><button type="button" class="plain" id="member-up">Move up</button><button type="button" class="plain" id="member-remove">Remove</button><button type="button" class="plain" id="member-cancel">Cancel</button></div>
   </form>
@@ -585,7 +585,7 @@ function buildPickers() {
     <p class="role-note">${escapeHtml(r.description)}</p><div class="pick" id="pick-${r.role}"></div></div>`).join("");
   for (const role of ROLES) {
     const box = $("pick-" + role);
-    // A phase of the captain (the hand-back) follows the orchestrator by default.
+    // A phase of the orchestrator (the escalation) follows the orchestrator by default.
     const providers = (catalog.phase_roles?.includes(role) ? `<option value="">Same as the orchestrator</option>` : "") + providerOptions();
     box.innerHTML = `<select aria-label="${role} model" data-field="provider">${providers}</select>
       <select aria-label="${role} model choice" data-field="model"></select>
@@ -671,7 +671,7 @@ function modelsHTML(agents) {
 // Orchestrator settings, from the catalog's `settings`: a number field, or
 // a choice whose empty option keeps the default.
 function settingDefault(s) {
-  if (s.default === null) return "solver's own";
+  if (s.default === null) return "prover's own";
   if (s.type === "bool") return s.default ? "yes" : "no";
   return s.type === "str" ? (s.default || "none") : String(s.default);
 }
@@ -1089,7 +1089,7 @@ const typesetMath = element => window.renderMathInElement?.(element, {delimiters
 let plan = null, planGraph = null, graphLibraries = null;
 
 const planRun = () => allRuns.find(entry => entry.run_id === plan?.runId);
-// A project's blueprint takes comments on its milestones, unless it is a read-only copy.
+// A project's blueprint takes comments on its theorems, unless it is a read-only copy.
 const planProject = () => projects.find(entry => plan?.runId === `project:${entry.name}` && !entry.owner);
 const commented = node => (plan.comments[node.name] || "").trim();
 // Most visits never open a plan, so the graph libraries load on first use.
@@ -1118,18 +1118,18 @@ function lemmaDetail() {
     ${node.lean ? `<div class="plan-label">Lean statement</div><pre class="lean">${escapeHtml(node.lean)}</pre>` : ""}
     ${node.uses.length ? `<div class="plan-label">Depends on</div><div class="row plan-links">${node.uses.map(link).join("")}</div>` : ""}
     ${users.length ? `<div class="plan-label">Used by</div><div class="row plan-links">${users.map(link).join("")}</div>` : ""}
-    ${review ? `<label class="plan-label" for="plan-comment">Comment on this ${planRun() ? "lemma" : "milestone"}</label><textarea id="plan-comment">${escapeHtml(plan.comments[node.name] || "")}</textarea>` : ""}
+    ${review ? `<label class="plan-label" for="plan-comment">Comment on this ${planRun() ? "lemma" : "theorem"}</label><textarea id="plan-comment">${escapeHtml(plan.comments[node.name] || "")}</textarea>` : ""}
   </div>`;
 }
-// The review section under a blueprint: a run's plan awaiting a decision, or a project's milestones.
+// The review section under a blueprint: a run's plan awaiting a decision, or a project's theorems.
 const planForm = (title, note, choices) => `<section class="plan-decision"><h3>${title}</h3>
     <label for="plan-general">General comments${note}</label>
     <textarea id="plan-general">${escapeHtml(plan.general)}</textarea>
     <p class="error" id="plan-error"></p>
     <div class="plan-choices">${choices}</div></section>`;
 function planDecision(run) {
-  if (planProject()) return planForm("Feedback on the milestones", "", `
-      <div><button type="button" data-plan-revise>Request revision</button>A research task revises the milestones not yet started in light of the comments: one session drafts the revision and a second referees it, within $20. Started results are kept.</div>`);
+  if (planProject()) return planForm("Feedback on the blueprint", "", `
+      <div><button type="button" data-plan-revise>Request revision</button>A research task revises the theorems not yet started in light of the comments: one session drafts the revision and a second referees it, within $20. Started results are kept.</div>`);
   if (!run.plan_review) return "";
   return planForm(`Decision on proof plan, version ${plan.data.version}`, " <small>required to approve with comments or to request a revision</small>", `
       <div><button type="button" data-plan-decide="approve">Approve</button>Commence proving this plan without changes.</div>
@@ -1137,11 +1137,11 @@ function planDecision(run) {
       <div><button type="button" class="plain" data-plan-decide="revise">Request revision</button>The orchestrator revises the plan in light of the comments and returns it for review.</div>
       <div><button type="button" class="plain bad" data-plan-decide="reject">Reject</button>Terminate the run before proving commences.</div>`);
 }
-async function reviseMilestones() {
+async function reviseBlueprint() {
   const comments = planComments();
   if (!comments) { $("plan-error").textContent = "A revision requires at least one comment."; return; }
-  const question = `${PLAN_QUESTION} Revise the current milestones in light of the reviewer's comments below.\n\nComments:\n${comments}`;
-  if (await startTask(planProject().name, {kind: "research", question, max_usd: 20, milestones: true})) { plan.comments = {}; plan.general = ""; renderPlan(); }
+  const question = `${PLAN_QUESTION} Revise the current blueprint in light of the reviewer's comments below.\n\nComments:\n${comments}`;
+  if (await startTask(planProject().name, {kind: "research", question, max_usd: 20, blueprint: true})) { plan.comments = {}; plan.general = ""; renderPlan(); }
 }
 function dropGraph() { planGraph?.destroy(); planGraph = null; }
 function renderPlan() {
@@ -1257,13 +1257,13 @@ async function mountMetrics() {
   if (!host) return;
   const data = await api(`/api/runs/${host.dataset.run}/metrics`).catch(() => null);
   if (!data || $("metrics") !== host) return;
-  const {checks, review, size, handbacks, benchmark, lemmas} = data, sessions = benchmark.sessions || {}, lean = benchmark.lean_checks || {};
+  const {checks, review, size, escalations, benchmark, lemmas} = data, sessions = benchmark.sessions || {}, lean = benchmark.lean_checks || {};
   const yes = value => value == null ? "n/r" : value ? "Yes" : "No", hours = seconds => number(Math.round((seconds || 0) / 360) / 10);
   const rows = Object.entries(lemmas).sort((a, b) => b[1].lines - a[1].lines), longest = Math.max(1, ...rows.map(([, row]) => row.lines));
   host.innerHTML = `<div class="plan-metrics">
     <div class="box"><h4>Verification</h4>${metricTable([["Compiles", yes(checks.compiles)], ["Free of <code>sorry</code>", yes(checks.no_sorry)], ["Statement matches", yes(checks.statement_matches)], ["Final review", escapeHtml(review || "n/r")], ["Axioms", (checks.axioms || []).map(name => `<code>${escapeHtml(name)}</code>`).join(", ") || "n/r"]])}</div>
     <div class="box"><h4>Proof size</h4>${metricTable([["Lean source", `${number(size.characters)} characters; ${number(size.lines)} non-blank lines`], ["Estimated tokens", number(size.tokens)], ["Informal proof", `${number(size.informal_characters)} characters`], ["Expansion factor", size.expansion == null ? "n/r" : `${size.expansion} Lean characters per informal character`]])}</div>
-    <div class="box"><h4>Effort</h4>${metricTable([["Wall time", `${hours(benchmark.wall_seconds)} h`], ["AIProver", `${number(sessions.jobs)} jobs; ${number(sessions.sessions)} sessions`], ["Hand-backs", number(handbacks)], ["Lean checks", `${number(lean.passed)} of ${number(lean.seconds?.count)} passed`]])}</div>
+    <div class="box"><h4>Effort</h4>${metricTable([["Wall time", `${hours(benchmark.wall_seconds)} h`], ["AIProver", `${number(sessions.jobs)} jobs; ${number(sessions.sessions)} sessions`], ["Escalations", number(escalations)], ["Lean checks", `${number(lean.passed)} of ${number(lean.seconds?.count)} passed`]])}</div>
     <div class="box"><h4>Output tokens</h4>${metricTable(Object.entries(benchmark.usage_by_model || {}).map(([model, usage]) => [escapeHtml(shortModel(model)), number(usage.output_tokens)]))}</div>
   </div>
   ${rows.length ? `<div class="box"><h4>Lemma proofs</h4><table class="plan-lemmas"><tr><th>Lemma</th><th>Lines</th><th>Characters</th><th>Proved by</th><th></th></tr>
@@ -1286,7 +1286,7 @@ document.addEventListener("click", event => {
   if (planPick) pickLemma(planPick);
   if (planMode) { plan.mode = planMode; renderPlan(); }
   if (planDecide) decidePlan(planDecide);
-  if (target.dataset.planRevise !== undefined) reviseMilestones();
+  if (target.dataset.planRevise !== undefined) reviseBlueprint();
   if (target.id === "plan-fit") planGraph?.fit(undefined, 16);
 });
 document.addEventListener("click", event => {
@@ -1363,7 +1363,7 @@ $("resume-form").addEventListener("submit", async event => {
 });
 
 // Projects: the runs of one subject as a chain, with what remains open.
-const PLAN_QUESTION = "Divide the goal into milestones that automated provers can formalize one at a time, in dependency order.";
+const PLAN_QUESTION = "Divide the goal into theorems that automated provers can formalize one at a time, in dependency order.";
 const MONEY = value => `$${value.toFixed(2)}`;
 let projects = [], shownProjects = "", editing = null, openPlan = null;
 const unstarted = project => project.members.filter(member => !member.run);
@@ -1423,8 +1423,8 @@ function projectCard(project) {
     <table><tr><th>#</th><th>Result</th><th>Role</th><th>Status</th><th>Lemmas</th><th>Spent</th></tr>${project.members.map((member, index) => projectRow(project, member, index)).join("")}</table>
     <div class="row">
       ${unstarted(project).length && !project.owner ? `<button type="button" data-launch ${data}>Start remaining results</button>` : ""}
-      <button type="button" ${change} data-edit ${data}>Add result</button>
-      <button type="button" ${change} data-task="${PLAN_QUESTION}" ${idle}>Plan milestones</button>
+      <button type="button" ${change} data-edit ${data}>Add theorem to prove</button>
+      <button type="button" ${change} data-task="${PLAN_QUESTION}" ${idle}>Plan blueprint</button>
       <button type="button" ${change} data-task="" ${idle}>Research</button>
       <button type="button" ${change} data-paper ${idle}>Write paper</button>
       ${project.members.length ? `<button type="button" class="plain" data-toggle-plan ${data} aria-pressed="${openPlan === project.name}">Blueprint</button>` : ""}
@@ -1477,7 +1477,7 @@ $("project-list").addEventListener("click", async event => {
     showProjectPlan(openPlan === name ? null : name);
   }
   if (edit !== undefined) { event.preventDefault(); openMember(project, index); }
-  if (task !== undefined) { Object.assign($("task-form").dataset, {project: name, milestones: task === PLAN_QUESTION}); $("task-question").value = task; $("task-dialog").showModal(); }
+  if (task !== undefined) { Object.assign($("task-form").dataset, {project: name, blueprint: task === PLAN_QUESTION}); $("task-question").value = task; $("task-dialog").showModal(); }
   if (launch !== undefined && confirm(`Queue the remaining results of ${project.title}? Each run spends hosted-model and GPU time.`)) projectCall(name, "launch", "POST");
   if (paper !== undefined) startTask(name, {kind: "paper"});
   const review = project?.reviews[claim];
@@ -1492,8 +1492,8 @@ $("project-list").addEventListener("click", async event => {
 $("task-form").addEventListener("submit", event => {
   event.preventDefault();
   $("task-dialog").close();
-  const {project, milestones} = $("task-form").dataset;
-  startTask(project, {kind: "research", question: $("task-question").value, max_usd: Number($("task-limit").value), milestones: milestones === "true"});
+  const {project, blueprint} = $("task-form").dataset;
+  startTask(project, {kind: "research", question: $("task-question").value, max_usd: Number($("task-limit").value), blueprint: blueprint === "true"});
 });
 
 // Only results without a run can change.

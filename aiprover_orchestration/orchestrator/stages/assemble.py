@@ -11,8 +11,8 @@ The time limits grow with the file. A timeout stops the run, since no lemma
 is to blame, and its resume repeats the check with twice the limit: each
 lemma compiled alone within its own limit, so the file finishes in time.
 
-A failed assembly returns to the captain (`assembly_rejected`): the lemmas
-responsible lose their proofs and are handed back, and the sketch itself is
+A failed assembly returns to the orchestrator (`assembly_rejected`): the lemmas
+responsible lose their proofs and are escalated, and the sketch itself is
 revised when no lemma is responsible.
 """
 
@@ -112,7 +112,7 @@ class AssembleStage:
     def reject_assembly(
         self, sketch: Sketch, checks: dict, problems: dict[str, str]
     ) -> None:
-        """Withdraw the proofs of the lemmas in `problems` for the captain."""
+        """Withdraw the proofs of the lemmas in `problems` for the orchestrator."""
         report = "\n".join(checks["errors"])
         for lemma in sketch.lemmas:
             problem = problems.get(lemma.name)

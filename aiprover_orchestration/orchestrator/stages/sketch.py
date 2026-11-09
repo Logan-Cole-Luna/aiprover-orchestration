@@ -1,12 +1,12 @@
-"""Setting check, proof sketch, refutation and replanning.
+"""Vacuity check, proof sketch, refutation and replanning.
 
-Before planning, the captain tests the setting: facts it proves about it
+Before planning, the orchestrator tests the setting: facts it proves about it
 (a degenerate structure, contradictory hypotheses, a small case) join the
-definitions. The captain then decomposes the proof into lemmas (stated in
+definitions. The orchestrator then decomposes the proof into lemmas (stated in
 full, left as `sorry`) and a proof of `solution` from them; the sketch must
-compile. After failed lemmas, the captain revises the sketch with the
-solvers' failed code and errors; proved lemmas whose statements are
-unchanged keep their proofs. A statement the captain judges false, the
+compile. After failed lemmas, the orchestrator revises the sketch with the
+provers' failed code and errors; proved lemmas whose statements are
+unchanged keep their proofs. A statement the orchestrator judges false, the
 theorem or a lemma, counts as refuted only when Lean accepts a proof of its
 negation from the definitions with the standard axioms.
 
@@ -73,7 +73,7 @@ from ..structures import (
 
 logger = logging.getLogger(__name__)
 
-# Facts proved by the setting check, which join the definitions.
+# Facts proved by the vacuity check, which join the definitions.
 SETTING_PREFIX = "setting_"
 
 
@@ -123,14 +123,14 @@ class SketchStage:
             ]
         return text, []
 
-    def check_setting(self, form: Formalization) -> str:
-        """Facts about the setting that the captain proves before planning:
+    def check_vacuity(self, form: Formalization) -> str:
+        """Facts about the setting that the orchestrator proves before planning:
         Lean theorems named `setting_...`, compiled against the definitions
-        without `sorry`. Empty when the captain finds none."""
+        without `sorry`. Empty when the orchestrator finds none."""
         feedback, facts = "", ""
         for repair in range(2):
-            reply = self._captain(
-                prompts.SETTING_CHECK_TEMPLATE.format(
+            reply = self._orchestrator(
+                prompts.VACUITY_CHECK_TEMPLATE.format(
                     definitions=form.definitions,
                     preamble=form.preamble,
                     signature=form.signature,
@@ -174,12 +174,12 @@ class SketchStage:
                     if not result.ok
                     else f"the facts depend on {extra_axioms}"
                 )
-            logger.info(f"setting check repair {repair}: {problems[0][:200]}")
-            feedback = prompts.SETTING_CHECK_REPAIR_TEMPLATE.format(
+            logger.info(f"vacuity check repair {repair}: {problems[0][:200]}")
+            feedback = prompts.VACUITY_CHECK_REPAIR_TEMPLATE.format(
                 facts=facts, errors="\n".join(problems)[:6000]
             )
             facts = ""
-        self._decision("setting_checked", facts=facts)
+        self._decision("vacuity_checked", facts=facts)
         return facts
 
     def sketch(
@@ -202,10 +202,10 @@ class SketchStage:
         self.sketch_rejected = ""
         # The judge's blocking objections to the previous version, if any.
         self._judged = ""
-        gaps_note = prompts.GAPS_SKETCH_TEMPLATE if self.config.gaps else ""
+        gaps_note = prompts.GAPS_SKETCH_TEMPLATE if self.config.open_subgoals else ""
         for repair in range(self.config.max_repairs + 1):
             try:
-                reply = self._captain(
+                reply = self._orchestrator(
                     prompts.SKETCH_TEMPLATE.format(
                         definitions=form.definitions,
                         preamble=form.preamble,
@@ -428,7 +428,7 @@ class SketchStage:
             if getattr(self, "_judged", "")
             else ""
         )
-        reply = self._captain(
+        reply = self._orchestrator(
             prompts.SKETCH_JUDGE_TEMPLATE.format(
                 signature=form.signature,
                 informal_proof=self.proof_for("judge"),
@@ -466,7 +466,7 @@ class SketchStage:
         if not suspects:
             return ""
         found = self._counterexamples(form, sketch, suspects)
-        reply = self._captain(
+        reply = self._orchestrator(
             prompts.REFUTE_SUSPECTS_TEMPLATE.format(
                 definitions=form.definitions,
                 lemmas=stub_listing(sketch.lemmas),
@@ -625,7 +625,7 @@ class SketchStage:
         new_sketch = self.sketch(form, feedback, excluded, sketch.lemmas)
         for lemma, before in reinstated(sketch.lemmas, new_sketch.lemmas):
             # A dropped lemma that a kept proof uses returns with
-            # `aiprover_handback_after` more attempts, as after a retry.
+            # `aiprover_escalation_after` more attempts, as after a retry.
             self.state.load_attempts(lemma)
             self.state.record_review(lemma)
             logger.info(f"{lemma.name}: reinstated; {before} is proved from it")

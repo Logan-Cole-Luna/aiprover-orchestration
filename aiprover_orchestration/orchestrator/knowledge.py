@@ -8,8 +8,8 @@ session on the same lemma repeats the same search from the start.
 `session_notes` condenses one finished session into a short note, including
 the gaps it stated as `have ... := by sorry`. `carry` keeps a lemma's most
 recent notes, newest first, within MAX_CHARS. The next job on the lemma
-receives them as guidance (`hint`), and the captain sees them at a hand-back,
-where it may keep, rewrite or clear them when the solvers are heading the
+receives them as guidance (`hint`), and the orchestrator sees them at an escalation,
+where it may keep, rewrite or clear them when the provers are heading the
 wrong way.
 
 `MathlibMap` gathers, over all sessions of a run, the Mathlib declarations

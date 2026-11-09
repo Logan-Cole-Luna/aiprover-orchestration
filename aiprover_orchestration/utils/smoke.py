@@ -1,4 +1,4 @@
-"""End-to-end smoke test of the library with Claude Haiku as the solver.
+"""End-to-end smoke test of the library with Claude Haiku as the prover.
 
     python -m aiprover_orchestration.utils.smoke [--model MODEL] [--keep]
 
@@ -60,7 +60,7 @@ def expect(condition: bool, description: str) -> None:
 def prove_with_model(library: Library, name: str, model: str) -> dict:
     """Ask the model for a proof of `name`, repairing from Lean errors."""
     theorem = library.store.item(name, by="name")
-    system_prompt = roles.load("solver") + "\n\n" + roles.load("skill")
+    system_prompt = roles.load("prover") + "\n\n" + roles.load("skill")
     prompt = PROVE_TEMPLATE.format(name=name, module=theorem["lean"])
     agent = build_agent({"backend": "claude", "model": model, "timeout": 300})
     submission = {}

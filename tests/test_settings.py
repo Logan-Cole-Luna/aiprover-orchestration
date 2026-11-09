@@ -16,20 +16,21 @@ from aiprover_orchestration.orchestrator.stages.draft import (
 from aiprover_orchestration.orchestrator.stages.sketch import SketchStage
 from aiprover_orchestration.orchestrator.structures import Lemma, Sketch
 from aiprover_orchestration.server import settings
+from aiprover_orchestration.utils.vocabulary import modernize
 
 
 class SettingsTest(unittest.TestCase):
 
     def test_values_are_checked(self):
-        accepted = {"max_handbacks": 5, "sketch_judge": False,
-                    "aiprover_direction": ""}
+        accepted = {"max_escalations": 5, "sketch_judge": False,
+                    "aiprover_guidance": ""}
         self.assertEqual(settings.validate(accepted), accepted)
         for rejected in (
             {"workers": 0},
             {"workers": 2.5},
             {"workers": True},
             {"sketch_judge": 1},
-            {"aiprover_direction": "other"},
+            {"aiprover_guidance": "other"},
             {"lean_parallel": 8},
         ):
             with self.assertRaises(ValueError):
@@ -37,6 +38,23 @@ class SettingsTest(unittest.TestCase):
         self.assertEqual(settings.validate({"mode": "prove"}), {"mode": "prove"})
         # Settings renamed to be model-neutral keep their former names.
         self.assertEqual(settings.validate({"max_claude_usd": 5}), {"max_hosted_usd": 5})
+        with self.subTest("records and settings under former names are read"):
+            self.assertEqual(
+                settings.validate({"max_handbacks": 3, "aiprover_direction": "captain"}),
+                {"max_escalations": 3, "aiprover_guidance": "orchestrator"})
+            recorded = {"config": {"agents": {"captain": {}, "auditor": {}}},
+                        "steps": [{"event": "lemma_handback", "role": "solver",
+                                   "label": "handback/lz_rank_of_directions",
+                                   "lemma": "lz_rank_of_directions",
+                                   "prompt": "the captain's direction"},
+                                  {"label": "lz_rank_captain", "HANDBACK_TEMPLATE": "x"}]}
+            self.assertEqual(modernize(recorded), {
+                "config": {"agents": {"orchestrator": {}, "checker": {}}},
+                "steps": [{"event": "lemma_escalation", "role": "prover",
+                           "label": "escalation/lz_rank_of_directions",
+                           "lemma": "lz_rank_of_directions",
+                           "prompt": "the captain's direction"},
+                          {"label": "lz_rank_orchestrator", "ESCALATION_TEMPLATE": "x"}]})
         checked = []
         stage = DraftStage()
         stage.row = {
@@ -62,7 +80,7 @@ class SettingsTest(unittest.TestCase):
             stage._check = lambda label, text: SimpleNamespace(ok=False)
             self.assertIsNone(stage.fixed_formalization())
         with self.subTest("the judge and the reviewer know the proof is a draft"):
-            stage.config = SimpleNamespace(mode="prove", gaps=False)
+            stage.config = SimpleNamespace(mode="prove", open_subgoals=False)
             self.assertIn("own draft", stage.proof_for("judge"))
             self.assertIn("no reason for UNFAITHFUL", stage.proof_for("review"))
             stage.config.mode = "autoformalize"
@@ -99,7 +117,7 @@ class SettingsTest(unittest.TestCase):
                 _test_suspects=lambda *args: "",
                 _decision=lambda *args, **fields: None,
                 proof_for=lambda reader: "draft",
-                _captain=lambda prompt, phase: seen.append(prompt) or next(replies),
+                _orchestrator=lambda prompt, phase: seen.append(prompt) or next(replies),
             )
             sketch = Sketch([Lemma("a", "theorem a : True")], "trivial")
             self.assertIn("misses a case", SketchStage._judge_sketch(judge, form, sketch, 0))

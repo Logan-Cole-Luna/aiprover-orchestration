@@ -1,4 +1,4 @@
-# The programs the aiprover-captain skill and the AIProver CLI call, as one profile. ./setup
+# The programs the aiprover-orchestrator skill and the AIProver CLI call, as one profile. ./setup
 # links it at aiprover/nix/tools, and the skill's env.sh puts its bin/ first on PATH, so a
 # Claude Code session started outside the Nix shell uses exactly these. Lean is not here: elan
 # installs the toolchain into ~/.elan, where the AIProver harness expects it.

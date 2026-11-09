@@ -18,7 +18,7 @@ from aiprover_orchestration.orchestrator.config import Config
 from aiprover_orchestration.orchestrator.structures import Lemma, Sketch
 from aiprover_orchestration.server import jobs
 from tests.support import (
-    FakeSolver,
+    FakeProver,
     ScriptedPool,
     TemporaryDirectoryTest,
     aiprover_phase,
@@ -87,14 +87,14 @@ class ConcurrentCallsTest(TemporaryDirectoryTest):
         """`count` concurrent calls; the agent, the threads and outcomes."""
         agent = HostedAgent()
         pool = AgentPool(
-            {"solver": agent}, self.directory / "calls.jsonl", **pool_options
+            {"prover": agent}, self.directory / "calls.jsonl", **pool_options
         )
         outcomes: list = []
 
         def call() -> None:
             try:
                 pool.complete(
-                    "p", role="solver", system_prompt="s", phase="x"
+                    "p", role="prover", system_prompt="s", phase="x"
                 )
                 outcomes.append("called")
             except BudgetExhausted:
@@ -123,7 +123,7 @@ class SessionSlotsTest(TemporaryDirectoryTest):
 
     def test_a_lemma_waits_for_a_free_slot(self):
         run = self.orchestration(
-            ScriptedPool(solver=FakeSolver({})),
+            ScriptedPool(prover=FakeProver({})),
             Config(aiprover_session_slots=1),
         )
         lemma = Lemma("a", "theorem a : True")

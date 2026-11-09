@@ -65,15 +65,15 @@ if (!TRACE) {
 
 // Chapters ------------------------------------------------------------------------
 
-// Hosted calls by role, model and purpose; the solver's sessions with the GPU
+// Hosted calls by role, model and purpose; the prover's sessions with the GPU
 // time attributed to them (`benchmark.run_costs`).
 function costPanel() {
   const hosted = costs.hosted || [];
-  const solver = costs.solver || {};
+  const prover = costs.prover || {};
   const rows = hosted.map(row => `<tr><td><span class="role ${escapeHTML(row.role)}">${escapeHTML(roleName(row.role))}</span></td>
     <td class="num">${escapeHTML(row.model)}</td><td>${escapeHTML(row.purpose)}</td><td class="num">${row.calls}</td>
     <td class="num">${row.output_tokens.toLocaleString()}</td><td class="num">${formatUSD(row.cost_usd)}</td></tr>`).join("");
-  const usage = solver.gpu || {};
+  const usage = prover.gpu || {};
   const bound = usage.state === "partial" ? "At least " : "";
   const gpu = usage.gpu_hours != null
     ? `<tr><td>GPU time</td><td class="num">${bound}${usage.gpu_hours.toFixed(1)} GPU-hours: ${usage.active_hours.toFixed(1)} h active × ${usage.gpus} ${escapeHTML(usage.gpu)}</td></tr>
@@ -90,14 +90,14 @@ function costPanel() {
     </table>
     <p class="muted">Calls that failed or were refused by the provider are not counted.</p>
   </div>
-  ${solver.jobs ? `
+  ${prover.jobs ? `
   <div class="panel">
-    <h3>Solver compute</h3>
+    <h3>Prover compute</h3>
     <table class="kv">
       <tr><th>Item</th><th>Value</th></tr>
-      <tr><td>Model</td><td class="num">${escapeHTML(solver.model)}</td></tr>
-      <tr><td>Jobs · sessions</td><td class="num">${solver.jobs} · ${solver.sessions}</td></tr>
-      <tr><td>Session time</td><td class="num">${solver.session_hours.toFixed(1)} h</td></tr>
+      <tr><td>Model</td><td class="num">${escapeHTML(prover.model)}</td></tr>
+      <tr><td>Jobs · sessions</td><td class="num">${prover.jobs} · ${prover.sessions}</td></tr>
+      <tr><td>Session time</td><td class="num">${prover.session_hours.toFixed(1)} h</td></tr>
       ${gpu}
     </table>
   </div>` : ""}`;
@@ -113,10 +113,10 @@ function chapterOverview() {
   <div class="eyebrow">Run ${escapeHTML(TRACE.run_id)} · ${escapeHTML(TRACE.started || "")}</div>
   <h2>Orchestrated formal proof of <code>${escapeHTML(TRACE.theorem_name)}</code></h2>
   <p class="lead">This page reconstructs one run of a multi-model Lean 4 proving pipeline.
-  An orchestrator model, the <span class="role captain">orchestrator</span>, translates an informal
+  An orchestrator model, the <span class="role orchestrator">orchestrator</span>, translates an informal
   mathematical result into Lean, has the translation checked by a blind
-  <span class="role auditor">auditor</span>, splits the proof into lemmas, and delegates each
-  lemma to several parallel <span class="role solver">solver</span> models. The
+  <span class="role checker">checker</span>, splits the proof into lemmas, and delegates each
+  lemma to several parallel <span class="role prover">prover</span> models. The
   <span class="role lean">Lean</span> compiler checks every piece of code; a result is accepted
   only when Lean accepts it.</p>
   <div class="stats">
@@ -126,7 +126,7 @@ function chapterOverview() {
     <div class="stat"><span class="v">${checks.length}</span><span class="k">Lean checks</span></div>
     ${TRACE.live ? `<div class="stat"><span class="v">${TRACE.live.jobs.length} · ${sum(TRACE.live.jobs.map(j => j.sessions.filter(s => s.state !== "done").length))}</span><span class="k">jobs · sessions in progress</span></div>` : ""}
     <div class="stat"><span class="v">${formatUSD(costs.hosted_cost_usd ?? totalCost)}</span><span class="k">hosted model cost</span></div>
-    ${costs.solver?.gpu?.gpu_hours != null ? `<div class="stat"><span class="v">${costs.solver.gpu.state === "partial" ? "≥ " : ""}${costs.solver.gpu.gpu_hours.toFixed(1)}</span><span class="k">GPU-hours (${escapeHTML(costs.solver.gpu.gpu)})</span></div>` : ""}
+    ${costs.prover?.gpu?.gpu_hours != null ? `<div class="stat"><span class="v">${costs.prover.gpu.state === "partial" ? "≥ " : ""}${costs.prover.gpu.gpu_hours.toFixed(1)}</span><span class="k">GPU-hours (${escapeHTML(costs.prover.gpu.gpu)})</span></div>` : ""}
   </div>
   ${phaseNames.length ? `
   <div class="panel">
@@ -177,28 +177,28 @@ function chapterProblem() {
     <div class="prose">${mathHTML(problem.informal_proof || "")}</div>
   </div>
   <p class="note">The statement is given to the orchestrator for formalization and judging. The
-  informal proof guides the orchestrator's decomposition and is passed to every solver. The auditor
+  informal proof guides the orchestrator's decomposition and is passed to every prover. The checker
   never sees either.</p>`;
 }
 
 // Vertical flow chart of the pipeline; nodes open the matching algorithm entry.
 const FLOW_NODES = [
   { id: "problem", title: "Informal problem", actor: "dataset", tone: "data", algorithm: null, chapter: "problem" },
-  { id: "formalize", title: "Formalize", actor: "orchestrator", tone: "captain", algorithm: 0, chapter: "formalize" },
-  { id: "audit", title: "Blind read-back", actor: "auditor", tone: "auditor", algorithm: 1, chapter: "audit" },
-  { id: "judge", title: "Faithfulness verdict", actor: "orchestrator", tone: "captain", algorithm: 2, chapter: "audit" },
-  { id: "sketch", title: "Proof sketch", actor: "orchestrator", tone: "captain", algorithm: 3, chapter: "sketch" },
-  { id: "prove", title: "Prove lemmas", actor: "solvers, in parallel", tone: "solver", algorithm: 4, chapter: "prove" },
+  { id: "formalize", title: "Formalize", actor: "orchestrator", tone: "orchestrator", algorithm: 0, chapter: "formalize" },
+  { id: "audit", title: "Blind read-back", actor: "checker", tone: "checker", algorithm: 1, chapter: "audit" },
+  { id: "judge", title: "Faithfulness verdict", actor: "orchestrator", tone: "orchestrator", algorithm: 2, chapter: "audit" },
+  { id: "sketch", title: "Proof sketch", actor: "orchestrator", tone: "orchestrator", algorithm: 3, chapter: "sketch" },
+  { id: "prove", title: "Prove lemmas", actor: "provers, in parallel", tone: "prover", algorithm: 4, chapter: "prove" },
   { id: "assemble", title: "Assemble and verify", actor: "Lean", tone: "lean", algorithm: 6, chapter: "assemble" },
 ];
 
 function flowCounts(id) {
   const n = {
-    formalize: [callsByRole("captain").filter(c => /^formalize/.test(c.label)).length, checks.filter(k => k.label === "formalize").length],
-    audit: [callsByRole("auditor").length, 0],
-    judge: [callsByRole("captain").filter(c => /^judge/.test(c.label)).length, 0],
-    sketch: [callsByRole("captain").filter(c => /^sketch/.test(c.label)).length, checks.filter(k => k.label === "sketch").length],
-    prove: [callsByRole("solver").length, checks.filter(k => k.lemma != null).length],
+    formalize: [callsByRole("orchestrator").filter(c => /^formalize/.test(c.label)).length, checks.filter(k => k.label === "formalize").length],
+    audit: [callsByRole("checker").length, 0],
+    judge: [callsByRole("orchestrator").filter(c => /^judge/.test(c.label)).length, 0],
+    sketch: [callsByRole("orchestrator").filter(c => /^sketch/.test(c.label)).length, checks.filter(k => k.label === "sketch").length],
+    prove: [callsByRole("prover").length, checks.filter(k => k.lemma != null).length],
     assemble: [0, checks.filter(k => k.stage === "assemble").length],
   }[id];
   if (!n) return "";
@@ -240,7 +240,7 @@ function flowSVG() {
 }
 
 const BUDGETS = [
-  ["workers", "Independent solver chains launched per lemma."],
+  ["workers", "Independent prover chains launched per lemma."],
   ["max_repairs", "Lean-feedback repair rounds per chain, after the first attempt. Also bounds formalization and sketch repairs."],
   ["max_audit_rounds", "Formalization revisions allowed after a REVISE verdict."],
   ["max_replans", "Sketch revisions allowed after a lemma fails."],
@@ -299,15 +299,15 @@ function showFlowDetail(id) {
 }
 
 const TEMPLATE_USE = {
-  FORMALIZE_TEMPLATE: ["captain", "Formalize: first attempt"],
-  FORMALIZE_FEEDBACK_TEMPLATE: ["captain", "Formalize: repair after Lean errors or a REVISE verdict"],
-  AUDITOR_TEMPLATE: ["auditor", "Audit: the Lean code to read back"],
-  JUDGE_READBACK_TEMPLATE: ["captain", "Audit: compare read-back and source"],
-  SKETCH_TEMPLATE: ["captain", "Sketch: decompose the proof"],
-  SKETCH_REPAIR_TEMPLATE: ["captain", "Sketch: repair after Lean errors"],
-  REPLAN_FEEDBACK_TEMPLATE: ["captain", "Sketch: revise after failed lemmas"],
-  SOLVER_TEMPLATE: ["solver", "Prove: first attempt at a lemma"],
-  SOLVER_REPAIR_TEMPLATE: ["solver", "Prove: repair after Lean errors"],
+  FORMALIZE_TEMPLATE: ["orchestrator", "Formalize: first attempt"],
+  FORMALIZE_FEEDBACK_TEMPLATE: ["orchestrator", "Formalize: repair after Lean errors or a REVISE verdict"],
+  CHECKER_TEMPLATE: ["checker", "Audit: the Lean code to read back"],
+  JUDGE_READBACK_TEMPLATE: ["orchestrator", "Audit: compare read-back and source"],
+  SKETCH_TEMPLATE: ["orchestrator", "Sketch: decompose the proof"],
+  SKETCH_REPAIR_TEMPLATE: ["orchestrator", "Sketch: repair after Lean errors"],
+  REPLAN_FEEDBACK_TEMPLATE: ["orchestrator", "Sketch: revise after failed lemmas"],
+  PROVER_TEMPLATE: ["prover", "Prove: first attempt at a lemma"],
+  PROVER_REPAIR_TEMPLATE: ["prover", "Prove: repair after Lean errors"],
 };
 
 function chapterPrompts() {
@@ -325,9 +325,9 @@ function chapterPrompts() {
     <h3>Roles</h3>
     <table class="kv">
       <tr><th>Role</th><th>Model</th><th>Task</th></tr>
-      <tr><td><span class="role captain">orchestrator</span></td><td class="num">${escapeHTML(TRACE.models?.orchestrator)}</td><td>Formalizes the statement, judges the read-back, writes and revises the proof sketch.</td></tr>
-      <tr><td><span class="role auditor">auditor</span></td><td class="num">${escapeHTML(TRACE.models?.worker)}</td><td>Reads the Lean code blind and states what it asserts.</td></tr>
-      <tr><td><span class="role solver">solver</span></td><td class="num">${escapeHTML(TRACE.models?.worker)}</td><td>Proves one lemma, repairing its proof from Lean error messages.</td></tr>
+      <tr><td><span class="role orchestrator">orchestrator</span></td><td class="num">${escapeHTML(TRACE.models?.orchestrator)}</td><td>Formalizes the statement, judges the read-back, writes and revises the proof sketch.</td></tr>
+      <tr><td><span class="role checker">checker</span></td><td class="num">${escapeHTML(TRACE.models?.worker)}</td><td>Reads the Lean code blind and states what it asserts.</td></tr>
+      <tr><td><span class="role prover">prover</span></td><td class="num">${escapeHTML(TRACE.models?.worker)}</td><td>Proves one lemma, repairing its proof from Lean error messages.</td></tr>
     </table>
   </div>
   <h3>System prompts</h3>
@@ -344,7 +344,7 @@ function chapterPrompts() {
 }
 
 function chapterFormalize() {
-  const stageSteps = steps.filter(s => s.stage === "formalize" && !(s.role === "auditor" || /^judge/.test(s.label || "") || s.event === "audit_verdict"));
+  const stageSteps = steps.filter(s => s.stage === "formalize" && !(s.role === "checker" || /^judge/.test(s.label || "") || s.event === "audit_verdict"));
   const compiled = eventsOf("formalization_compiled");
   const form = compiled.at(-1);
   const rejected = eventsOf("formalization_rejected");
@@ -372,14 +372,14 @@ function chapterFormalize() {
 }
 
 function chapterAudit() {
-  const auditSteps = steps.filter(s => s.role === "auditor" || /^judge/.test(s.label || "") || s.event === "audit_verdict");
+  const auditSteps = steps.filter(s => s.role === "checker" || /^judge/.test(s.label || "") || s.event === "audit_verdict");
   const verdicts = eventsOf("audit_verdict");
   return `
-  <div class="eyebrow">Stage 2 · auditor, then orchestrator</div>
+  <div class="eyebrow">Stage 2 · checker, then orchestrator</div>
   <h2>Blind audit</h2>
   <p class="lead">A formal statement can compile and still say something different from the source:
-  a missing hypothesis, a vacuous case, or a weaker theorem. To detect this, a separate auditor
-  receives only the Lean code and the auditor playbook, never the source, and writes a read-back of
+  a missing hypothesis, a vacuous case, or a weaker theorem. To detect this, a separate checker
+  receives only the Lean code and the checker playbook, never the source, and writes a read-back of
   what the code asserts. The orchestrator then compares the read-back with the source statement. A
   <b>FAITHFUL</b> verdict continues to the sketch; <b>REVISE</b> returns to formalization
   (at most ${cfg.max_audit_rounds ?? "N"} times).</p>
@@ -434,19 +434,19 @@ function chapterSketch() {
 }
 
 function gantt() {
-  const solverCalls = calls.filter(c => c.lemma != null);
-  if (!solverCalls.length) return `<p class="muted">No solver calls in this run.</p>`;
+  const proverCalls = calls.filter(c => c.lemma != null);
+  if (!proverCalls.length) return `<p class="muted">No prover calls in this run.</p>`;
   const endOf = c => checkOfCall.get(c.index)?.elapsed_seconds ?? c.elapsed_seconds;
-  const t0 = Math.min(...solverCalls.map(c => c.elapsed_seconds - (c.seconds || 0)));
-  const t1 = Math.max(...solverCalls.map(endOf));
+  const t0 = Math.min(...proverCalls.map(c => c.elapsed_seconds - (c.seconds || 0)));
+  const t1 = Math.max(...proverCalls.map(endOf));
   const span = Math.max(1, t1 - t0);
   const pos = t => `${((t - t0) / span * 100).toFixed(3)}%`;
   const step = [15, 30, 60, 120, 300, 600, 1200].find(s => span / s <= 8) || 1800;
   const ticks = [];
   for (let t = Math.ceil(t0 / step) * step; t <= t1; t += step) ticks.push(t);
-  const workers = [...new Set(solverCalls.map(c => c.worker))].sort((a, b) => a - b);
+  const workers = [...new Set(proverCalls.map(c => c.worker))].sort((a, b) => a - b);
 
-  const groups = lemmaOrder.filter(name => solverCalls.some(c => c.lemma === name)).map(name => {
+  const groups = lemmaOrder.filter(name => proverCalls.some(c => c.lemma === name)).map(name => {
     const win = lemmaWins.get(name);
     const winLine = win ? `<span class="winline" style="left:${pos(win.elapsed_seconds)}"></span>` : "";
     const jobs = jobsByLemma.get(name);
@@ -456,25 +456,25 @@ function gantt() {
         const end = o.check ? o.check.elapsed_seconds : o.end;
         const width = (end - o.start) / span * 100;
         const outcome = { win: "proof kept", ok: "compiles", fail: "Lean errors" }[o.state] || o.text;
-        const tip = `${name} · solver ${k} · AIProver job ${jobNumber(job)} · ${formatDuration(o.end - o.start)}`
+        const tip = `${name} · prover ${k} · AIProver job ${jobNumber(job)} · ${formatDuration(o.end - o.start)}`
           + `${o.turns != null ? ` · ${o.turns} turns` : ""} · ${outcome}`;
         return `<button class="bar ${o.state}" type="button" data-step="${job.index}" title="${escapeHTML(tip)}" style="left:${pos(o.start)};width:${width.toFixed(3)}%">j${jobNumber(job)}</button>`;
       }).join("");
-      return `<div class="g-row"><span class="lab">solver ${k}</span><div class="g-track">${winLine}${bars}</div></div>`;
+      return `<div class="g-row"><span class="lab">prover ${k}</span><div class="g-track">${winLine}${bars}</div></div>`;
     }).join("") : workers.map(worker => {
-      const bars = solverCalls.filter(c => c.lemma === name && c.worker === worker).map(c => {
-        const { state } = solverOutcome(c);
+      const bars = proverCalls.filter(c => c.lemma === name && c.worker === worker).map(c => {
+        const { state } = proverOutcome(c);
         const start = c.elapsed_seconds - (c.seconds || 0);
         const width = (endOf(c) - start) / span * 100;
         const job = isJob(c);
         const outcome = job && state === "pending" ? jobSummary(c) : state;
         const tip = job ? `${name} · AIProver job ${jobNumber(c)} · ${formatDuration(c.seconds || 0)} · ${outcome}`
-          : `${name} · solver ${worker} · round ${c.round} · ${formatDuration(c.seconds || 0)} · ${state}`;
+          : `${name} · prover ${worker} · round ${c.round} · ${formatDuration(c.seconds || 0)} · ${state}`;
         return `<button class="bar ${state}" type="button" data-step="${c.index}" title="${escapeHTML(tip)}" style="left:${pos(start)};width:${width.toFixed(3)}%">${job ? `job ${jobNumber(c)}` : `r${c.round}`}</button>`;
       }).join("");
-      return `<div class="g-row"><span class="lab">${jobsByLemma.has(name) ? "AIProver" : `solver ${worker}`}</span><div class="g-track">${winLine}${bars}</div></div>`;
+      return `<div class="g-row"><span class="lab">${jobsByLemma.has(name) ? "AIProver" : `prover ${worker}`}</span><div class="g-track">${winLine}${bars}</div></div>`;
     }).join("");
-    const attempts = solverCalls.filter(c => c.lemma === name).length;
+    const attempts = proverCalls.filter(c => c.lemma === name).length;
     return `<div class="g-group"><div class="gh"><span class="name">${escapeHTML(name)}</span>
       ${win ? `<span class="pill ok">proved at ${formatClock(win.elapsed_seconds)}</span>` : `<span class="pill fail">not proved</span>`}
       <span class="muted" style="font-size:0.8rem">${plural(attempts, "attempt")}</span></div>${rows}</div>`;
@@ -522,17 +522,17 @@ function liveJobsPanel() {
 }
 
 function chapterProveAIProver(jobs) {
-  const solver = TRACE.agents?.solver || {};
+  const prover = TRACE.agents?.prover || {};
   const perJob = cfg.workers ?? 1;
   const concurrency = cfg.aiprover_lemma_concurrency || null;
   const peak = peakInFlight();
   const firstJob = [...lemmaWins.values()].filter(w => jobOf(w) && jobNumber(jobOf(w)) === 1).length;
   return `
-  <div class="eyebrow">Stage 4 · solvers</div>
+  <div class="eyebrow">Stage 4 · provers</div>
   <h2>Parallel proving with AIProver</h2>
   <p class="lead">Each lemma goes to an AIProver job of ${plural(perJob, "independent session")}
   (samples) that run in parallel. A session is an agentic Lean loop with the lean-lsp tools, limited to
-  ${solver.max_turns ?? "N"} turns and ${formatDuration(solver.timeout ?? 0)}. From each sample's final file the
+  ${prover.max_turns ?? "N"} turns and ${formatDuration(prover.timeout ?? 0)}. From each sample's final file the
   pipeline extracts the lemma's proof and checks it with Lean; the first proof that compiles is kept.
   ${concurrency ? `Up to ${plural(concurrency, "lemma job")} run at once, so up to ${concurrency * perJob} sessions.`
     : "All pending lemma jobs are submitted at once."} A lemma that is not proved is retried by a new
@@ -549,13 +549,13 @@ function chapterProveAIProver(jobs) {
   <p class="muted">Sessions in flight include those waiting in AIProver: the harness runs at most
   <code>max_parallel</code> sessions on this machine (8) and queues the rest.</p>
   <div class="panel">
-    <h3>Solver timeline</h3>
-    <p class="muted">One row per solver (AIProver sample). Each bar is that sample's session in one
+    <h3>Prover timeline</h3>
+    <p class="muted">One row per prover (AIProver sample). Each bar is that sample's session in one
     AIProver job, labelled with the job number; hover for its turns and how it ended. Select a bar to
     read the job's problem and samples.</p>
   </div>
   ${gantt()}
-  <details class="fold"><summary><b>All solver steps</b><span class="muted">${plural(jobs.length, "job")}, with their Lean checks and decisions</span></summary>
+  <details class="fold"><summary><b>All prover steps</b><span class="muted">${plural(jobs.length, "job")}, with their Lean checks and decisions</span></summary>
     <div class="body">${stepList(steps.filter(s => s.stage === "prove"))}</div></details>
   <h3>Kept proofs</h3>
   ${[...lemmaWins.values()].map(w => `
@@ -567,32 +567,32 @@ function chapterProveAIProver(jobs) {
 }
 
 function chapterProve() {
-  const solverCalls = calls.filter(c => c.lemma != null);
-  const outcomes = solverCalls.map(solverOutcome);
+  const proverCalls = calls.filter(c => c.lemma != null);
+  const outcomes = proverCalls.map(proverOutcome);
   const count = state => outcomes.filter(o => o.state === state).length;
   const firstTry = [...lemmaWins.values()].filter(w => jobOf(w) ? jobNumber(jobOf(w)) === 1 : w.round === 0).length;
-  if (jobsByLemma.size) return chapterProveAIProver(solverCalls);
+  if (jobsByLemma.size) return chapterProveAIProver(proverCalls);
   return `
-  <div class="eyebrow">Stage 4 · solvers</div>
+  <div class="eyebrow">Stage 4 · provers</div>
   <h2>Parallel proving</h2>
-  <p class="lead">For each lemma, ${cfg.workers ?? "N"} solver chains start at the same time. A chain
+  <p class="lead">For each lemma, ${cfg.workers ?? "N"} prover chains start at the same time. A chain
   proposes a proof; Lean compiles it together with the definitions and the earlier lemmas. On
   failure the compiler errors are sent back and the chain tries again, for at most
   ${(cfg.max_repairs ?? 0) + 1} attempts. The first proof that compiles is kept, and the other chains stop.
   Calls already in progress at that moment still finish, but their results are discarded.</p>
   <div class="stats">
-    <div class="stat"><span class="v">${solverCalls.length}</span><span class="k">solver calls</span></div>
+    <div class="stat"><span class="v">${proverCalls.length}</span><span class="k">prover calls</span></div>
     <div class="stat"><span class="v">${lemmaWins.size} / ${lemmaOrder.length}</span><span class="k">lemmas proved</span></div>
     <div class="stat"><span class="v">${firstTry}</span><span class="k">proved at the first attempt (round 0)</span></div>
     <div class="stat"><span class="v">${count("fail")}</span><span class="k">attempts with Lean errors</span></div>
     <div class="stat"><span class="v">${count("late")}</span><span class="k">discarded after a win</span></div>
   </div>
   <div class="panel">
-    <h3>Solver timeline</h3>
+    <h3>Prover timeline</h3>
     <p class="muted">Each bar is one model call, from request to Lean result, labelled with its repair round. Select a bar to read the prompt, reply and compiler output.</p>
   </div>
   ${gantt()}
-  <details class="fold"><summary><b>All solver steps</b><span class="muted">${plural(solverCalls.length, "call")}, with their Lean checks and decisions</span></summary>
+  <details class="fold"><summary><b>All prover steps</b><span class="muted">${plural(proverCalls.length, "call")}, with their Lean checks and decisions</span></summary>
     <div class="body">${stepList(steps.filter(s => s.stage === "prove"))}</div></details>
   <h3>Kept proofs</h3>
   ${[...lemmaWins.values()].map(w => `

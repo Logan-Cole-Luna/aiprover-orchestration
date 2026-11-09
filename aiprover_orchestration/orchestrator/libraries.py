@@ -3,7 +3,7 @@ r"""Libraries of verified results that runs build on.
 A library is a Lean file that compiles on its own: definitions and theorems
 with complete proofs (no `sorry`). A run given a library formalizes only its
 new statement against the library's definitions (it adds definitions only
-where the library lacks them), and its solvers may use the library's
+where the library lacks them), and its provers may use the library's
 theorems. The library text is the prefix of the run's definitions, so every
 file the run checks, and its final solution, compiles without the library
 being installed anywhere.
@@ -40,6 +40,7 @@ import zipfile
 from pathlib import PurePosixPath
 from pathlib import Path
 
+from ..utils.vocabulary import modernize
 from ..lean.checker import (
     LeanChecker,
     build_lock,
@@ -292,7 +293,7 @@ def contribution(solution: str, library_chars: int, theorem_name: str) -> str:
 def add(path: str, result_dir: Path) -> dict:
     """Append the verified result of `result_dir` to the library at `path`."""
     result_dir = Path(result_dir)
-    summary = json.loads((result_dir / "summary.json").read_text())
+    summary = modernize(json.loads((result_dir / "summary.json").read_text()))
     if not (summary.get("checks") or {}).get("verified"):
         return {
             "added": False,

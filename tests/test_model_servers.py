@@ -37,16 +37,16 @@ listed = client.get("/api/models?page=dev").text
 choice = {"provider": "custom", "model": "mine"}
 selection = models.validate({"orchestrator": choice, "subagent": choice})
 config = models.build_config(CONFIG, selection)
-print(json.dumps([replies, "secret" in listed, config["agents"]["solver"],
+print(json.dumps([replies, "secret" in listed, config["agents"]["prover"],
                   "secret" in json.dumps(config)]))
 """
 
 
 class ModelServerTest(ServerProcessTest):
     def test_a_server_is_checked_and_its_key_stays_private(self):
-        replies, listed, solver, in_config = self.run_python(FLOW)
+        replies, listed, prover, in_config = self.run_python(FLOW)
         self.assertEqual(replies[0], {"name": "mine", "model": "m"})
         self.assertEqual(replies[1:], [400, 403])
         self.assertFalse(listed or in_config)
-        self.assertEqual(solver["backend"], "openai_compatible")
-        self.assertTrue(solver["api_key_file"].endswith("mine.key"))
+        self.assertEqual(prover["backend"], "openai_compatible")
+        self.assertTrue(prover["api_key_file"].endswith("mine.key"))

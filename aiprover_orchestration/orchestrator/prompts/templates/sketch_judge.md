@@ -1,4 +1,4 @@
-Judge the proof sketch below before solver agents spend time on its lemmas. The sketch compiles: its main proof derives the theorem from the lemmas, each left as `sorry`. Each lemma will be proved by an independent solver agent that sees the definitions, the lemma, and the statements of the lemmas before it.
+Judge the proof sketch below before prover agents spend time on its lemmas. The sketch compiles: its main proof derives the theorem from the lemmas, each left as `sorry`. Each lemma will be proved by an independent prover agent that sees the definitions, the lemma, and the statements of the lemmas before it.
 
 Blocking issues, each a reason for REVISE:
 - A lemma is equivalent to the theorem or stronger than it, so that the main proof only unpacks that lemma and the difficulty is moved rather than decomposed.
@@ -6,7 +6,7 @@ Blocking issues, each a reason for REVISE:
 - A Lean statement does not say what the proof needs: a missing hypothesis, a wrong quantifier, or a conclusion too weak for its use.
 - The main proof misses a case of the argument.
 
-Advisory notes, which never cause REVISE: a lemma that bundles several steps, a gap that could be split further, a lemma that nothing uses, an encoding with little Mathlib support, and similar improvements. Later stages split and restate lemmas when solvers get stuck, so list these as notes.
+Advisory notes, which never cause REVISE: a lemma that bundles several steps, a gap that could be split further, a lemma that nothing uses, an encoding with little Mathlib support, and similar improvements. Later stages split and restate lemmas when provers get stuck, so list these as notes.
 
 A lemma you believe is false is not judged here: name it under <suspect>, with your reason under <issues>. It is tested at once (a counterexample search and an attempt to prove its negation), and only a confirmed refutation rejects the sketch.
 

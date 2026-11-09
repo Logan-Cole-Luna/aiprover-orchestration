@@ -3,12 +3,12 @@
 System prompts (`system/`) set each role's instructions; the marker
 `{lean_environment}` in them is replaced by `system/lean_environment.md`.
 Templates (`templates/`) are filled with `str.format`, so literal braces in
-them are doubled. The auditor's system prompt is its role guide
-(`aiprover_orchestration/roles/auditor.md`), used verbatim.
+them are doubled. The checker's system prompt is its role guide
+(`aiprover_orchestration/roles/checker.md`), used verbatim.
 
-Captain: formalizes, judges read-backs, writes and revises proof sketches.
-Judge: judges read-backs independently of the captain. Formalizer: writes the
-reference formalization. Auditor: writes blind read-backs. Solver: proves one lemma under the
+Orchestrator: formalizes, judges read-backs, writes and revises proof sketches.
+Judge: judges read-backs independently of the orchestrator. Formalizer: writes the
+reference formalization. Checker: writes blind read-backs. Prover: proves one lemma under the
 library's gating rules. Reviewer: referees the verified result. Writer:
 writes the report and the informalization.
 """
@@ -38,9 +38,9 @@ def system_prompt(role: str) -> str:
     return text.replace(LEAN_ENVIRONMENT_MARKER, LEAN_ENV_NOTE)
 
 
-def auditor_system() -> str:
-    """The auditor role guide, used verbatim as the system prompt."""
-    return roles.load("auditor")
+def checker_system() -> str:
+    """The checker role guide, used verbatim as the system prompt."""
+    return roles.load("checker")
 
 
 LEAN_ENV_NOTE = (
@@ -49,8 +49,8 @@ LEAN_ENV_NOTE = (
     .replace("{lean_release}", LEAN_RELEASE)
 )
 
-CAPTAIN_SYSTEM = system_prompt("captain")
-SOLVER_SYSTEM = system_prompt("solver")
+ORCHESTRATOR_SYSTEM = system_prompt("orchestrator")
+PROVER_SYSTEM = system_prompt("prover")
 REVIEWER_SYSTEM = system_prompt("reviewer")
 JUDGE_SYSTEM = system_prompt("judge")
 WRITER_SYSTEM = system_prompt("writer")
@@ -59,12 +59,12 @@ WRITER_SYSTEM = system_prompt("writer")
 FORMALIZE_TEMPLATE = template("formalize")
 FORMALIZE_LIBRARY_TEMPLATE = template("formalize_library")
 FORMALIZE_FEEDBACK_TEMPLATE = template("formalize_feedback")
-AUDITOR_TEMPLATE = template("auditor")
+CHECKER_TEMPLATE = template("checker")
 JUDGE_READBACK_TEMPLATE = template("judge_readback")
 
-# Setting check, sketch, replan and hand-back.
-SETTING_CHECK_TEMPLATE = template("setting_check")
-SETTING_CHECK_REPAIR_TEMPLATE = template("setting_check_repair")
+# Vacuity check, sketch, replan and escalation.
+VACUITY_CHECK_TEMPLATE = template("vacuity_check")
+VACUITY_CHECK_REPAIR_TEMPLATE = template("vacuity_check_repair")
 SKETCH_TEMPLATE = template("sketch")
 SKETCH_REPAIR_TEMPLATE = template("sketch_repair")
 SKETCH_JUDGE_TEMPLATE = template("sketch_judge")
@@ -79,8 +79,8 @@ RESEARCH_CRITIC_TEMPLATE = template("research_critic")
 CLAIM_CHECK_TEMPLATE = template("claim_check")
 REFUTATION_REPAIR_TEMPLATE = template("refutation_repair")
 REPLAN_FEEDBACK_TEMPLATE = template("replan_feedback")
-HANDBACK_TEMPLATE = template("handback")
-HANDBACK_REPAIR_TEMPLATE = template("handback_repair")
+ESCALATION_TEMPLATE = template("escalation")
+ESCALATION_REPAIR_TEMPLATE = template("escalation_repair")
 # Conflict analysis over the lemma tree (cdcl.py).
 CONFLICT_TEMPLATE = template("conflict")
 # Learned clauses as prompts receive them, when the run learns clauses.
@@ -104,16 +104,16 @@ BACKJUMP_ACTION = (
     "restated so that the cause is removed (for example in standard Mathlib "
     "vocabulary). All lemmas below `{decision_name}` are retracted; "
     "`{decision_name}` is reopened with the new statement and handed to "
-    "solvers, and proofs of retracted lemmas are reused if their statements "
+    "provers, and proofs of retracted lemmas are reused if their statements "
     "return. The main proof and the proofs that use `{decision_name}` must "
     "still compile with the new statement.\n"
 )
-HANDBACK_SOLVERS = (
-    "Solver agents have failed {attempts} times to prove the lemma "
+ESCALATION_PROVERS = (
+    "Prover agents have failed {attempts} times to prove the lemma "
     "`{lemma_name}` of your proof sketch. The other lemmas are still being "
     "proved."
 )
-HANDBACK_ASSEMBLY = (
+ESCALATION_ASSEMBLY = (
     "The final assembly of your proof failed verification because of the "
     "lemma `{lemma_name}`, whose accepted proof is withdrawn: {problem} "
     "Its withdrawn proof is under <last_attempts> below; every other lemma "
@@ -125,15 +125,15 @@ REPLAN_ASSEMBLY = (
     "verification for a reason in the sketch itself:\n{failure}\n"
 )
 NO_RETRY = (
-    "Retry is not available: the solvers have failed on this statement "
+    "Retry is not available: the provers have failed on this statement "
     "after {retries} retries. Prove it yourself, split it, restate it or "
     "refute it.\n\n"
 )
-# After a hand-back reply that stopped at its spend or turn limit.
+# After an escalation reply that stopped at its spend or turn limit.
 NO_DIRECT_PROOF = (
-    "Your previous reply stopped at the hand-back's spend or turn limit, so "
+    "Your previous reply stopped at the escalation's spend or turn limit, so "
     "proving `{lemma_name}` yourself (action 1) is not available. Split it "
-    "into lemmas the solvers can prove, with a short proof of `{lemma_name}` "
+    "into lemmas the provers can prove, with a short proof of `{lemma_name}` "
     "from them, or restate, retry or refute it.\n\n"
 )
 NO_BACKJUMP = (
@@ -141,32 +141,32 @@ NO_BACKJUMP = (
     "and the clauses, and choose local.\n"
 )
 
-# Solvers.
-SOLVER_TEMPLATE = template("solver")
-SOLVER_REPAIR_TEMPLATE = template("solver_repair")
+# Provers.
+PROVER_TEMPLATE = template("prover")
+PROVER_REPAIR_TEMPLATE = template("prover_repair")
 AIPROVER_LEMMA_TEMPLATE = template("aiprover_lemma")
-DIRECTION_TEMPLATE = template("direction")
+GUIDANCE_TEMPLATE = template("guidance")
 # Above the earlier lemmas in an AIProver job's fixed context.
 EARLIER_LEMMAS_HEADER = (
     "-- Earlier lemmas of this proof. Each is proved elsewhere in the run;\n"
     "-- its `sorry` stands for that proof. They are facts to cite by name,\n"
     "-- not goals: do not prove, restate or re-derive them.\n\n"
 )
-# Ahead of the guidance of a job whose direction names earlier lemmas.
+# Ahead of the guidance of a job whose guidance names earlier lemmas.
 CITED_LEMMAS = (
     "Lemmas to cite (proved elsewhere in the run; apply them by name, do "
     "not prove them again):\n```lean\n{statements}\n```\n\n"
 )
-# The informal proof an AIProver job receives with a captain's direction.
+# The informal proof an AIProver job receives with an orchestrator's guidance.
 DIRECTED_PROOF = (
-    "Proof of the lemma `{lemma_name}` (the captain's direction):\n"
-    "{direction}\n\n"
+    "Proof of the lemma `{lemma_name}` (the orchestrator's guidance):\n"
+    "{guidance}\n\n"
     "The source's proof of the main result, for context:\n{informal_proof}"
 )
 # The same without the source's proof (`aiprover_condensed_prompt`).
 DIRECTION_ONLY = (
-    "Proof of the lemma `{lemma_name}` (the captain's direction):\n"
-    "{direction}\n"
+    "Proof of the lemma `{lemma_name}` (the orchestrator's guidance):\n"
+    "{guidance}\n"
 )
 
 # Review, report and informalization.
@@ -186,7 +186,7 @@ REDRAFT_TEMPLATE = template("redraft")
 SIDE_TEMPLATE = template("side")
 APPROACHES_TEMPLATE = template("approaches")
 RANK_APPROACHES_TEMPLATE = template("rank_approaches")
-CAPTAIN_PROOFS_TEMPLATE = template("captain_proofs")
+ORCHESTRATOR_PROOFS_TEMPLATE = template("orchestrator_proofs")
 GAPS_SKETCH_TEMPLATE = template("gaps_sketch")
 GAPS_JUDGE_TEMPLATE = template("gaps_judge")
 JUDGE_PREVIOUS_TEMPLATE = template("judge_previous")

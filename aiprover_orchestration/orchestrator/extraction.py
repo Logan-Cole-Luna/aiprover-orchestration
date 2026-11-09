@@ -3,7 +3,7 @@
 An AIProver answer is a whole Lean file: the fixed context, the lemma with
 the model's proof, and any helper declarations the model added. These
 functions take the lemma's proof and helpers out of the answer for the
-sketch, and summarize failed answers for the captain.
+sketch, and summarize failed answers for the orchestrator.
 """
 
 import re
@@ -18,7 +18,7 @@ from ..lean.text import (
     strip_comments,
 )
 
-# A failed sample as shown to the captain at a replan.
+# A failed sample as shown to the orchestrator at a replan.
 MAX_ATTEMPT_TEXT = 6000
 MAX_ATTEMPT_ERRORS = 2000
 

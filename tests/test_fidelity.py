@@ -46,7 +46,7 @@ class Stage(FormalizeStage):
         self.library = ""
         self.library_path = ""
         self.slug = "target"
-        self.auditor_system = ""
+        self.checker_system = ""
         self.reference = None
         self.reference_attempted = False
         self.events = []
@@ -69,7 +69,7 @@ class Stage(FormalizeStage):
 
 
 FORM = Formalization("", "", "target", " : True ")
-PANEL = {"auditor": "read-back", "captain": verdict("FAITHFUL")}
+PANEL = {"checker": "read-back", "orchestrator": verdict("FAITHFUL")}
 
 
 class VerdictRule(unittest.TestCase):
@@ -83,16 +83,16 @@ class VerdictRule(unittest.TestCase):
         self.assertEqual(stage.agents.calls, [])
 
     def check_every_judge_must_accept(self):
-        for judge, captain, expected in (
+        for judge, orchestrator, expected in (
             ("REVISE", "FAITHFUL", "REVISE"),
             ("FAITHFUL", "REVISE", "REVISE"),
             ("FAITHFUL", "FAITHFUL", "FAITHFUL"),
         ):
             stage = Stage(
                 {
-                    "auditor": "read-back",
+                    "checker": "read-back",
                     "judge": verdict(judge),
-                    "captain": verdict(captain),
+                    "orchestrator": verdict(orchestrator),
                 }
             )
             self.assertEqual(self.audited(stage).verdict, expected)
@@ -100,7 +100,7 @@ class VerdictRule(unittest.TestCase):
     def check_unparsable_verdict_is_not_faithful(self):
         stage = Stage({**PANEL, "judge": "no tags"})
         self.assertFalse(self.audited(stage).verdict.startswith("FAITHFUL"))
-        self.assertNotIn("captain", stage.agents.calls)
+        self.assertNotIn("orchestrator", stage.agents.calls)
 
     def check_reference_never_enters_the_run_state(self):
         reply = (

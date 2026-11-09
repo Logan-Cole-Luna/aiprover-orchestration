@@ -67,10 +67,12 @@ from ..agents.base import TOKENS_PER_USD
 from ..agents.codex_cli import DEFAULT_CODEX_MODEL
 from ..orchestrator import project as project_file
 from ..orchestrator.project import PROJECTS_DIR
-from ..orchestrator.project_tasks import MILESTONE_NAME, ROLES, task_dir
+from ..orchestrator.project_tasks import ROLES, THEOREM_NAME, task_dir
 from ..orchestrator.reports import blueprint
 from ..orchestrator.reports.informal import RESULT_ROW_SUFFIX
 from ..orchestrator.trace import Trace
+from ..utils.files import read_record
+from ..utils.vocabulary import modernize
 from ..paths import (
     CONFIG_DIR,
     DEFAULT_LEAN_RELEASE,
@@ -603,11 +605,11 @@ class Submission(BaseModel):
     proof: str = ""
     formal_statement: str = ""  # Lean, kept as given in theorem-proving mode
     orchestrator: Selection | None = None
-    auditor: Selection | None = None
+    checker: Selection | None = None
     reviewer: Selection | None = None
     writer: Selection | None = None
     subagent: Selection | None = None
-    handback: Selection | None = None
+    escalation: Selection | None = None
     gpu_group: str = model_servers.DEFAULT_GROUP
     library: str = ""  # a file in libraries/
     library_text: str = ""  # or an uploaded library
@@ -616,7 +618,7 @@ class Submission(BaseModel):
     after: str = ""  # a run that must end first
     settings: dict = {}  # orchestrator settings (settings.SETTINGS)
     lean_release: str = ""  # an installed Lean release; by default the pin
-    source_dir: str = ""  # a folder of data/ the captain may read
+    source_dir: str = ""  # a folder of data/ the orchestrator may read
     page: str = DEFAULT_PAGE  # the page submitting (PAGES)
 
 
@@ -875,7 +877,7 @@ def read_run(unpacked: Path) -> dict:
     trace = Trace.load(unpacked / "trace.json") or {}
     summary_path = unpacked / "summary.json"
     summary = (
-        json.loads(summary_path.read_text()) if summary_path.exists() else {}
+        modernize(json.loads(summary_path.read_text())) if summary_path.exists() else {}
     )
     if not trace and not (unpacked / "trace.html").exists():
         raise ValueError("the archive holds no run trace")
@@ -1100,7 +1102,7 @@ def resumable(job: dict) -> bool:
 def read_json(path: Path) -> dict:
     """A JSON file; empty if it is missing or unreadable."""
     try:
-        return json.loads(path.read_text()) if path.exists() else {}
+        return modernize(json.loads(path.read_text())) if path.exists() else {}
     except (OSError, ValueError):
         logging.warning(f"{path} is not readable JSON; it is ignored")
         return {}
@@ -1253,7 +1255,7 @@ def list_runs(
 def get_run(job: dict = Depends(owned_job)) -> dict:
     summary_path = run_dir(job, RESULTS_DIR) / "summary.json"
     summary = (
-        json.loads(summary_path.read_text())
+        modernize(json.loads(summary_path.read_text()))
         if servable(job, summary_path)
         else None
     )
@@ -1269,7 +1271,7 @@ def cancel_run(job: dict = Depends(own_job)) -> dict:
 
 def set_options(job: dict, **values) -> None:
     """Add settings to the job's options, which its next start applies."""
-    options = json.loads(job.get("options") or "{}") | values
+    options = modernize(json.loads(job.get("options") or "{}")) | values
     store.update(job["run_id"], options=json.dumps(options))
 
 
@@ -1296,9 +1298,9 @@ def resumption_settings(body: Resumption, job: dict) -> dict:
     """The job's fields and options for a resumption with new choices. A run
     keeps its reference material, which only its trace names for an import."""
     fields, options = {}, {}
-    trace = read_json(run_dir(job, RESULTS_DIR) / "trace.json")
+    trace = read_record(run_dir(job, RESULTS_DIR) / "trace.json")
     agents = trace.get("config", {}).get("agents", {})
-    source = agents.get("captain", {}).get("source_dir")
+    source = agents.get("orchestrator", {}).get("source_dir")
     if source and Path(source).is_dir() and in_data(source):
         options["source_dir"] = source
     page = PAGES.get(job.get("page"), PAGES[DEFAULT_PAGE])
@@ -1326,7 +1328,7 @@ def resumption_settings(body: Resumption, job: dict) -> dict:
         fields["gpu_group"] = body.gpu_group
     require_sign_in(selection)
     if body.findings.strip():
-        recorded = json.loads(job.get("options") or "{}")
+        recorded = modernize(json.loads(job.get("options") or "{}"))
         revisions = [
             step.get("revision", 0)
             for step in trace.get("steps", [])
@@ -1394,7 +1396,7 @@ def decide_plan(
         store.update(job["run_id"], state="rejected", approved_by=user)
         return describe(store.get(job["run_id"]))
     check_capacity(user)
-    options = json.loads(job.get("options") or "{}")
+    options = modernize(json.loads(job.get("options") or "{}"))
     if body.decision == "revise":
         set_options(
             job,
@@ -1420,7 +1422,7 @@ def project_member(member: dict, account: str = "") -> dict:
     if job is None:
         return member | {"job": None, "lemmas": [0, 0]}
     path = run_dir(job, RESULTS_DIR) / "summary.json"
-    summary = read_json(path) if servable(job, path) else {}
+    summary = read_record(path) if servable(job, path) else {}
     lemmas = (summary.get("sketch") or {}).get("lemmas", [])
     proved = sum(bool(lemma.get("proved")) for lemma in lemmas)
     return member | {"job": describe(job), "lemmas": [proved, len(lemmas)]}
@@ -1639,7 +1641,7 @@ def create_project(
             "model": DEFAULT_CODEX_MODEL,
             "effort": "high",
         }
-        for role in ("orchestrator", "auditor", "reviewer", "writer"):
+        for role in ("orchestrator", "checker", "reviewer", "writer"):
             selection[role] = choice
     LIBRARY_DIR.mkdir(exist_ok=True)
     PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -1716,7 +1718,7 @@ def store_source(name: str, file: str, body: bytes) -> dict:
 
 
 class Member(BaseModel):
-    uuid: str = Field(pattern=rf"^{MILESTONE_NAME.pattern}$")
+    uuid: str = Field(pattern=rf"^{THEOREM_NAME.pattern}$")
     role: Literal[ROLES] = "main"
     statement: str = Field("", max_length=MAX_TEXT_CHARS)
     proof: str = Field("", max_length=MAX_TEXT_CHARS)
@@ -1743,7 +1745,7 @@ class Task(BaseModel):
     kind: Literal["research", "check", "paper"]
     question: str = Field("", max_length=MAX_TEXT_CHARS)
     max_usd: float = Field(20, gt=0, le=MAX_TASK_USD)
-    milestones: bool = False  # the report's milestones replace the unstarted ones
+    blueprint: bool = False  # the report's theorems replace the unstarted ones
 
 
 def task_user(request: Request) -> str:
@@ -2258,7 +2260,7 @@ def export_run(job: dict = Depends(owned_job)) -> FileResponse:
     trace_path = result_dir / "trace.json"
     try:
         trace = (
-            json.loads(trace_path.read_text())
+            modernize(json.loads(trace_path.read_text()))
             if servable(job, trace_path)
             else {}
         )

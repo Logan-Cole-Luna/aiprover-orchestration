@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# aiprover-captain setup steps inside the environment. ./setup at the repository root runs them
+# aiprover-orchestrator setup steps inside the environment. ./setup at the repository root runs them
 # after building the Nix tools and virtualenvs and writing endpoint.toml (the connection to the
 # model server) and aiprover.toml (the harness, which talks to the local reasoning proxy); each
 # step is idempotent and can be rerun on its own.
@@ -74,7 +74,7 @@ link_config() {
 }
 
 step_claude() {
-  say "Claude Code: plugin '$PLUGIN' (skill aiprover-captain)"
+  say "Claude Code: plugin '$PLUGIN' (skill aiprover-orchestrator)"
   [ -f "$HERE/aiprover.toml" ] || die "no aiprover.toml: run ./setup --endpoint ... first"
   link_config
   if ! command -v claude >/dev/null; then

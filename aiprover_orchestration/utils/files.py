@@ -5,6 +5,8 @@ import os
 import threading
 from pathlib import Path
 
+from .vocabulary import modernize
+
 
 def read_json(path: Path) -> dict:
     """The JSON object at `path`; empty if it is absent or unreadable."""
@@ -12,6 +14,12 @@ def read_json(path: Path) -> dict:
         return json.loads(Path(path).read_text())
     except (OSError, ValueError):
         return {}
+
+
+def read_record(path: Path) -> dict:
+    """A recorded trace or summary at `path`, with former names translated
+    (`vocabulary.modernize`)."""
+    return modernize(read_json(path))
 
 
 def read_jsonl(path: Path) -> list[dict]:

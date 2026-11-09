@@ -1,9 +1,9 @@
-"""Captain/solver orchestration: formalize, audit, sketch, prove, assemble.
+"""Orchestrator/prover orchestration: formalize, audit, sketch, prove, assemble.
 
-The orchestrator model (captain) formalizes the informal result, has the
+The orchestrator model (orchestrator) formalizes the informal result, has the
 formalization audited through a blind read-back written by a worker model,
 decomposes the proof into lemmas, and assembles the final solution. Worker
-models (solvers) prove the lemmas in parallel with Lean error feedback. A
+models (provers) prove the lemmas in parallel with Lean error feedback. A
 reviewer referees the verified solution and a writer reports it. All Lean
 checking is local, in the Lean workspace (`orchestration_workspace/`).
 
@@ -54,7 +54,7 @@ from .stages.assemble import AssembleStage
 from .stages.draft import DraftStage
 from .stages.formalize import FormalizeStage
 from .stages.gaps import GAP_ATTEMPTS, GapStage, is_gap
-from .stages.handback import HandbackStage
+from .stages.escalation import EscalationStage
 from .stages.prove import ProveStage
 from .stages.review import ReviewStage
 from .stages.sketch import SketchStage
@@ -81,8 +81,8 @@ OUTCOME_FIELDS = (
 )
 
 
-# Captain phases that receive a reviewer's comments on an approved plan.
-GUIDED_PHASES = ("sketch", "direction", "handback", "conflict")
+# Orchestrator phases that receive a reviewer's comments on an approved plan.
+GUIDED_PHASES = ("sketch", "guidance", "escalation", "conflict")
 
 
 class Orchestration(
@@ -92,7 +92,7 @@ class Orchestration(
     SketchStage,
     ProveStage,
     AIProverStage,
-    HandbackStage,
+    EscalationStage,
     AssembleStage,
     ReviewStage,
 ):
@@ -118,29 +118,29 @@ class Orchestration(
             stop=STOPPING,
         )
         self.slug = slug_from_problem(row)
-        self.auditor_system = prompts.auditor_system()
+        self.checker_system = prompts.checker_system()
         self.reference: Formalization | None = None
         self.reference_attempted = False
         self.sketch_rejected = ""
         # The reviewer and the report writer default to fresh agents of the
-        # captain's model, without its tools.
-        captain = {
+        # orchestrator's model, without its tools.
+        orchestrator = {
             key: value
-            for key, value in config.agents.get("captain", {}).items()
+            for key, value in config.agents.get("orchestrator", {}).items()
             if key != "tools"
         }
-        specs = {"reviewer": captain, "writer": captain, **config.agents}
-        solver = specs.get("solver") or {}
-        if config.aiprover_offline and solver.get("backend") == "aiprover":
-            specs["solver"] = {**solver, "offline": True}
+        specs = {"reviewer": orchestrator, "writer": orchestrator, **config.agents}
+        prover = specs.get("prover") or {}
+        if config.aiprover_offline and prover.get("backend") == "aiprover":
+            specs["prover"] = {**prover, "offline": True}
         agents = {
             role: build_agent(role_spec(role, spec))
             for role, spec in specs.items()
         }
         system_prompts = {
-            "captain": prompts.CAPTAIN_SYSTEM,
-            "auditor": self.auditor_system,
-            "solver": prompts.SOLVER_SYSTEM,
+            "orchestrator": prompts.ORCHESTRATOR_SYSTEM,
+            "checker": self.checker_system,
+            "prover": prompts.PROVER_SYSTEM,
             "reviewer": prompts.REVIEWER_SYSTEM,
             "writer": prompts.WRITER_SYSTEM,
             "judge": prompts.JUDGE_SYSTEM,
@@ -166,8 +166,8 @@ class Orchestration(
                 "problem": dict(row),
                 "theorem_name": self.slug,
                 "models": {
-                    "orchestrator": agents["captain"].model,
-                    "worker": agents["solver"].model,
+                    "orchestrator": agents["orchestrator"].model,
+                    "worker": agents["prover"].model,
                 },
                 "agents": {
                     role: agent.describe() for role, agent in agents.items()
@@ -201,16 +201,16 @@ class Orchestration(
 
     # Helpers shared by the stages ------------------------------------------
 
-    def _captain(self, prompt: str, phase: str) -> str:
+    def _orchestrator(self, prompt: str, phase: str) -> str:
         if self.config.sketch_guidance and phase.startswith(GUIDED_PHASES):
             prompt += prompts.PLAN_GUIDANCE_TEMPLATE.format(
                 comments=self.config.sketch_guidance
             )
         return self.agents.complete(
             prompt,
-            role="captain",
+            role="orchestrator",
             phase=phase,
-            system_prompt=prompts.CAPTAIN_SYSTEM,
+            system_prompt=prompts.ORCHESTRATOR_SYSTEM,
         )
 
     def _attempt_path(self, label: str) -> Path:
@@ -282,28 +282,28 @@ class Orchestration(
         )
         blueprint.record_proved(self.result_dir / "blueprint", lemma.statement)
 
-    def _for_captain(self, notes: str) -> str:
-        """Session notes as the captain receives them: without another
-        model's reasoning for a hosted captain (agents/base.py)."""
-        if self.agents.agents["captain"].hosted:
+    def _for_orchestrator(self, notes: str) -> str:
+        """Session notes as the orchestrator receives them: without another
+        model's reasoning for a hosted orchestrator (agents/base.py)."""
+        if self.agents.agents["orchestrator"].hosted:
             return knowledge.without_reasoning(notes)
         return notes
 
     def _attempts_allowed(self, reviewed_at: int) -> int:
         """Completed attempts a statement may have over the run:
-        `aiprover_attempts_per_lemma`, or, after a captain's retry at
-        `reviewed_at` attempts, `aiprover_handback_after` more."""
+        `aiprover_attempts_per_lemma`, or, after an orchestrator's retry at
+        `reviewed_at` attempts, `aiprover_escalation_after` more."""
         allowed = max(1, self.config.aiprover_attempts_per_lemma)
-        handback_after = self.config.aiprover_handback_after
-        if handback_after and reviewed_at:
-            allowed = max(allowed, reviewed_at + handback_after)
+        escalation_after = self.config.aiprover_escalation_after
+        if escalation_after and reviewed_at:
+            allowed = max(allowed, reviewed_at + escalation_after)
         return allowed
 
     def _exhausted(self, lemma) -> bool:
         """No attempts left on `lemma`'s statement in this run; a gap has
-        `GAP_ATTEMPTS` before its hand-back."""
+        `GAP_ATTEMPTS` before its escalation."""
         allowed = self._attempts_allowed(lemma.reviewed_at)
-        if self.config.gaps and is_gap(lemma):
+        if self.config.open_subgoals and is_gap(lemma):
             allowed = min(allowed, lemma.reviewed_at + GAP_ATTEMPTS)
         return lemma.attempts >= allowed
 
@@ -316,12 +316,12 @@ class Orchestration(
             self._decision("clause_learned", **cdcl.clause_fields(clause))
 
     def _clauses_text(self, focus=(), lemmas=()) -> str:
-        """The learned-clauses block of a captain prompt about the `focus`
+        """The learned-clauses block of an orchestrator prompt about the `focus`
         lemmas (cdcl.ClauseStore.text); empty unless the run learns
         clauses."""
         if not self.config.cdcl:
             return ""
-        text = self.clauses.text(focus, lemmas, cdcl.CAPTAIN_CLAUSES_CHARS)
+        text = self.clauses.text(focus, lemmas, cdcl.ORCHESTRATOR_CLAUSES_CHARS)
         return prompts.CLAUSES_BLOCK.format(clauses=text or "(none)")
 
     def _clause_output(self) -> str:
@@ -402,7 +402,7 @@ class Orchestration(
         sketch = None
         sampler = benchmark.MetricsSampler(
             self.result_dir / "metrics.jsonl",
-            self.agents.agents["solver"].metrics_url,
+            self.agents.agents["prover"].metrics_url,
         )
         sampler.start()
         if state.restored_steps:
@@ -453,9 +453,9 @@ class Orchestration(
                 return summary
             if prove and self.config.disproof:
                 form = self.choose_side(form)
-            if self.config.setting_check and not state.setting_checked:
+            if self.config.vacuity_check and not state.vacuity_checked:
                 with self._timed("sketch"):
-                    facts = self.check_setting(form)
+                    facts = self.check_vacuity(form)
                 if facts:
                     form.add_setting_facts(facts)
             summary["formalization"] = asdict(form)
@@ -646,9 +646,9 @@ class Orchestration(
                 logger.warning(f"benchmark summary not written: {error}")
 
     def _only_gaps_left(self, sketch) -> bool:
-        """With `config.gaps`, every unproved lemma is a gap, and one is."""
+        """With `config.open_subgoals`, every unproved lemma is a gap, and one is."""
         unproved = [lemma for lemma in sketch.lemmas if not lemma.proved]
-        return self.config.gaps and bool(unproved) and all(map(is_gap, unproved))
+        return self.config.open_subgoals and bool(unproved) and all(map(is_gap, unproved))
 
     def _lift_limits(self, calls: int) -> None:
         """Open the hosted-model limits for the review and documents of a result,

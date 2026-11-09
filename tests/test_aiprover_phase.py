@@ -1,4 +1,4 @@
-"""The AIProver phase with a fake solver and real Lean: the gate and
+"""The AIProver phase with a fake prover and real Lean: the gate and
 the attempt limit of a lemma."""
 
 import threading
@@ -12,7 +12,7 @@ from aiprover_orchestration.orchestrator.structures import (
 )
 from tests.support import (
     FORM,
-    FakeSolver,
+    FakeProver,
     ScriptedPool,
     TemporaryDirectoryTest,
     requires_lean,
@@ -33,10 +33,10 @@ ANSWERS = {
 class AIProverPhaseTest(TemporaryDirectoryTest):
 
     def test_gate(self):
-        solver = FakeSolver(ANSWERS)
+        prover = FakeProver(ANSWERS)
         run = self.orchestration(
-            ScriptedPool(solver=solver, budget=0),
-            Config(aiprover_handback_after=0),
+            ScriptedPool(prover=prover, budget=0),
+            Config(aiprover_escalation_after=0),
         )
         lemmas = [
             Lemma("lem_a", "theorem lem_a (n : Nat) : n + 0 = n"),
@@ -71,8 +71,8 @@ class AIProverPhaseTest(TemporaryDirectoryTest):
         self.assertFalse(result.has_sorry_warning)
 
     def test_exhausted_lemma_starts_no_job(self):
-        solver = FakeSolver(ANSWERS)
-        run = self.orchestration(ScriptedPool(solver=solver, budget=0))
+        prover = FakeProver(ANSWERS)
+        run = self.orchestration(ScriptedPool(prover=prover, budget=0))
         lemma = Lemma("lem_a", "theorem lem_a (n : Nat) : n + 0 = n")
         run.state.count_attempt(lemma)
         run._prove_with_aiprover(

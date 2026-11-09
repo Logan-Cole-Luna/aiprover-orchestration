@@ -37,6 +37,7 @@ import re
 from dataclasses import asdict
 from pathlib import Path
 
+from ...utils.vocabulary import modernize
 from ...agents import AgentPool, build_agent, role_spec
 from ...lean.text import declaration_names, indent
 from ..config import MAIN_NAME
@@ -303,7 +304,7 @@ def informalize_run(
     the trace records; calls are appended to logs/<run_id>/calls.jsonl. With
     `reuse_draft`, the writer's last draft in the trace replaces a new one;
     `writer_model` replaces the writer's model."""
-    trace = json.loads((result_dir / "trace.json").read_text())
+    trace = modernize(json.loads((result_dir / "trace.json").read_text()))
     run_id = trace["run_id"]
     state = restore_state(trace)
     if state.formalization is None or state.sketch is None:
@@ -311,7 +312,7 @@ def informalize_run(
     form, sketch = state.formalization, state.sketch
     summary_path = result_dir / "summary.json"
     summary = (
-        json.loads(summary_path.read_text()) if summary_path.exists() else {}
+        modernize(json.loads(summary_path.read_text())) if summary_path.exists() else {}
     )
     slug = summary.get("slug") or form.theorem_name
     standalone = sorted(result_dir.glob("*_standalone.lean"))
@@ -332,15 +333,15 @@ def informalize_run(
             form.definitions, form.statement, sketch.lemmas, sketch.main_proof
         )
     specs = trace["agents"]
-    captain = {
-        key: value for key, value in specs["captain"].items() if key != "tools"
+    orchestrator = {
+        key: value for key, value in specs["orchestrator"].items() if key != "tools"
     }
     if writer_model:
         specs = specs | {
-            "writer": (specs.get("writer") or captain) | {"model": writer_model}
+            "writer": (specs.get("writer") or orchestrator) | {"model": writer_model}
         }
     roles = {
-        role: build_agent(role_spec(role, specs.get(role) or captain))
+        role: build_agent(role_spec(role, specs.get(role) or orchestrator))
         for role in ("writer", "reviewer")
     }
     pool = AgentPool(roles, LOGS_DIR / run_id / "calls.jsonl")

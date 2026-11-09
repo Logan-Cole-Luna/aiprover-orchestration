@@ -10,7 +10,7 @@ v4.23.0, Mathlib v4.23.0, `autoImplicit false`).
 | Section | Contents |
 | --- | --- |
 | [1. Running locally](#1-running-locally) | Setup with Nix, Claude on a subscription, the query server and single runs |
-| [2. Running as a Claude Code skill](#2-running-as-a-claude-code-skill) | The `aiprover-captain` skill, with the session's agent as captain |
+| [2. Running as a Claude Code skill](#2-running-as-a-claude-code-skill) | The `aiprover-orchestrator` skill, with the session's agent as orchestrator |
 | [3. Using a running server](#3-using-a-running-server) | Submitting problems to the orchestration VM over SSH, without setup |
 | [4. Layout](#4-layout) | Repository structure and components |
 | [5. Pipeline](#5-pipeline) | The stages of a run |
@@ -102,8 +102,8 @@ are elan with Lean v4.23.0, the Mathlib project linked by
 
 ## 2. Running as a Claude Code skill
 
-The `aiprover-captain` skill runs the orchestration inside Claude Code, with
-the session's agent as captain. Lean runs on the user's machine; lemmas are
+The `aiprover-orchestrator` skill runs the orchestration inside Claude Code, with
+the session's agent as orchestrator. Lean runs on the user's machine; lemmas are
 proved by AIProver jobs on a model server, or by Claude subagents without
 one. The same `./setup` also installs the plugin:
 
@@ -127,7 +127,7 @@ see [orchestration_plugin/README.md](orchestration_plugin/README.md).
 Restart Claude Code, open the repository and ask, for example:
 
 ```
-/aiprover-orchestration:aiprover-captain Run OpenAIMath_011_TotientFibersFromSmoothShiftedPrimes from data/openai_math.jsonl
+/aiprover-orchestration:aiprover-orchestrator Run OpenAIMath_011_TotientFibersFromSmoothShiftedPrimes from data/openai_math.jsonl
 ```
 
 or paste `<informal_theorem>…</informal_theorem>` and
@@ -188,7 +188,7 @@ the page to readers new to Lean, and its theme also applies to the trace pages. 
 The Projects tab holds the results of one subject as a chain on a shared
 library. The Submit page offers one result or a project, which starts from a
 goal and optional source files. **Plan
-milestones** proposes the chain, which stays editable until it starts, and each
+blueprint** proposes the chain, which stays editable until it starts, and each
 result opens in place with its run. **Blueprint** shows the results as a graph,
 each with the blueprint of its lemmas, and the card links the shared library
 and source files. **Research** has one Claude session answer
@@ -215,7 +215,7 @@ approves with comments, requests a revision, or rejects the plan. Finished runs
 also produce the blueprint in leanblueprint format. Import
 run adds a run started elsewhere from a zip of its `results/<run_id>/` folder
 or of its export. A run takes an optional name, which becomes its id. The
-form's "Orchestrator settings" set a run's hand-backs, retries, attempts, and
+form's "Orchestrator settings" set a run's escalations, retries, attempts, and
 Claude budget, among others.
 
 ## 4. Layout
@@ -225,8 +225,8 @@ flowchart LR
     M[Mathematician] --> S[Query server<br/>server/]
     S --> O[Orchestrator<br/>orchestrator/]
     S --> L[Theorem library<br/>library/]
-    O -->|captain, auditor,<br/>reviewer, writer| C[Model APIs<br/>agents/]
-    O -->|solvers| A[AIProver harness<br/>AIProver/]
+    O -->|orchestrator, faithfulness checker,<br/>reviewer, writer| C[Model APIs<br/>agents/]
+    O -->|provers| A[AIProver harness<br/>AIProver/]
     A --> V[AIProver model<br/>GPU model server]
     O --> W[Lean workspace<br/>orchestration_workspace/]
     L --> W
@@ -239,7 +239,7 @@ flowchart LR
 │   ├── library/                #   theorem library: store, verifier, CLI, HTTP API
 │   ├── orchestrator/           #   formalize → audit → sketch → prove → assemble
 │   └── server/                 #   query server, job worker, reasoning proxy
-├── orchestration_plugin/       # Claude Code skill aiprover-captain
+├── orchestration_plugin/       # Claude Code skill aiprover-orchestrator
 ├── setup, flake.nix, nix/      # one-command setup (Nix)
 ├── configs/                    # run, harness and server configurations
 ├── orchestration_workspace/    # Lake project of library and run modules
@@ -255,12 +255,12 @@ flowchart LR
 
 *Figure 2. Architecture and pipeline.*
 
-The captain (Claude) formalizes the problem; Lean probes the statement for
-vacuity, triviality, and counterexamples; a blind auditor translates the Lean
+The orchestrator (Claude) formalizes the problem; Lean probes the statement for
+vacuity, triviality, and counterexamples; a blind faithfulness checker translates the Lean
 back to mathematics, and a judge panel compares it with the source, which can
-include a model other than the captain's and a Lean comparison with an
-independent formalization; the captain sketches the proof as lemmas, which AIProver jobs attempt in parallel; stuck
-lemmas return to the captain to prove, split or restate; the verified
+include a model other than the orchestrator's and a Lean comparison with an
+independent formalization; the orchestrator sketches the proof as lemmas, which AIProver jobs attempt in parallel; stuck
+lemmas return to the orchestrator to prove, split or restate; the verified
 solution is assembled, reviewed independently and written up in LaTeX. Lean
 gates every stage.
 
@@ -289,8 +289,8 @@ for size. Slides on these results:
 
 Each role of a run config names a backend: `claude`, `codex`,
 `openai_compatible` (any server with that API, with Lean tools if `tools` is
-set), or `aiprover` (solver only). Any such backend can serve any chat role,
-including the orchestrator and its hand-backs; a provider's API is added on the
+set), or `aiprover` (prover only). Any such backend can serve any chat role,
+including the orchestrator and its escalations; a provider's API is added on the
 page as a server of kind "Hosted model". Every backend reports tokens, and USD
 is reported where a price is known. A USD limit counts tokens without a price at
 100,000 per USD.
@@ -321,4 +321,3 @@ and approval.
 - Import of an existing Lean project (declaration graph, stubs, original
   proofs as sketches).
 - Orchestrator runs that read and extend the theorem library.
-- Missions and milestones; several pinned Lean environments.

@@ -54,7 +54,7 @@ class TreeTest(unittest.TestCase):
         a1, b = lemmas[0], lemmas[2]
         a1.handed_back = True
         self.assertIsNone(cdcl.conflict(a1, lemmas, 2, 2, set()))
-        b.attempts = 4  # two hand-back intervals
+        b.attempts = 4  # two escalation intervals
         decision, stuck = cdcl.conflict(a1, lemmas, 2, 2, set())
         self.assertEqual(decision.name, "root")
         self.assertEqual({lemma.name for lemma in stuck}, {"a1", "b"})
@@ -73,7 +73,7 @@ class ClauseStoreTest(unittest.TestCase):
             },
             {
                 "kind": "decision",
-                "event": "lemma_handback",
+                "event": "lemma_escalation",
                 "lemma": "a",
                 "action": "refute",
             },

@@ -40,22 +40,22 @@ requires_lean = unittest.skipUnless(
 FORM = Formalization("", "", "t", " : True ")
 
 
-class Captain:
-    """The captain's agent as the stages inspect it."""
+class Orchestrator:
+    """The orchestrator's agent as the stages inspect it."""
 
     hosted = True
 
 
 class ScriptedPool:
-    """An agent pool whose captain gives `replies` in order; a callable
-    reply is called when the captain answers."""
+    """An agent pool whose orchestrator gives `replies` in order; a callable
+    reply is called when the orchestrator answers."""
 
-    def __init__(self, replies=(), solver=None, budget: int = 100):
+    def __init__(self, replies=(), prover=None, budget: int = 100):
         self.replies = list(replies)
         self.phases: list[str] = []
         self.prompts: list[str] = []
         self.budget = budget
-        self.agents = {"captain": Captain(), "solver": solver}
+        self.agents = {"orchestrator": Orchestrator(), "prover": prover}
 
     def complete(self, prompt, *, role, phase, system_prompt, **_):
         self.phases.append(phase)
@@ -73,8 +73,8 @@ class ScriptedPool:
         pass
 
 
-class FakeSolver(AIProverAgent):
-    """AIProver solver answering each lemma with a fixed Lean file."""
+class FakeProver(AIProverAgent):
+    """AIProver prover answering each lemma with a fixed Lean file."""
 
     def __init__(self, answers: dict[str, str]):
         self.model = "fake"

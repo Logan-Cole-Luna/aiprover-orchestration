@@ -1,15 +1,15 @@
 {
   "agents": {
-    "captain": {
+    "orchestrator": {
       "backend": "claude",
       "model": "claude-sonnet-5-5",
       "timeout": 2400
     },
-    "auditor": {
+    "checker": {
       "backend": "claude",
       "model": "claude-sonnet-5-5"
     },
-    "solver": {
+    "prover": {
       "backend": "aiprover",
       "model": "aiprover",
       "config": "configs/aiprover/vista.toml",

@@ -11,11 +11,11 @@ model accepts (empty = the model default). For AIProver, `model` is a version, w
 checkpoint the Vista model server must serve, and `effort` is empty: the
 reasoning of the model is not configurable.
 
-Roles (pipeline name in parentheses): the orchestrator (captain) formalizes,
-sketches and repairs; the auditor judges the formalization against the
+Roles (pipeline name in parentheses): the orchestrator (orchestrator) formalizes,
+sketches and repairs; the checker judges the formalization against the
 informal statement; the reviewer, an independent model, judges the finished
-proof; the writer writes the LaTeX report; the subagent (solver) proves the
-lemmas; the hand-back follows the orchestrator unless chosen. A role absent from
+proof; the writer writes the LaTeX report; the subagent (prover) proves the
+lemmas; the escalation follows the orchestrator unless chosen. A role absent from
 a stored selection keeps the served config's model.
 """
 
@@ -23,6 +23,7 @@ import json
 import os
 from pathlib import Path
 
+from ..utils.vocabulary import modernize
 from .model_servers import (
     CHECKPOINTS,
     GPU_GROUPS,
@@ -59,7 +60,7 @@ DEFAULT_SELECTION = {
         "tools": True,
         "judge_tools": False,
     },
-    "auditor": {
+    "checker": {
         "provider": "claude",
         "model": "claude-sonnet-5-5",
         "effort": "",
@@ -77,33 +78,33 @@ DEFAULT_SELECTION = {
     "subagent": {"provider": "aiprover", "model": "trained", "effort": ""},
 }
 ROLES = {
-    "orchestrator": "captain",
-    "auditor": "auditor",
+    "orchestrator": "orchestrator",
+    "checker": "checker",
     "reviewer": "reviewer",
     "writer": "writer",
-    "subagent": "solver",
+    "subagent": "prover",
 }
-# Roles served by a phase of the captain, by the phase-label prefix they set
+# Roles served by a phase of the orchestrator, by the phase-label prefix they set
 # the model of.
-PHASE_ROLES = {"handback": "handback"}
+PHASE_ROLES = {"escalation": "escalation"}
 SELECTABLE_ROLES = (*ROLES, *PHASE_ROLES)
-ROLE_LABELS = {"handback": "Hand-back"}
+ROLE_LABELS = {"escalation": "Escalation"}
 ROLE_DESCRIPTIONS = {
     "orchestrator": "Formalizes, sketches the proof and repairs",
-    "auditor": "Judges the formalization against the statement",
+    "checker": "Judges the formalization against the statement",
     "reviewer": "Independently judges the finished proof",
     "writer": "Writes the LaTeX report",
     "subagent": "Proves the lemmas",
-    "handback": "Answers hand-backs: proves, splits, restates or retries stuck lemmas",
+    "escalation": "Answers escalations: proves, splits, restates or retries stuck lemmas",
 }
 
 # Chat roles reach AIProver through the reasoning proxy, as the
-# solver's harness does (configs/aiprover/vista_logged.toml).
+# prover's harness does (configs/aiprover/vista_logged.toml).
 AIPROVER_ENDPOINT = "http://127.0.0.1:18565/v1"
 AIPROVER_SERVED_MODEL = "aiprover"
 CHAT_REPLY_TOKENS = 24576
 # Hosted-model calls per run: the served config limits them for a hosted
-# orchestrator and auditor; a hosted subagent makes one call per lemma attempt
+# orchestrator and checker; a hosted subagent makes one call per lemma attempt
 # as well.
 CLAUDE_SUBAGENT_CALL_LIMIT = 40
 SUBAGENT_TIMEOUT = 5400
@@ -194,7 +195,7 @@ def validate(selection: dict) -> dict:
 
 def tool_choice(role: str, choice: dict) -> dict:
     """The Lean tools of a role; an absent choice takes the default (on for a
-    service's orchestrator or hand-back, except the judges; off otherwise)."""
+    service's orchestrator or escalation, except the judges; off otherwise)."""
     default = role in ("orchestrator", *PHASE_ROLES) and (
         choice.get("provider") in SERVICE_MODELS
     )
@@ -218,10 +219,10 @@ def checkpoint_names(selection: dict) -> set[str]:
 # Vista server job.
 PERSISTENT_VERSIONS = {"dgx"}
 VERSION_ENDPOINTS = {"dgx": GPU_GROUPS["dgx"].endpoint}
-HARNESS_CONFIGS = {"dgx": GPU_GROUPS["dgx"].solver_config}
+HARNESS_CONFIGS = {"dgx": GPU_GROUPS["dgx"].prover_config}
 # Session time limits (seconds) of versions slower than the Vista servers; the
 # DGX completes a median 11 turns per hour against 76 on Vista.
-SOLVER_TIMEOUTS = {"dgx": 10800}
+PROVER_TIMEOUTS = {"dgx": 10800}
 # Sessions per run on the DGX. Its generation rate saturates near 60 tokens/s
 # from about 16 running requests, and subagents raise requests to about 1.5
 # per session; therefore 12 sessions keep the server near saturation while
@@ -278,35 +279,35 @@ def chat_spec(role: str, choice: dict, spec: dict) -> dict:
 
 def build_config(base_config: Path, selection: dict) -> dict:
     """The served config with the agents of `selection` (already validated)."""
-    config = json.loads(base_config.read_text())
+    config = modernize(json.loads(base_config.read_text()))
     agents = config["agents"]
     for role, choice in selection.items():
         if role in PHASE_ROLES:
             continue
         # The pipeline gives a reviewer or writer absent from the config the
-        # captain's specification.
-        spec = agents.get(ROLES[role]) or agents["captain"]
+        # orchestrator's specification.
+        spec = agents.get(ROLES[role]) or agents["orchestrator"]
         if (
             role == "subagent"
             and choice["provider"] == "custom"
             and custom_servers()[choice["model"]]["kind"] == "aiprover"
         ):
             name = choice["model"]
-            agents["solver"] = {
-                **agents["solver"],
+            agents["prover"] = {
+                **agents["prover"],
                 "config": custom_harness_config(name, custom_servers()[name]),
-                "timeout": SOLVER_TIMEOUTS["dgx"],
+                "timeout": PROVER_TIMEOUTS["dgx"],
             }
             continue
         if role == "subagent" and choice["provider"] == "aiprover":
-            # The served config's solver is the AIProver harness; a persistent
+            # The served config's prover is the AIProver harness; a persistent
             # version has its own harness configuration.
             if choice["model"] in HARNESS_CONFIGS:
-                agents["solver"] = {
-                    **agents["solver"],
+                agents["prover"] = {
+                    **agents["prover"],
                     "config": HARNESS_CONFIGS[choice["model"]],
-                    "timeout": SOLVER_TIMEOUTS.get(
-                        choice["model"], agents["solver"].get("timeout")
+                    "timeout": PROVER_TIMEOUTS.get(
+                        choice["model"], agents["prover"].get("timeout")
                     ),
                 }
             continue
@@ -314,15 +315,15 @@ def build_config(base_config: Path, selection: dict) -> dict:
         if role == "subagent" and choice["provider"] in SERVICE_MODELS:
             spec["timeout"] = SUBAGENT_TIMEOUT
         agents[ROLES[role]] = spec
-    captain = agents["captain"]
+    orchestrator = agents["orchestrator"]
     for role, prefix in PHASE_ROLES.items():
         choice = selection.get(role)
         if choice:
             # The phase keeps its other options (limits) from the run's
-            # captain phases; an empty effort keeps the captain's. A phase on
-            # another backend replaces the captain's backend for its calls.
+            # orchestrator phases; an empty effort keeps the orchestrator's. A phase on
+            # another backend replaces the orchestrator's backend for its calls.
             override = chat_spec(role, choice, {})
-            phases = captain.setdefault("phases", {})
+            phases = orchestrator.setdefault("phases", {})
             phases[prefix] = {**phases.get(prefix, {}), **override}
     for version in checkpoint_names(selection):
         config |= VERSION_SETTINGS.get(version, {})

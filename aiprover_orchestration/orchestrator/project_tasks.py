@@ -2,15 +2,15 @@
 outlives the server.
 
 A research task is a session that writes a report and a second that
-referees it; asking for milestones is a research task whose question says so.
+referees it; asking for a blueprint is a research task whose question says so.
 The referee's report supplies the project's open lemmas, its claims to review,
-and its proposed milestones. A check task has the service referee one claim,
+and its proposed blueprint. A check task has the service referee one claim,
 and a paper task writes the project's paper. Each task lies in
 data/projects/<name>/tasks/<id>/.
 
 Claims record a person's decision and the service's verdict apart, since a project
 may have no expert: neither is a proof, and the way to settle a claim without
-one is to add it as a milestone.
+one is to add it as a theorem to prove.
 
     python -m aiprover_orchestration.orchestrator.project_tasks <name> <id>
 """
@@ -33,7 +33,7 @@ from . import prompts
 from .project import PAPER_MODELS, PROJECTS_DIR, paper, replace_unstarted, update
 from .structures import extract_named, extract_tag
 
-MILESTONE_NAME = re.compile(r"[A-Za-z0-9_-]{1,80}")
+THEOREM_NAME = re.compile(r"[A-Za-z0-9_-]{1,80}")
 ROLES = ("background", "main")
 
 MODEL = "claude-opus-5-5"
@@ -243,20 +243,22 @@ def absorb(project: dict, report: str, replace: bool = False) -> None:
     project["reviews"] += [
         {"claim": claim} for claim in dict.fromkeys(found) if claim not in claims
     ]
-    # With `replace`, the report's milestones replace the unstarted ones, so
+    # With `replace`, the report's theorems replace the unstarted ones, so
     # that a revision may change or drop them; one listed again with its
     # statement unchanged keeps the proof and dependencies the report's
-    # session never saw. Otherwise only new milestones are added.
+    # session never saw. Otherwise only new theorems are added. Reports
+    # before the rename tag them `<milestone>`.
     members = {member["uuid"]: member for member in project["members"]}
     proposed = []
-    for name, block in extract_named(report, "milestone").items():
+    tagged = {**extract_named(report, "milestone"), **extract_named(report, "theorem")}
+    for name, block in tagged.items():
         role, statement = extract_tag(block, "role"), extract_tag(block, "statement")
         member = members.get(name)
         if member and member.get("run"):
             continue
         if member and member["statement"] == statement:
             proposed.append(member)
-        elif MILESTONE_NAME.fullmatch(name) and statement:
+        elif THEOREM_NAME.fullmatch(name) and statement:
             proposed.append({
                 "uuid": name,
                 "role": role if role in ROLES else "main",
@@ -288,7 +290,8 @@ def research(project: dict, task: dict, folder: Path, spent: list):
         task["max_usd"] / 2,
         spent,
     )
-    return lambda current: absorb(current, report, task.get("milestones", False))
+    replace = task.get("blueprint", task.get("milestones", False))
+    return lambda current: absorb(current, report, replace)
 
 
 def check(project: dict, task: dict, folder: Path, spent: list):

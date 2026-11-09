@@ -50,10 +50,10 @@ def alive(pid: int) -> bool:
 class StopFlagTest(TemporaryDirectoryTest):
 
     def pool(self, agent: Agent) -> AgentPool:
-        return AgentPool({"solver": agent}, self.directory / "calls.jsonl")
+        return AgentPool({"prover": agent}, self.directory / "calls.jsonl")
 
     def complete(self, pool: AgentPool) -> None:
-        pool.complete("p", role="solver", system_prompt="s", phase="x")
+        pool.complete("p", role="prover", system_prompt="s", phase="x")
 
     def test_no_call_starts_once_stopping(self):
         agent = BusyAgent()

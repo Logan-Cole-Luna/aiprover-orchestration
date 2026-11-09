@@ -11,7 +11,7 @@ import threading
 from pathlib import Path
 from types import SimpleNamespace
 
-from ...utils.files import read_json, write_atomic
+from ...utils.files import read_json, read_record, write_atomic
 from ..config import MAIN_NAME
 from ..structures import (
     Formalization,
@@ -26,8 +26,8 @@ from .report import escape
 CHARACTERS_PER_TOKEN = 3.5
 # Lemmas of one run are proved concurrently.
 PLAN_LOCK = threading.Lock()
-# Who proved a lemma, by the `worker` of its step; any other is a solver.
-PROVERS = {"captain": "Captain", "manual": "Manual"}
+# Who proved a lemma, by the `worker` of its step; any other is a prover.
+PROVERS = {"orchestrator": "Orchestrator", "manual": "Manual"}
 
 
 def parse_reply(reply: str, statements: dict[str, str]) -> dict[str, dict]:
@@ -129,7 +129,7 @@ def record_proved(directory: Path, statement: str) -> None:
     key = statement_key(statement)
     with PLAN_LOCK:
         if path.exists():
-            plan = read_json(path)
+            plan = read_record(path)
             for node in plan["nodes"]:
                 if statement_key(node["lean"]) == key:
                     node["status"] = "proved"
@@ -139,7 +139,7 @@ def record_proved(directory: Path, statement: str) -> None:
 def from_summary(result_dir: Path) -> None:
     """Give a run without a blueprint one from its recorded plan, in Lean
     statements only: an imported run may predate blueprints."""
-    summary = read_json(result_dir / "summary.json")
+    summary = read_record(result_dir / "summary.json")
     sketch = summary.get("sketch") or {}
     if (result_dir / "blueprint").exists() or not sketch.get("lemmas"):
         return
@@ -161,9 +161,9 @@ def from_summary(result_dir: Path) -> None:
 
 def run_metrics(result_dir: Path) -> dict:
     """The size of a run's proof and its measures, from its result files."""
-    summary = read_json(result_dir / "summary.json")
-    benchmark = read_json(result_dir / "benchmark.json")
-    trace = read_json(result_dir / "trace.json")
+    summary = read_record(result_dir / "summary.json")
+    benchmark = read_record(result_dir / "benchmark.json")
+    trace = read_record(result_dir / "trace.json")
     steps = trace.get("steps", [])
     lemmas = {}
     for step in steps:
@@ -187,7 +187,7 @@ def run_metrics(result_dir: Path) -> dict:
             "informal_characters": len(proof),
             "expansion": round(len(source) / len(proof), 1) if proof else None,
         },
-        "handbacks": sum(s.get("event") == "lemma_handback" for s in steps),
+        "escalations": sum(s.get("event") == "lemma_escalation" for s in steps),
         "benchmark": benchmark,
         "lemmas": lemmas,
     }

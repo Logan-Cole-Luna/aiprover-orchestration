@@ -40,6 +40,7 @@ if __name__ == "__main__":
 class ReportAbsorptionTest(unittest.TestCase):
 
     def test_a_report_adds_each_finding_once(self):
+        # Reports before the rename tag a theorem `<milestone>`.
         report = """<claim>Every word is finite.</claim>
         <open name="bound">No proof is known.</open>
         <milestone name="base"><role>background</role><uses>a, b</uses>
@@ -55,17 +56,17 @@ class ReportAbsorptionTest(unittest.TestCase):
             "uuid": "base", "role": "background", "statement": "S", "proof": "P",
             "uses": ["a", "b"],
         }])
-        # A revision replaces only unstarted milestones.
+        # A revision replaces only unstarted theorems.
         project = {"open": [], "reviews": [], "members": [
             {"uuid": "done", "role": "main", "statement": "D", "run": "r1"},
             {"uuid": "dropped", "role": "main", "statement": "X"},
         ]}
-        absorb(project, """<milestone name="done"><statement>D2</statement></milestone>
-        <milestone name="new"><role>main</role><statement>N</statement></milestone>""", True)
+        absorb(project, """<theorem name="done"><statement>D2</statement></theorem>
+        <theorem name="new"><role>main</role><statement>N</statement></theorem>""", True)
         self.assertEqual([m["uuid"] for m in project["members"]], ["done", "new"])
         self.assertEqual(project["members"][0]["statement"], "D")
-        absorb(project, "<claim>No milestones here.</claim>", True)
+        absorb(project, "<claim>No theorems here.</claim>", True)
         self.assertEqual([m["uuid"] for m in project["members"]], ["done", "new"])
         project["members"][1]["proof"] = "edited by hand"
-        absorb(project, '<milestone name="new"><statement>N</statement><proof>other</proof></milestone>', True)
+        absorb(project, '<theorem name="new"><statement>N</statement><proof>other</proof></theorem>', True)
         self.assertEqual(project["members"][1]["proof"], "edited by hand")

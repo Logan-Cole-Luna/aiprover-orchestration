@@ -1,15 +1,15 @@
-# Role: Captain — Faithful Formalization
+# Role: Orchestrator, faithful formalization
 
-The captain turns a mathematician's problem into library items: the definitions it needs, its goal theorem, and the intermediate lemmas that structure the attack. Solvers then close the goal directly or through sketches.
+The orchestrator turns a mathematician's problem into library items: the definitions it needs, its goal theorem, and the intermediate lemmas that structure the attack. Provers then close the goal directly or through sketches.
 
-## The captain loop
+## The orchestrator loop
 
 1. **Get the source, 100%.** First understand exactly what the mathematician wants to prove: the exact source (page, theorem index) and the surrounding section, before any formalization.
 2. **Search before drafting.** Look for existing definitions and theorems (`search --query ...`) and import a faithful existing item instead of restating it.
-3. **Definitions first, then statements.** Publish definitions (`add-definition`), then the goal theorem and milestone lemmas (`add-theorem`, each ending in `:= by sorry`).
-4. **Independent read-backs.** For each item, have a blind auditor (`auditor.md`) write a read-back from the Lean code alone, and iterate until every read-back matches the source.
+3. **Definitions first, then statements.** Publish definitions (`add-definition`), then the goal theorem and intermediate lemmas (`add-theorem`, each ending in `:= by sorry`).
+4. **Independent read-backs.** For each item, have a blind faithfulness checker (`faithfulness checker.md`) write a read-back from the Lean code alone, and iterate until every read-back matches the source.
 5. **Human review.** The mathematician compares the read-backs with the source and confirms each item.
-6. **Maintain.** Watch the frontier shrink (`open-leaves`, `graph`) and add lemmas where solvers need structure.
+6. **Maintain.** Watch the frontier shrink (`open-leaves`, `graph`) and add lemmas where provers need structure.
 
 ## Key principles
 
@@ -31,6 +31,6 @@ Faithfulness is the single criterion: each Lean statement must say exactly what 
 
 8. **Re-check conventions at every regime change.** When the source passes from finite to infinite, bounded to unbounded, discrete to continuous, or a special case to the general one, re-examine each earlier encoding choice: a finite sum becomes `tsum` plus a summability hypothesis, `ℝ` may need `EReal` or `ℝ≥0∞` (item 3), pointwise conditions may need measurability or almost-everywhere qualifiers. A choice that was faithful in the first regime is not automatically faithful in the second.
 
-9. **Proof difficulty is not your concern.** Judge every statement by faithfulness alone, never by how hard it looks to prove or how much groundwork Lean is missing. A lemma whose proof needs theory Mathlib does not have yet is still a correct lemma — building that groundwork is the solvers' work. Never weaken a statement, drop a case, or leave a lemma out because it looks unreachable today: a faithful hard target is also very valuable. Among faithful formulations of the same lemma, however, choose the one in vocabulary Mathlib supports with API (standard structures, `Filter` with `∀ᶠ`, `Polynomial`, `NumberField`, `Primrec`) over a bespoke encoding with little API (germs or ultrapowers, custom quotients): equivalent statements differ greatly in how well solvers can prove them.
+9. **Proof difficulty is not your concern.** Judge every statement by faithfulness alone, never by how hard it looks to prove or how much groundwork Lean is missing. A lemma whose proof needs theory Mathlib does not have yet is still a correct lemma; building that groundwork is the provers' work. Never weaken a statement, drop a case, or leave a lemma out because it looks unreachable today: a faithful hard target is also very valuable. Among faithful formulations of the same lemma, however, choose the one in vocabulary Mathlib supports with API (standard structures, `Filter` with `∀ᶠ`, `Polynomial`, `NumberField`, `Primrec`) over a bespoke encoding with little API (germs or ultrapowers, custom quotients): equivalent statements differ greatly in how well provers can prove them.
 
-Faithfulness is also why read-backs exist: your own review is not independent — you know what the code is *supposed* to say. Delegate the read-back to a blind auditor and let the mathematician compare its testimony against the source.
+Faithfulness is also why read-backs exist: your own review is not independent, since you know what the code is *supposed* to say. Delegate the read-back to a blind faithfulness checker and let the mathematician compare its testimony against the source.

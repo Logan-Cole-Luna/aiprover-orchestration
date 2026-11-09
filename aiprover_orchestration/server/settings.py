@@ -32,7 +32,7 @@ SETTINGS = {
     "disproof": Setting(
         "Proof search", "In prove mode, disprove the theorem if judged false"
     ),
-    "workers": Setting("Proof search", "Solver chains per lemma", 1, 8),
+    "workers": Setting("Proof search", "Prover chains per lemma", 1, 8),
     "max_repairs": Setting(
         "Proof search", "Lean-error repair rounds per chain", 0, 10
     ),
@@ -42,18 +42,18 @@ SETTINGS = {
     "max_audit_rounds": Setting(
         "Proof search", "Formalization revisions after an audit", 0, 5
     ),
-    "setting_check": Setting(
-        "Proof search", "Test the setting before planning"
+    "vacuity_check": Setting(
+        "Proof search", "Check the hypotheses for vacuity before planning"
     ),
     "sketch_judge": Setting("Proof search", "Judge each compiled sketch"),
     "lemma_counterexamples": Setting(
         "Proof search", "Test each sketch lemma for counterexamples"
     ),
-    "gaps": Setting(
-        "Proof search", "Name open steps as gaps, proved after routine lemmas"
+    "open_subgoals": Setting(
+        "Proof search", "Name open subgoals, proved after routine lemmas"
     ),
     "approaches": Setting("Proof search", "Ranked drafts in prove mode", 1, 4),
-    "captain_first": Setting(
+    "orchestrator_first": Setting(
         "Proof search", "Orchestrator proves short lemmas before AIProver"
     ),
     "lean_timeout": Setting(
@@ -62,17 +62,17 @@ SETTINGS = {
     "aiprover_attempts_per_lemma": Setting(
         "AIProver", "Failed jobs per lemma statement", 1, 20
     ),
-    "aiprover_handback_after": Setting(
-        "AIProver", "Failed jobs before a hand-back (0: never)", 0, 20
+    "aiprover_escalation_after": Setting(
+        "AIProver", "Failed jobs before an escalation (0: never)", 0, 20
     ),
-    "max_handbacks": Setting(
-        "AIProver", "Hand-backs per run (0: unlimited)", 0, 100
+    "max_escalations": Setting(
+        "AIProver", "Escalations per run (0: unlimited)", 0, 100
     ),
     "aiprover_max_retries": Setting(
         "AIProver", "Retries the orchestrator may grant a lemma (0: unlimited)", 0, 20
     ),
     "aiprover_early_revision": Setting(
-        "AIProver", "Hand a lemma back once its attempts are spent"
+        "AIProver", "Escalate a lemma once its attempts are spent"
     ),
     "aiprover_job_sessions": Setting(
         "AIProver", "Sessions per job (0: no limit)", 0, 32
@@ -90,11 +90,11 @@ SETTINGS = {
         0,
         7200,
     ),
-    "aiprover_direction": Setting(
+    "aiprover_guidance": Setting(
         "AIProver",
-        "Direction for each job: the orchestrator's proof of the lemma, the "
+        "Guidance for each job: the orchestrator's proof of the lemma, the "
         "sketch's comments, or none",
-        choices=("captain", "sketch", ""),
+        choices=("orchestrator", "sketch", ""),
     ),
     "aiprover_offline": Setting(
         "AIProver", "Keep AIProver sessions off the internet"
@@ -103,7 +103,7 @@ SETTINGS = {
         "AIProver", "Mark earlier lemmas as facts to cite"
     ),
     "aiprover_condensed_prompt": Setting(
-        "AIProver", "Condense the prompt of a job with a direction"
+        "AIProver", "Condense the prompt of a job with guidance"
     ),
     "aiprover_relevant_context": Setting(
         "AIProver", "Give a job only the lemmas relevant to it"
@@ -136,13 +136,13 @@ CONFIG_DEFAULTS = {option.name: option.default for option in fields(Config)}
 
 def kind(name: str) -> type:
     """The type of a setting; `aiprover_timeout`, which the worker applies
-    to the solver's specification, is not a field of `Config`."""
+    to the prover's specification, is not a field of `Config`."""
     return type(CONFIG_DEFAULTS.get(name, 0))
 
 
 def catalog(served_config: dict) -> list[dict]:
     """The settings as the form offers them, each with the value of a run
-    that does not set it (None: the solver's own time limit)."""
+    that does not set it (None: the prover's own time limit)."""
     return [
         {
             "name": name,

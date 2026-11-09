@@ -1,11 +1,11 @@
-"""Proving the sketch's lemmas with chat solvers.
+"""Proving the sketch's lemmas with chat provers.
 
 Each pending lemma is attacked by `workers` independent chains. A chain
 proposes a proof, receives Lean errors and repairs; the first proof that
 compiles is kept and the other chains of that lemma stop. A phase in which
 every chain fails counts as one attempt on the lemma's statement
 (`aiprover_attempts_per_lemma` per statement over the run). With an AIProver
-solver the lemmas go to AIProver jobs instead (`stages/aiprover.py`).
+prover the lemmas go to AIProver jobs instead (`stages/aiprover.py`).
 
 Related published work (tags defined in docs/lit_review/lit_review.md §6):
 - [Similar] Proof revision from Lean compiler feedback: Goedel-Prover-V2
@@ -41,25 +41,25 @@ logger = logging.getLogger(__name__)
 class ProveStage:
 
     def prove(self, form: Formalization, sketch: Sketch) -> None:
-        """Prove the pending lemmas. With `config.gaps`, the routine lemmas
+        """Prove the pending lemmas. With `config.open_subgoals`, the routine lemmas
         come first and the gaps only once all of them are proved; with
-        `config.captain_first`, the captain proves what it can before the
-        solvers start."""
-        if self.config.captain_first:
-            self.captain_proofs(form, sketch)
+        `config.orchestrator_first`, the orchestrator proves what it can before the
+        provers start."""
+        if self.config.orchestrator_first:
+            self.orchestrator_proofs(form, sketch)
         pending = [
             (k, lemma)
             for k, lemma in enumerate(sketch.lemmas)
             if not lemma.proved
         ]
-        if self.config.gaps:
+        if self.config.open_subgoals:
             routine = [(k, lemma) for k, lemma in pending if not is_gap(lemma)]
             pending = routine or pending
             if routine:
                 logger.info(f"proving {len(routine)} routine lemma(s) first")
         if not pending:
             return
-        if isinstance(self.agents.agents["solver"], AIProverAgent):
+        if isinstance(self.agents.agents["prover"], AIProverAgent):
             self._prove_with_aiprover(form, sketch, pending)
             return
         # A lemma whose statement has spent the run's attempt budget is left
@@ -83,7 +83,7 @@ class ProveStage:
                 if solved[lemma.name].is_set() or failed.is_set():
                     return
                 reply = self.agents.complete(
-                    prompts.SOLVER_TEMPLATE.format(
+                    prompts.PROVER_TEMPLATE.format(
                         definitions=form.definitions,
                         preamble=form.preamble,
                         available_lemmas=available,
@@ -91,8 +91,8 @@ class ProveStage:
                         informal_proof=self.row["informal_proof"],
                         feedback=feedback,
                     ),
-                    system_prompt=prompts.SOLVER_SYSTEM,
-                    role="solver",
+                    system_prompt=prompts.PROVER_SYSTEM,
+                    role="prover",
                     phase=f"{lemma.name}/w{worker}/r{repair}",
                     lemma=lemma.name,
                     worker=worker,
@@ -135,7 +135,7 @@ class ProveStage:
                     problems.append(problem)
                 else:
                     self._decision(
-                        "solver_attempt_rejected",
+                        "prover_attempt_rejected",
                         lemma=lemma.name,
                         worker=worker,
                         round=repair,
@@ -144,19 +144,19 @@ class ProveStage:
                 with result_lock:
                     lemma.last_errors = "\n".join(problems)[:3000]
                     lemma.last_attempts = (
-                        f"Solver {worker}, repair {repair}\n<lean>\n"
+                        f"Prover {worker}, repair {repair}\n<lean>\n"
                         + "\n\n".join(filter(None, [helpers, attempt]))
                         + "\n</lean>\nLean errors:\n"
                         + lemma.last_errors
                     )
-                feedback = prompts.SOLVER_REPAIR_TEMPLATE.format(
+                feedback = prompts.PROVER_REPAIR_TEMPLATE.format(
                     helpers=helpers, proof=proof, errors="\n".join(problems)
                 )
             logger.info(
                 f"worker {worker} exhausted its budget on " f"{lemma.name}"
             )
             self._decision(
-                "solver_budget_exhausted",
+                "prover_budget_exhausted",
                 lemma=lemma.name,
                 worker=worker,
                 errors=lemma.last_errors,

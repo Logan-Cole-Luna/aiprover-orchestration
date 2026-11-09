@@ -5,7 +5,7 @@ A row's `formal_statement` (Lean definitions, then one
 `theorem <name> ... := by sorry`) is kept exactly as given: compiled, never
 audited or revised, and renamed to the run's slug. A row without one has its
 informal statement formalized and audited as in autoformalization. Any
-informal proof of the row is withheld. The captain then drafts the informal
+informal proof of the row is withheld. The orchestrator then drafts the informal
 proof that the sketch decomposes; the draft is kept as `draft.md` in the
 result directory, so that a resumed run plans from the same draft.
 
@@ -96,7 +96,7 @@ class DraftStage:
         return form if result.ok else None
 
     def choose_side(self, form: Formalization) -> Formalization:
-        """The captain judges whether the statement holds. Judged false, the
+        """The orchestrator judges whether the statement holds. Judged false, the
         run's theorem becomes its negation, and every later stage proves
         that. The choice is kept as `side.md`, so that a resumed run keeps
         it."""
@@ -109,9 +109,9 @@ class DraftStage:
                     library=self.library or "(none)",
                     statement=form.statement,
                 ),
-                role="captain",
+                role="orchestrator",
                 phase="side",
-                system_prompt=prompts.CAPTAIN_SYSTEM,
+                system_prompt=prompts.ORCHESTRATOR_SYSTEM,
             )
             side = extract_tag(reply, "side").strip().lower()
             side = "disprove" if side == "disprove" else "prove"
@@ -141,7 +141,7 @@ class DraftStage:
         proof = self.row["informal_proof"]
         if self.config.mode != "prove":
             return proof
-        if self.config.gaps and reader == "judge":
+        if self.config.open_subgoals and reader == "judge":
             proof = f"{prompts.GAPS_JUDGE_TEMPLATE}\n{proof}"
         return f"{DRAFT_NOTES[reader]}\n\n{proof}"
 
@@ -156,9 +156,9 @@ class DraftStage:
                 previous=self.row["informal_proof"],
                 findings=findings,
             ),
-            role="captain",
+            role="orchestrator",
             phase="redraft",
-            system_prompt=prompts.CAPTAIN_SYSTEM,
+            system_prompt=prompts.ORCHESTRATOR_SYSTEM,
         )
         proof = extract_tag(reply, "proof").strip()
         if not proof:
@@ -172,7 +172,7 @@ class DraftStage:
         return proof
 
     def draft_proof(self, form: Formalization) -> str:
-        """The captain's informal proof of the formalization, drafted once."""
+        """The orchestrator's informal proof of the formalization, drafted once."""
         path = self.result_dir / "draft.md"
         if path.exists():
             return path.read_text()
@@ -183,9 +183,9 @@ class DraftStage:
                 library=self.library or "(none)",
                 statement=form.statement,
             ),
-            role="captain",
+            role="orchestrator",
             phase="draft",
-            system_prompt=prompts.CAPTAIN_SYSTEM,
+            system_prompt=prompts.ORCHESTRATOR_SYSTEM,
         )
         proof = extract_tag(reply, "proof").strip()
         if not proof:

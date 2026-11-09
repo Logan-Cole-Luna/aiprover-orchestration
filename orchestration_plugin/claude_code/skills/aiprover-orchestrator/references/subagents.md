@@ -1,7 +1,7 @@
 # Subagents
 
-The auditor, the reviewer, the writer and, without a model server, the
-solvers are subagents of this session
+The faithfulness checker, the reviewer, the writer and, without a model server, the
+provers are subagents of this session
 (Agent tool, `subagent_type: general-purpose`). Each prompt is assembled
 from the repository's role texts, written to a file first, and passed to the
 Agent tool verbatim; the reply is saved to a file. Both files are recorded
@@ -13,12 +13,12 @@ Every prompt begins with the line
 > not read any files.
 
 so that a blind role cannot reach the source through the repository. The
-solver, which is not blind, begins with the line given in its section.
+prover, which is not blind, begins with the line given in its section.
 `{lean_environment}` in a system prompt is replaced by the text of
 `$P/system/lean_environment.md`. Placeholders `{name}` in a template are
 filled with the values named; doubled braces `{{ }}` become single braces.
 
-## Auditor (blind)
+## Faithfulness checker (blind)
 
 `model: sonnet`. A new subagent for every read-back.
 
@@ -26,23 +26,23 @@ filled with the values named; doubled braces `{{ }}` become single braces.
 <tool-use line>
 
 <role>
-{contents of $ROOT/aiprover_orchestration/roles/auditor.md}
+{contents of $ROOT/aiprover_orchestration/roles/faithfulness checker.md}
 </role>
 
-{$P/templates/auditor.md with theorem_name = <slug> and
+{$P/templates/faithfulness checker.md with theorem_name = <slug> and
  lean_code = the definitions and the theorem statement, as compiled}
 ```
 
 The prompt contains nothing else: no source statement, no source proof, no
 notes. Files: `$T/audit_<k>.prompt.md`, `$T/audit_<k>.reply.md`; record with
-`traced_subagent "$RUN" formalize audit<k> auditor sonnet <prompt> <reply>`.
+`traced_subagent "$RUN" formalize audit<k> faithfulness checker sonnet <prompt> <reply>`.
 
 You then judge the read-back as `$P/templates/judge_readback.md` asks and
 record the verdict (`audit_verdict`).
 
-## Solver (no model server)
+## Prover (no model server)
 
-`model: sonnet`. Used when `$SOLVER` is `claude` (`./setup --endpoint
+`model: sonnet`. Used when `$PROVER` is `claude` (`./setup --endpoint
 none`): one fresh subagent per attempt on a lemma `L`, several lemmas at
 once (Agent tool, `run_in_background: true`). Files live in `$T/L/`.
 
@@ -52,21 +52,21 @@ Use only the Bash tool, and only to compile drafts with
 Do not read other files.
 
 <role>
-{$P/system/solver.md with {lean_environment} replaced}
+{$P/system/prover.md with {lean_environment} replaced}
 </role>
 
-{$P/templates/solver.md with definitions = the formalization's
+{$P/templates/prover.md with definitions = the formalization's
  definitions, preamble = its preamble, available_lemmas = the earlier
  lemmas as `:= by sorry` stubs, lemma_statement = L's statement,
  informal_proof = the source proof, feedback = empty, or for a later
- attempt $P/templates/solver_repair.md filled with the previous attempt's
+ attempt $P/templates/prover_repair.md filled with the previous attempt's
  helpers, proof and Lean errors}
 ```
 
 `<AIP>` is the value of `$AIP`. The reply's `<helpers>` and `<proof>` are
-the attempt; it passes the hand-back `proof` gate (`gates.md`) before it
+the attempt; it passes the escalation `proof` gate (`gates.md`) before it
 counts. Files: `$T/L/attempt_<k>.prompt.md`, `$T/L/attempt_<k>.reply.md`;
-record with `traced_subagent "$RUN" prove L_<k> solver sonnet <prompt> <reply>`.
+record with `traced_subagent "$RUN" prove L_<k> prover sonnet <prompt> <reply>`.
 
 ## Reviewer (fresh)
 

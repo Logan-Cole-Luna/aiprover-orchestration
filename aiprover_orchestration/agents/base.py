@@ -19,7 +19,7 @@ CACHE_USAGE_KEYS = {
 TOKENS_PER_USD = 100_000
 CACHED_TOKEN_WEIGHT = 0.1
 # Turns a USD limit allows a call that reports its tokens only at the end: the
-# rate of the hand-back phase's limits (configs/orchestrator/captain_phases.json).
+# rate of the escalation phase's limits (configs/orchestrator/orchestrator_phases.json).
 TURNS_PER_USD = 20
 
 

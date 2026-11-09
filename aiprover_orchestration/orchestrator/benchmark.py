@@ -39,6 +39,7 @@ import psutil
 
 from ..agents.base import add_usage, billed_tokens
 from ..utils.files import read_jsonl
+from ..utils.vocabulary import modernize
 from . import gpu_usage
 
 logger = logging.getLogger(__name__)
@@ -293,7 +294,7 @@ def call_summary(steps: list[dict]) -> dict:
 
 def call_purpose(step: dict) -> str:
     """What a call was for: its label without the lemma, sample or repair
-    number (`handback/mc_flat` and `report_repair0` give `handback` and
+    number (`escalation/mc_flat` and `report_repair0` give `escalation` and
     `report_repair`)."""
     return re.sub(r"\d+$", "", step.get("label", "").split("/")[0])
 
@@ -352,8 +353,8 @@ def run_costs(trace: dict, result_dir: Path | None = None) -> dict:
         ),
         "hosted_tokens": sum(row["tokens"] for row in hosted.values()),
         "unpriced_tokens": unpriced_tokens,
-        "solver": {
-            "model": gpu_usage.solver_of(trace).get("model"),
+        "prover": {
+            "model": gpu_usage.prover_of(trace).get("model"),
             "jobs": jobs,
             "sessions": sessions,
             "session_hours": round(session_hours, 2),
@@ -416,5 +417,5 @@ if __name__ == "__main__":
     if len(sys.argv) != 2:
         raise SystemExit(__doc__.strip().splitlines()[-2].strip())
     result_dir = Path(sys.argv[1])
-    trace = json.loads((result_dir / "trace.json").read_text())
+    trace = modernize(json.loads((result_dir / "trace.json").read_text()))
     print(json.dumps(summarize(result_dir, trace), indent=1))

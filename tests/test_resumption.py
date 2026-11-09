@@ -79,7 +79,7 @@ class PlanDecisionTest(RequestTest):
         self.assertEqual(reply["state"], "queued")
         self.assertIs(reply["options"]["sketch_approval"], False)
 
-    def check_comments_go_to_the_captain_as_guidance(self):
+    def check_comments_go_to_the_orchestrator_as_guidance(self):
         reply = self.decide("comment", "prefer induction")
         self.assertEqual(reply["state"], "queued")
         self.assertEqual(reply["options"]["sketch_guidance"], "prefer induction")
@@ -98,7 +98,7 @@ class PlanDecisionTest(RequestTest):
     def test_checks(self):
         for index, name in enumerate([
             "check_approval_starts_proving",
-            "check_comments_go_to_the_captain_as_guidance",
+            "check_comments_go_to_the_orchestrator_as_guidance",
             "check_a_revision_returns_for_review",
             "check_an_imported_run_needs_a_server_that_may_continue_it",
         ]):

@@ -118,17 +118,17 @@ svg.exporting *, svg.exporting { transition: none !important; animation: none !i
 .rnode .t3 { font-size: 10.5px; fill: var(--muted); font-family: var(--font-mono); }
 .rnode .progress-track { fill: var(--surface-2); }
 .rnode .progress { fill: var(--accent); }
-.rnode.r-captain rect.body { stroke: var(--captain); }
-.rnode.r-auditor rect.body, .rnode.r-reviewer rect.body { stroke: var(--auditor); }
-.rnode.r-solver rect.body { stroke: var(--solver); }
+.rnode.r-orchestrator rect.body { stroke: var(--orchestrator); }
+.rnode.r-checker rect.body, .rnode.r-reviewer rect.body { stroke: var(--checker); }
+.rnode.r-prover rect.body { stroke: var(--prover); }
 .rnode.r-lean rect.body { stroke: var(--lean); }
-.rnode.r-captain .progress { fill: var(--captain); }
-.rnode.r-auditor .progress, .rnode.r-reviewer .progress { fill: var(--auditor); }
-.rnode.r-solver .progress { fill: var(--solver); }
+.rnode.r-orchestrator .progress { fill: var(--orchestrator); }
+.rnode.r-checker .progress, .rnode.r-reviewer .progress { fill: var(--checker); }
+.rnode.r-prover .progress { fill: var(--prover); }
 .rnode.r-lean .progress { fill: var(--lean); }
-.rnode .chip-role.r-captain { fill: var(--captain); }
-.rnode .chip-role.r-auditor, .rnode .chip-role.r-reviewer { fill: var(--auditor); }
-.rnode .chip-role.r-solver { fill: var(--solver); }
+.rnode .chip-role.r-orchestrator { fill: var(--orchestrator); }
+.rnode .chip-role.r-checker, .rnode .chip-role.r-reviewer { fill: var(--checker); }
+.rnode .chip-role.r-prover { fill: var(--prover); }
 .rnode .chip-role.r-lean { fill: var(--lean); }
 .rnode.root rect.body { stroke-width: 2.2; fill: var(--surface-2); }
 .rnode.problem rect.body { stroke: var(--muted); stroke-dasharray: 5 3; }
@@ -137,8 +137,8 @@ svg.exporting *, svg.exporting { transition: none !important; animation: none !i
 .rnode.compiling rect.body { stroke: var(--lean); stroke-width: 2.4; stroke-dasharray: 6 4; }
 .rnode.s-ok rect.body, .rnode.s-win rect.body { fill: var(--ok-soft); stroke: var(--ok); }
 .rnode.s-win rect.body { stroke-width: 3; }
-/* A lemma proved by a hand-back takes the orchestrator's colour. */
-.rnode.s-captain rect.body { fill: color-mix(in srgb, var(--captain) 14%, var(--surface)); stroke: var(--captain); }
+/* A lemma proved by an escalation takes the orchestrator's colour. */
+.rnode.s-orchestrator rect.body { fill: color-mix(in srgb, var(--orchestrator) 14%, var(--surface)); stroke: var(--orchestrator); }
 .rnode.s-fail rect.body { fill: var(--fail-soft); stroke: var(--fail); }
 /* A REVISE verdict returns the work to the previous stage. */
 .rnode.s-revise rect.body { fill: var(--warn-soft); stroke: var(--warn); stroke-dasharray: 6 3; }
@@ -151,7 +151,7 @@ svg.exporting *, svg.exporting { transition: none !important; animation: none !i
 .rnode rect.mark.m-warn { fill: var(--warn); stroke: var(--warn); }
 .rnode rect.mark.m-empty, .rnode rect.mark.m-late { fill: var(--muted); stroke: var(--muted); opacity: 0.45; }
 .rnode .status.s-ok, .rnode .status.s-win { fill: var(--ok); }
-.rnode .status.s-captain { fill: var(--captain); }
+.rnode .status.s-orchestrator { fill: var(--orchestrator); }
 .rnode .status.s-fail { fill: var(--fail); }
 .rnode .status.s-revise { fill: var(--warn); }
 .rnode .status.s-run { fill: var(--accent); }
@@ -165,9 +165,9 @@ svg.exporting *, svg.exporting { transition: none !important; animation: none !i
 .redge { fill: none; stroke: var(--muted); stroke-width: 1.6; opacity: 0.55; transition: stroke-dashoffset 700ms ease, opacity 300ms; }
 .redge.hidden { opacity: 0; }
 .ghost { fill: none; stroke: var(--line); stroke-width: 1.3; stroke-dasharray: 3 4; }
-.redge.r-captain { stroke: var(--captain); }
-.redge.r-auditor, .redge.r-reviewer { stroke: var(--auditor); }
-.redge.r-solver { stroke: var(--solver); }
+.redge.r-orchestrator { stroke: var(--orchestrator); }
+.redge.r-checker, .redge.r-reviewer { stroke: var(--checker); }
+.redge.r-prover { stroke: var(--prover); }
 .redge.r-lean { stroke: var(--lean); }
 .redge.repair { stroke: var(--fail); stroke-width: 1.8; }
 .redge.win { stroke: var(--ok); stroke-width: 2.4; opacity: 0.9; }
@@ -175,10 +175,10 @@ svg.exporting *, svg.exporting { transition: none !important; animation: none !i
 .rlabel.hidden { opacity: 0; }
 .rlabel.repair { fill: var(--fail); }
 .packet { r: 5; transition: opacity 200ms; }
-.packet.r-captain { fill: var(--captain); }
+.packet.r-orchestrator { fill: var(--orchestrator); }
 .packet.r-manual { fill: var(--muted); }
-.packet.r-auditor { fill: var(--auditor); }
-.packet.r-solver { fill: var(--solver); }
+.packet.r-checker { fill: var(--checker); }
+.packet.r-prover { fill: var(--prover); }
 .packet.r-lean { fill: var(--lean); }
 .packet.r-ok { fill: var(--ok); }
 .band { fill: var(--surface-2); opacity: 0.55; }
@@ -289,7 +289,7 @@ if (!TRACE) {
 // All times are trace seconds since the start of the run. A model call spans
 // [reply time − duration, reply time]; its Lean check ends at the check's time.
 
-// Solver calls cannot start before the sketch hands out the lemmas; the
+// Prover calls cannot start before the sketch hands out the lemmas; the
 // trace rounds times to 0.1 s, so the raw difference can be slightly earlier.
 const lemmaHandoff = eventsOf("sketch_accepted")[0]?.elapsed_seconds ?? 0;
 const callStart = call => Math.max(call.elapsed_seconds - (call.seconds || 0),
@@ -345,8 +345,8 @@ function callNode(call, fields) {
 
 // Each accepted sketch is drawn as a tree: the sketch fans out left to right
 // into its lemmas, and the attempts on each lemma stack downward beneath it
-// (AIProver: one block per job; chat solvers: one lane per chain). Lemmas
-// split off by a hand-back form subtrees below it. A replan starts the next
+// (AIProver: one block per job; chat provers: one lane per chain). Lemmas
+// split off by an escalation form subtrees below it. A replan starts the next
 // sketch's tree below; lemmas it keeps from an earlier sketch appear as
 // single nodes.
 const LEMMA_GAP = 60, KEPT_GAP = 30, SESSION_STEP = NODE_WIDTH.attempt + 14;
@@ -373,36 +373,36 @@ function buildLayout() {
   const problemNode = addNode({ id: "problem", kind: "problem", x: 0, y, start: 0, end: 0,
     title: TRACE.theorem_name, subtitle: `${problem.source_name} · ${problem.source_subset}`, band: "Input" });
   y += ROW;
-  const root = addNode({ id: "captain", kind: "root", role: "captain", x: 0, y, start: 0, end: 0,
+  const root = addNode({ id: "orchestrator", kind: "root", role: "orchestrator", x: 0, y, start: 0, end: 0,
     title: "Orchestrator", subtitle: `orchestrator · ${TRACE.models?.orchestrator}` });
-  addEdge(problemNode, root, "captain", { label: "statement + proof" });
+  addEdge(problemNode, root, "orchestrator", { label: "statement + proof" });
 
   const sketchEvents = eventsOf("sketch_accepted");
-  // A lemma's direction is shown with the lemma, not as a step of the spine.
-  const spineCalls = calls.filter(c => (c.role === "captain" || c.role === "auditor") && !isHandback(c)
-    && !/^(report|direction\/)/.test(c.label))
+  // A lemma's guidance is shown with the lemma, not as a step of the spine.
+  const spineCalls = calls.filter(c => (c.role === "orchestrator" || c.role === "checker") && !isEscalation(c)
+    && !/^(report|guidance\/)/.test(c.label))
     .sort((a, b) => a.index - b.index);
-  // Captain and auditor calls up to each accepted sketch; the auditor branches right.
+  // Orchestrator and checker calls up to each accepted sketch; the checker branches right.
   const segments = sketchEvents.map((event, k) => spineCalls.filter(c => c.index < event.index
     && (k === 0 || c.index > sketchEvents[k - 1].index)));
   const tail = spineCalls.filter(c => !sketchEvents.length || c.index > sketchEvents.at(-1).index);
-  let previous = root, lastCaptain = root, bypass = null;
+  let previous = root, lastOrchestrator = root, bypass = null;
   const placeSpine = call => {
     y += ROW;
-    const isAuditor = call.role === "auditor";
+    const isChecker = call.role === "checker";
     const kindText = /^formalize/.test(call.label) ? "Formalize" : /^judge_sketch/.test(call.label) ? "Sketch verdict" : /^judge/.test(call.label) ? "Faithfulness verdict"
-      : /^sketch/.test(call.label) ? (lastCaptain.sketch ? "Revised sketch" : "Proof sketch") : isAuditor ? "Blind read-back" : call.label;
-    const node = addNode({ id: `s${call.index}`, kind: "spine", x: isAuditor ? 300 : 0, y, ...callNode(call, {
+      : /^sketch/.test(call.label) ? (lastOrchestrator.sketch ? "Revised sketch" : "Proof sketch") : isChecker ? "Blind read-back" : call.label;
+    const node = addNode({ id: `s${call.index}`, kind: "spine", x: isChecker ? 300 : 0, y, ...callNode(call, {
       title: kindText, subtitle: `${roleName(call.role)} · ${call.label}`, sketch: /^sketch/.test(call.label),
       band: /^formalize/.test(call.label) ? "Formalize"
         : /^judge_sketch/.test(call.label) ? "Sketch"
-        : isAuditor || /^judge/.test(call.label) ? "Audit" : /^sketch/.test(call.label) ? "Sketch" : null }) });
+        : isChecker || /^judge/.test(call.label) ? "Audit" : /^sketch/.test(call.label) ? "Sketch" : null }) });
     // After a sketch's tree, the edge to the replan runs down its left side.
     addEdge(previous, node, call.role, bypass != null ? { route: "bus", bus: bypass, label: "replan" }
-      : { label: isAuditor ? "delegates code only" : previous.role === "auditor" ? "read-back" : "" });
+      : { label: isChecker ? "delegates code only" : previous.role === "checker" ? "read-back" : "" });
     bypass = null;
     previous = node;
-    if (!isAuditor) lastCaptain = node;
+    if (!isChecker) lastOrchestrator = node;
   };
 
   const workers = jobsByLemma.size ? sampleLanes()
@@ -413,15 +413,15 @@ function buildLayout() {
 
   sketchEvents.forEach((event, k) => {
     segments[k].forEach(placeSpine);
-    const sketchNode = lastCaptain;
+    const sketchNode = lastOrchestrator;
     const next = sketchEvents[k + 1];
     const replanAt = next ? (decisions.find(d => d.event === "replan" && d.index > event.index && d.index < next.index)
       || next).elapsed_seconds : null;
     const inSection = step => step.index > event.index && (!next || step.index < next.index);
-    // Lemmas split off by a hand-back form a subtree beneath their parent:
-    // they hang below the hand-back that created them, so every edge runs
+    // Lemmas split off by an escalation form a subtree beneath their parent:
+    // they hang below the escalation that created them, so every edge runs
     // downward and the tree shows how the proof was decomposed.
-    const splits = decisions.filter(d => d.event === "lemma_handback" && d.action === "split" && inSection(d));
+    const splits = decisions.filter(d => d.event === "lemma_escalation" && d.action === "split" && inSection(d));
     const statements = [...(event.lemmas || []), ...splits.flatMap(split => split.new_lemmas || [])];
     const statementOf = name => statements.find(st => lemmaName(st) === name);
     const splitFrom = new Map(splits.flatMap(split => (split.new_lemmas || [])
@@ -429,14 +429,14 @@ function buildLayout() {
     const childrenOf = name => splits.filter(split => split.lemma === name)
       .flatMap(split => (split.new_lemmas || []).map(lemmaName)).filter(child => splitFrom.get(child)?.lemma === name);
     const depthOf = name => splitFrom.has(name) ? 1 + depthOf(splitFrom.get(name).lemma) : 0;
-    // Lemmas added by hand hang from their parent lemma, not from a hand-back.
+    // Lemmas added by hand hang from their parent lemma, not from an escalation.
     const manualOf = name => (splitFrom.get(name)?.manual_lemmas || []).includes(name);
     const descendantsOf = name => childrenOf(name).flatMap(child => [child, ...descendantsOf(child)]);
     const names = (event.lemmas || []).map(lemmaName).filter(Boolean);
     const reused = new Set(decisions.filter(d => d.event === "lemma_reused" && inSection(d)).map(d => d.lemma));
     const earlier = name => sketchEvents.slice(0, k).some(e => (e.lemmas || []).some(st => lemmaName(st) === name));
     winners = []; keptNodes = [];
-    const handbackNodes = new Map(), pendingSplitEdges = [];
+    const escalationNodes = new Map(), pendingSplitEdges = [];
 
     // A column is as wide as its widest job: a compact job is one node, an
     // expanded one spans its sessions. A subtree is as wide as the larger of
@@ -461,11 +461,11 @@ function buildLayout() {
       const middle = top && top.index === Math.floor(names.length / 2);
       const band = top && top.index === 0 ? "Prove" : null;
       if (reused.has(name)) {
-        const node = addNode({ id: `lemma:${k}:${name}`, kind: "lemma", role: "solver", x, y: lemmaY,
+        const node = addNode({ id: `lemma:${k}:${name}`, kind: "lemma", role: "prover", x, y: lemmaY,
           start: event.elapsed_seconds, end: event.elapsed_seconds, lemma: name, carried: true,
           statement: statementOf(name), win: lemmaWins.get(name), title: name,
           subtitle: "proved in an earlier sketch", band });
-        addEdge(sketchNode, node, "captain", { label: middle ? "kept and delegated lemmas" : "" });
+        addEdge(sketchNode, node, "orchestrator", { label: middle ? "kept and delegated lemmas" : "" });
         keptNodes.push(node);
         return;
       }
@@ -473,36 +473,36 @@ function buildLayout() {
       const sectionWin = win && inSection(win) ? win : null;
       const depth = depthOf(name);
       const descendants = descendantsOf(name).map(child => lemmaWins.get(child)).map(w => w && inSection(w) ? w : null);
-      const lemmaNode = addNode({ id: `lemma:${k}:${name}`, kind: "lemma", role: "solver", x, y: lemmaY,
+      const lemmaNode = addNode({ id: `lemma:${k}:${name}`, kind: "lemma", role: "prover", x, y: lemmaY,
         start: splitFrom.get(name)?.elapsed_seconds ?? event.elapsed_seconds,
         end: sectionWin ? sectionWin.elapsed_seconds : (replanAt ?? runEndTime),
         closeAt: sectionWin ? null : (replanAt ?? (outcome.status ? runEndTime : null)), replanned: replanAt != null,
         lemma: name, win: sectionWin, title: name, statement: statementOf(name), subtree: descendants,
         subtitle: depth ? `depth ${depth} · ${manualOf(name) ? "added by hand under" : "split from"} ${splitFrom.get(name).lemma}` : earlier(name) ? "restated after replan" : k ? "new in this sketch" : jobsByLemma.size
-          ? `AIProver · ${cfg.workers ?? 1} sessions per job` : `${workers.length} solvers in parallel`,
+          ? `AIProver · ${cfg.workers ?? 1} sessions per job` : `${workers.length} provers in parallel`,
         band });
       if (splitFrom.has(name)) pendingSplitEdges.push([splitFrom.get(name), lemmaNode]);
-      else addEdge(sketchNode, lemmaNode, "captain", { label: middle ? (k ? "kept and delegated lemmas" : "delegates lemmas") : "" });
+      else addEdge(sketchNode, lemmaNode, "orchestrator", { label: middle ? (k ? "kept and delegated lemmas" : "delegates lemmas") : "" });
       let bottom = lemmaY;
 
       if (jobsByLemma.size) {
-        // Jobs and hand-backs stack downward; every session of an expanded
+        // Jobs and escalations stack downward; every session of an expanded
         // job feeds the next item, a compact job feeds it directly.
         let upstream = [lemmaNode], previousItem = null, jy = lemmaY + ROW;
-        const items = calls.filter(c => inSection(c) && ((isJob(c) && c.lemma === name) || handbackLemma(c) === name))
+        const items = calls.filter(c => inSection(c) && ((isJob(c) && c.lemma === name) || escalationLemma(c) === name))
           .sort((a, b) => a.index - b.index);
         items.forEach(item => {
-          if (isHandback(item)) {
-            const decision = decisions.find(d => d.event === "lemma_handback" && d.lemma === name && d.index > item.index);
+          if (isEscalation(item)) {
+            const decision = decisions.find(d => d.event === "lemma_escalation" && d.lemma === name && d.index > item.index);
             const productive = decision?.action === "proof" || decision?.action === "split";
             if (successfulOnly && !productive) return;
             const node = addNode({ id: `h${item.index}`, kind: "spine", x, y: jy, ...callNode(item, {
-              role: "captain", title: "Hand-back to orchestrator",
-              subtitle: decision ? `orchestrator · ${decision.action}` : "orchestrator", handback: decision || null, lemma: name }) });
-            upstream.forEach((up, u) => addEdge(up, node, "captain",
-              u === Math.floor((upstream.length - 1) / 2) ? { label: "hand-back" } : {}));
+              role: "orchestrator", title: "Escalation to orchestrator",
+              subtitle: decision ? `orchestrator · ${decision.action}` : "orchestrator", escalation: decision || null, lemma: name }) });
+            upstream.forEach((up, u) => addEdge(up, node, "orchestrator",
+              u === Math.floor((upstream.length - 1) / 2) ? { label: "escalation" } : {}));
             if (productive) winners.push(node);
-            if (decision) handbackNodes.set(decision.index, node);
+            if (decision) escalationNodes.set(decision.index, node);
             upstream = [node]; previousItem = item; bottom = jy; jy += ROW;
             return;
           }
@@ -512,13 +512,13 @@ function buildLayout() {
           const outcomes = lanes.map(w => sampleOutcome(job, w));
           const start = Math.min(...outcomes.map(o => o.start));
           const compact = compactJob(job);
-          const jobNode = addNode({ id: `j${job.index}`, kind: "job", x, y: jy, step: job, role: "solver",
+          const jobNode = addNode({ id: `j${job.index}`, kind: "job", x, y: jy, step: job, role: "prover",
             start, replied: job.elapsed_seconds, end: job.elapsed_seconds, outcomes, lemma: name, compact,
             lines: compact ? ["title", "subtitle", "marks", "status"] : null,
             title: `AIProver job ${jobNumber(job)}`,
             subtitle: `${formatClock(start)} · ${formatDuration(job.elapsed_seconds - start)} · ${plural(lanes.length, "session")}` });
-          const label = !previousItem ? "" : isHandback(previousItem) ? "after hand-back" : transitionText(previousItem, job);
-          upstream.forEach((up, u) => addEdge(up, jobNode, "solver",
+          const label = !previousItem ? "" : isEscalation(previousItem) ? "after escalation" : transitionText(previousItem, job);
+          upstream.forEach((up, u) => addEdge(up, jobNode, "prover",
             label && u === Math.floor((upstream.length - 1) / 2) ? { label } : {}));
           previousItem = job; bottom = jy;
           if (compact) {
@@ -534,20 +534,20 @@ function buildLayout() {
             bottom = Math.max(bottom, ay);
             const node = addNode({ id: `a${job.index}s${sampleIndex}`, kind: "attempt",
               x: x + (column - (perRow - 1) / 2 + shift / 2) * SESSION_STEP, y: ay,
-              step: job, check: outcome.check, role: "solver", sample: sampleIndex, outcome,
+              step: job, check: outcome.check, role: "prover", sample: sampleIndex, outcome,
               start: outcome.start, replied: outcome.end,
               end: outcome.check ? outcome.check.elapsed_seconds : outcome.end,
               title: `session ${sampleIndex}`,
               subtitle: `${formatClock(outcome.start)} · ${formatDuration(outcome.end - outcome.start)}${outcome.turns != null ? ` · ${outcome.turns}t` : ""}`,
               lemma: name, worker: sampleIndex });
-            addEdge(jobNode, node, "solver");
+            addEdge(jobNode, node, "prover");
             if (outcome.state === "win") winners.push(node);
             return node;
           });
           jy += 2 * ROW + (sessionRows(lanes.length) - 1) * SESSION_ROW;
         });
       } else {
-        // Chat solvers: one lane per chain, its repair rounds stacked downward.
+        // Chat provers: one lane per chain, its repair rounds stacked downward.
         workers.forEach((worker, w) => {
           const laneX = x + (w - (workers.length - 1) / 2) * LANE;
           let upstream = lemmaNode;
@@ -557,10 +557,10 @@ function buildLayout() {
               const ay = lemmaY + ROW + r * ROW;
               bottom = Math.max(bottom, ay);
               const node = addNode({ id: `a${call.index}`, kind: "attempt", x: laneX, y: ay, ...callNode(call, {
-                title: `solver ${worker} · r${call.round}`, subtitle: `#${call.index} · ${formatClock(callStart(call))}`,
+                title: `prover ${worker} · r${call.round}`, subtitle: `#${call.index} · ${formatClock(callStart(call))}`,
                 lemma: name, worker }) });
               const label = upstream.kind === "attempt" ? transitionText(upstream.step, call) : "";
-              addEdge(upstream, node, "solver", label ? { repair: label === "errors", label } : {});
+              addEdge(upstream, node, "prover", label ? { repair: label === "errors", label } : {});
               upstream = node;
               if (sectionWin && sameAttempt(sectionWin, call)) winners.push(node);
             });
@@ -586,12 +586,12 @@ function buildLayout() {
       placeLemma(name, cursor + widths[i] / 2, y + ROW + 20, { index: i });
       cursor += widths[i];
     });
-    // A split lemma hangs from the hand-back that created it.
+    // A split lemma hangs from the escalation that created it.
     for (const [split, lemmaNode] of pendingSplitEdges) {
       const manual = manualOf(lemmaNode.lemma);
       const parent = byId.get(`lemma:${k}:${split.lemma}`);
-      const from = manual ? parent : handbackNodes.get(split.index) || parent;
-      addEdge(from || sketchNode, lemmaNode, manual ? "manual" : "captain",
+      const from = manual ? parent : escalationNodes.get(split.index) || parent;
+      addEdge(from || sketchNode, lemmaNode, manual ? "manual" : "orchestrator",
         { label: manual ? "added by hand" : "split" });
     }
     y = deepest + 30;
@@ -612,7 +612,7 @@ function buildLayout() {
       end: finalCheck ? finalCheck.elapsed_seconds : assembleSteps[0].elapsed_seconds,
       step: finalCheck, title: "Assemble and verify", subtitle: "Lean · proofs spliced into sketch", band: "Verify" });
     [...winners, ...keptNodes].forEach(node => addEdge(node, assemble, "ok", { win: true }));
-    if (!winners.length && !keptNodes.length) addEdge(lastCaptain, assemble, "lean");
+    if (!winners.length && !keptNodes.length) addEdge(lastOrchestrator, assemble, "lean");
     if (verification) {
       y += ROW + 6;
       const final = addNode({ id: "final", kind: "final", role: "lean", x: 0, y,
@@ -634,11 +634,11 @@ function buildLayout() {
         if (report) {
           const reportCalls = calls.filter(c => /^report/.test(c.label) && c.index < report.index);
           y += ROW;
-          const reportNode = addNode({ id: "report", kind: "spine", role: "captain", x: 0, y,
+          const reportNode = addNode({ id: "report", kind: "spine", role: "orchestrator", x: 0, y,
             start: reportCalls.length ? callStart(reportCalls[0]) : report.elapsed_seconds,
             replied: report.elapsed_seconds, end: report.elapsed_seconds, step: report, report,
             title: "LaTeX report", subtitle: `${plural(reportCalls.length, "call")} · orchestrator and reviewer`, band: "Report" });
-          addEdge(node, reportNode, "captain", { win: !!report.pdf });
+          addEdge(node, reportNode, "orchestrator", { win: !!report.pdf });
         }
       }
     }
@@ -653,7 +653,7 @@ const backjumps = steps.filter(step => step.event === "backjump");
 
 function nodeState(node, t) {
   if (t < node.start) return { phase: "hidden" };
-  if (node.kind === "problem" || node.kind === "root") return { phase: "done", status: "neutral", line: node.kind === "root" ? `${callsByRole("captain").length} calls in this run` : "" };
+  if (node.kind === "problem" || node.kind === "root") return { phase: "done", status: "neutral", line: node.kind === "root" ? `${callsByRole("orchestrator").length} calls in this run` : "" };
   if (node.kind === "lemma") {
     if (node.carried) return { phase: "done", status: "ok", line: "kept ✓" };
     if (backjumps.some(b => (b.retracted || []).includes(node.lemma) && t >= b.elapsed_seconds))
@@ -663,11 +663,11 @@ function nodeState(node, t) {
     const parts = node.subtree?.length
       ? ` · subtree ${node.subtree.filter(w => w && t >= w.elapsed_seconds).length}/${node.subtree.length}` : "";
     if (node.win && t >= node.win.elapsed_seconds)
-      return { phase: "done", status: node.win.worker === "captain" ? "captain" : "ok",
+      return { phase: "done", status: node.win.worker === "orchestrator" ? "orchestrator" : "ok",
         line: parts ? `proved by split${parts}` : `proved · ${winnerText(node.win)}` };
     if (node.closeAt != null && t >= node.closeAt)
       return { phase: "done", status: "fail", line: (node.replanned ? "not proved · to replan" : "not proved") + parts };
-    return { phase: "running", status: "run", line: "solvers working" + parts, progress: null };
+    return { phase: "running", status: "run", line: "provers working" + parts, progress: null };
   }
   if (node.kind === "job") {
     if (t < node.replied) {
@@ -696,11 +696,11 @@ function nodeState(node, t) {
       line: node.report.pdf ? (issues ? "PDF · corrections applied" : "PDF written") : "no PDF" };
   }
   // Model-call nodes.
-  if (node.handback !== undefined && t >= node.replied) {
-    const action = node.handback?.action;
+  if (node.escalation !== undefined && t >= node.replied) {
+    const action = node.escalation?.action;
     const line = { proof: "orchestrator's proof kept ✓", split: "split; proof kept ✓", restate: "lemma restated",
       refute: "lemma refuted in Lean ✓", retry: "retry unchanged", rejected: "reply rejected by Lean" }[action] || "reply received";
-    return { phase: "done", status: action === "proof" || action === "split" ? "captain" : action === "rejected" ? "fail" : "neutral", line };
+    return { phase: "done", status: action === "proof" || action === "split" ? "orchestrator" : action === "rejected" ? "fail" : "neutral", line };
   }
   if (t < node.replied) {
     const progress = (t - node.start) / Math.max(1, node.replied - node.start);
@@ -717,7 +717,7 @@ function nodeState(node, t) {
     return { phase: "done", status, line };
   }
   if (node.step.lemma != null) {
-    const state = solverOutcome(node.step).state;
+    const state = proverOutcome(node.step).state;
     const win = lemmaWins.get(node.step.lemma);
     if (state === "win" && t < win.elapsed_seconds) return { phase: "done", status: "ok", line: "compiles" };
     const errors = (node.check?.errors || []).length;
@@ -762,7 +762,7 @@ function edgeGeometry(edge) {
 function nodeMarkup(node) {
   const { w, h } = node;
   const left = -w / 2, top = -h / 2;
-  const role = node.role || "captain";
+  const role = node.role || "orchestrator";
   const hasChip = node.kind === "attempt" || node.kind === "spine";
   const eyebrow = { problem: "PROBLEM", root: "ORCHESTRATOR", assemble: "LEAN", final: "OUTPUT" }[node.kind];
   // Characters that fit the node width at each line's font size.
@@ -843,7 +843,7 @@ function updateGraph(t) {
     const key = `${state.phase}|${state.status}|${state.line}`;
     if (key !== node.shown) {
       node.shown = key;
-      node.el.setAttribute("class", `rnode ${node.kind} r-${node.role || "captain"} ${state.phase}${state.phase === "done" ? ` s-${state.status}` : ""}`);
+      node.el.setAttribute("class", `rnode ${node.kind} r-${node.role || "orchestrator"} ${state.phase}${state.phase === "done" ? ` s-${state.status}` : ""}`);
       node.lineEl.textContent = state.line || "";
       node.lineEl.setAttribute("class", `t2 status s-${state.status}`);
     }
@@ -886,43 +886,43 @@ function updateGraph(t) {
 
 function describe(step) {
   const who = step.lemma == null ? null
-    : isJob(jobOf(step)) ? `AIProver job ${jobNumber(jobOf(step))} on ${step.lemma}` : `Solver ${step.worker} on ${step.lemma}`;
+    : isJob(jobOf(step)) ? `AIProver job ${jobNumber(jobOf(step))} on ${step.lemma}` : `Prover ${step.worker} on ${step.lemma}`;
   if (step.kind === "model_call") {
     const call = step;
     const started = [callStart(call)];
-    if (call.role === "auditor") return { t: started[0], role: "auditor", title: "Orchestrator delegates a blind read-back",
-      text: "The auditor receives only the Lean code and the auditor playbook, never the source, and states what the code literally asserts." };
-    if (/^formalize/.test(call.label)) return { t: started[0], role: "captain", title: "Orchestrator formalizes the statement",
+    if (call.role === "checker") return { t: started[0], role: "checker", title: "Orchestrator delegates a blind read-back",
+      text: "The checker receives only the Lean code and the checker playbook, never the source, and states what the code literally asserts." };
+    if (/^formalize/.test(call.label)) return { t: started[0], role: "orchestrator", title: "Orchestrator formalizes the statement",
       text: "The orchestrator writes Lean definitions for the setting and a theorem statement whose proof is left as sorry." };
-    if (/^judge_sketch/.test(call.label)) return { t: started[0], role: "captain", title: "Orchestrator judges the sketch",
+    if (/^judge_sketch/.test(call.label)) return { t: started[0], role: "orchestrator", title: "Orchestrator judges the sketch",
       text: "A second call checks the decomposition: no lemma as strong as the theorem, open or false, or bundling several steps." };
-    if (/^judge/.test(call.label)) return { t: started[0], role: "captain", title: "Orchestrator judges faithfulness",
-      text: "The orchestrator compares the auditor's read-back with the source statement: does the Lean code say exactly what the source says?" };
-    if (/^sketch/.test(call.label)) return { t: started[0], role: "captain", title: "Orchestrator sketches the proof",
+    if (/^judge/.test(call.label)) return { t: started[0], role: "orchestrator", title: "Orchestrator judges faithfulness",
+      text: "The orchestrator compares the checker's read-back with the source statement: does the Lean code say exactly what the source says?" };
+    if (/^sketch/.test(call.label)) return { t: started[0], role: "orchestrator", title: "Orchestrator sketches the proof",
       text: "The orchestrator splits the proof into lemmas, each stated in full but left as sorry, and proves the main theorem from them." };
-    if (isHandback(call)) return { t: started[0], role: "captain", title: `${handbackLemma(call)} handed back to the orchestrator`,
-      text: "The solvers failed on this lemma repeatedly. The orchestrator reads their attempts and proves the lemma itself, splits it, restates it, or asks for a retry." };
-    if (isJob(call)) return { t: started[0], role: "solver", title: who,
+    if (isEscalation(call)) return { t: started[0], role: "orchestrator", title: `${escalationLemma(call)} escalated to the orchestrator`,
+      text: "The provers failed on this lemma repeatedly. The orchestrator reads their attempts and proves the lemma itself, splits it, restates it, or asks for a retry." };
+    if (isJob(call)) return { t: started[0], role: "prover", title: who,
       text: `AIProver runs ${plural((call.samples || []).length || (cfg.workers ?? 1), "independent agentic Lean session")} on the lemma; ${jobSummary(call)}.` };
-    if (call.lemma != null) return { t: started[0], role: "solver", title: `${who}, round ${call.round}`,
-      text: call.round === 0 ? "The solver proposes a proof of the lemma from its statement, the definitions and the informal proof."
-        : "The solver receives its previous proof with Lean's error messages and proposes a repair." };
+    if (call.lemma != null) return { t: started[0], role: "prover", title: `${who}, round ${call.round}`,
+      text: call.round === 0 ? "The prover proposes a proof of the lemma from its statement, the definitions and the informal proof."
+        : "The prover receives its previous proof with Lean's error messages and proposes a repair." };
   }
   if (step.kind === "lean_check") {
     if (step.lemma != null) {
       const call = callOfCheck.get(step.index);
-      const late = call && solverOutcome(call).state === "late";
+      const late = call && proverOutcome(call).state === "late";
       const job = jobOf(step);
-      if (captainCheck(step)) return { t: step.elapsed_seconds, role: "lean",
+      if (orchestratorCheck(step)) return { t: step.elapsed_seconds, role: "lean",
         title: `Lean checks the orchestrator's ${/_restated$/.test(step.label) ? "restated sketch" : "proof"} for ${step.lemma}`,
         text: step.ok ? "It compiles." : `Lean reports ${plural(step.errors.length, "error")}.` };
       return { t: step.elapsed_seconds, role: "lean",
         title: job ? `Lean checks ${step.lemma} (AIProver job ${jobNumber(job)}, sample ${step.worker})`
-          : `Lean checks ${step.lemma} (solver ${step.worker}, r${step.round})`,
+          : `Lean checks ${step.lemma} (prover ${step.worker}, r${step.round})`,
         text: late ? "This chain replied after the lemma was already proved; its result is discarded."
           : step.ok ? "The proof compiles."
           : job ? `Lean reports ${plural(step.errors.length, "error")} in the proof extracted from this sample.`
-          : `Lean reports ${plural(step.errors.length, "error")}; they are sent back to the solver.` };
+          : `Lean reports ${plural(step.errors.length, "error")}; they are sent back to the prover.` };
     }
     if (step.stage === "assemble") return { t: step.elapsed_seconds, role: "lean", title: "Lean compiles the assembled solution",
       text: `The kept proofs replace every sorry in the sketch. ${step.ok ? "The complete file compiles" : "The file fails"}${step.sorry_warning ? "" : " with no sorry"}.` };
@@ -930,41 +930,41 @@ function describe(step) {
       text: step.ok ? (step.label === "sketch" ? "The sketch compiles: the lemmas suffice to prove the theorem." : "The formalization compiles. The sorry placeholder is expected here.")
         : `Lean reports ${plural(step.errors.length, "error")}; they go back to the orchestrator for repair.` };
   }
-  if (step.event === "audit_verdict") return { t: step.elapsed_seconds, role: "captain", title: `Verdict: ${step.verdict}`,
+  if (step.event === "audit_verdict") return { t: step.elapsed_seconds, role: "orchestrator", title: `Verdict: ${step.verdict}`,
     text: step.verdict === "FAITHFUL" ? "The read-back matches the source, so the formal statement is accepted." : "The formalization is sent back for revision." };
-  if (step.event === "sketch_judged") return { t: step.elapsed_seconds, role: "captain", title: `Sketch verdict: ${step.verdict}`,
+  if (step.event === "sketch_judged") return { t: step.elapsed_seconds, role: "orchestrator", title: `Sketch verdict: ${step.verdict}`,
     text: /^ACCEPT/.test(step.verdict) ? "The decomposition is accepted and its lemmas are delegated." : "The sketch is sent back for revision with the judge's objections." };
-  if (step.event === "sketch_accepted") return { t: step.elapsed_seconds, role: "captain", title: `${plural((step.lemmas || []).length, "lemma")} delegated`,
+  if (step.event === "sketch_accepted") return { t: step.elapsed_seconds, role: "orchestrator", title: `${plural((step.lemmas || []).length, "lemma")} delegated`,
     text: jobsByLemma.size
       ? `Each lemma goes to an AIProver job of ${plural(cfg.workers ?? 1, "sample")}; the first sample whose proof compiles is kept.`
-      : `Each lemma goes to ${cfg.workers ?? "several"} independent solver chains running in parallel; the first proof that compiles is kept.` };
-  if (step.event === "lemma_proved") return { t: step.elapsed_seconds, role: "solver", title: `${step.lemma} proved`,
+      : `Each lemma goes to ${cfg.workers ?? "several"} independent prover chains running in parallel; the first proof that compiles is kept.` };
+  if (step.event === "lemma_proved") return { t: step.elapsed_seconds, role: "prover", title: `${step.lemma} proved`,
     text: step.worker === "manual" ? "Its proof from its parts, written by hand and checked by Lean, is kept."
       : jobOf(step) ? `The proof from ${winnerText(step)} is kept.`
-      : `Solver ${step.worker}'s round-${step.round} proof is kept. The other chains on this lemma stop.` };
+      : `Prover ${step.worker}'s round-${step.round} proof is kept. The other chains on this lemma stop.` };
   if (step.event === "final_verification") return { t: step.elapsed_seconds, role: "lean", title: step.checks?.verified ? "Verified" : "Verification failed",
     text: step.checks?.verified ? `The solution compiles without sorry, uses only ${(step.checks.axioms || []).join(", ")}, and its type equals the audited theorem.` : "One or more final checks failed." };
   if (step.event === "final_review") return { t: step.elapsed_seconds, role: "reviewer", title: `Independent review: ${step.verdict}`,
     text: step.verdict === "FAITHFUL" ? "A referee model that took no part in the run finds the definitions and statement faithful to the source."
       : "The referee raises concerns about the faithfulness of the formal statement; see the review." };
-  if (step.event === "report") return { t: step.elapsed_seconds, role: "captain", title: step.pdf ? "Report written" : "Report incomplete",
+  if (step.event === "report") return { t: step.elapsed_seconds, role: "orchestrator", title: step.pdf ? "Report written" : "Report incomplete",
     text: step.pdf ? "The LaTeX report presents each statement and proof in mathematical notation beside its Lean code; the referee checked each statement against the code."
       : (step.problems || []).join(" ") };
-  if (step.event === "lemma_handback" && manualSplit(step)) return { t: step.elapsed_seconds, role: "decision",
+  if (step.event === "lemma_escalation" && manualSplit(step)) return { t: step.elapsed_seconds, role: "decision",
     title: `${step.lemma} split by hand`,
     text: `${step.diagnosis || ""} ${plural(step.new_lemmas.length, "lemma")} added by hand.` };
-  if (step.event === "lemma_handback") return { t: step.elapsed_seconds, role: "captain",
-    title: `Hand-back of ${step.lemma}: ${step.action}`,
+  if (step.event === "lemma_escalation") return { t: step.elapsed_seconds, role: "orchestrator",
+    title: `Escalation of ${step.lemma}: ${step.action}`,
     text: (step.diagnosis || "") + ((step.manual_lemmas || []).length
       ? ` Added to this split by hand: ${plural(step.manual_lemmas.length, "lemma")}.` : "") };
-  if (step.event === "conflict") return { t: step.elapsed_seconds, role: "captain",
+  if (step.event === "conflict") return { t: step.elapsed_seconds, role: "orchestrator",
     title: `Conflict at ${step.lemma}: ${step.action}`, text: `${(step.stuck || []).length} stuck lemmas. ${step.diagnosis || ""}` };
-  if (step.event === "backjump") return { t: step.elapsed_seconds, role: "captain",
+  if (step.event === "backjump") return { t: step.elapsed_seconds, role: "orchestrator",
     title: `Backjump to ${step.lemma}`,
     text: `The orchestrator restates ${step.lemma} and retracts ${(step.retracted || []).length} lemmas below it. ${step.diagnosis || ""}` };
-  if (step.event === "clause_learned") return { t: step.elapsed_seconds, role: "captain",
+  if (step.event === "clause_learned") return { t: step.elapsed_seconds, role: "orchestrator",
     title: `Clause learned (${step.clause_kind})`, text: step.fact || "" };
-  if (step.event === "replan") return { t: step.elapsed_seconds, role: "captain", title: "Orchestrator revises the sketch",
+  if (step.event === "replan") return { t: step.elapsed_seconds, role: "orchestrator", title: "Orchestrator revises the sketch",
     text: "Some lemmas were not proved within budget; the orchestrator writes a new decomposition." };
   return null;
 }
@@ -975,8 +975,8 @@ for (const step of steps) {
   const entry = describe(step);
   if (entry) events.push({ ...entry, step });
 }
-const solverStart = e => e.step?.kind === "model_call" && e.step.lemma != null ? 1 : 0;
-events.sort((a, b) => a.t - b.t || solverStart(a) - solverStart(b) || (a.step?.index ?? -1) - (b.step?.index ?? -1));
+const proverStart = e => e.step?.kind === "model_call" && e.step.lemma != null ? 1 : 0;
+events.sort((a, b) => a.t - b.t || proverStart(a) - proverStart(b) || (a.step?.index ?? -1) - (b.step?.index ?? -1));
 
 function renderLog() {
   document.getElementById("log").innerHTML = events.map((e, i) =>
@@ -1118,17 +1118,17 @@ function openNode(node) {
        <div class="tagblock"><span class="tagname">informal proof</span><div class="prose">${mathHTML(problem.informal_proof || "")}</div></div>`);
   }
   if (node.kind === "root") {
-    return showDrawer(summaryHead("Orchestrator", `<span>model <b>${escapeHTML(TRACE.models?.orchestrator)}</b></span>`, "captain"),
+    return showDrawer(summaryHead("Orchestrator", `<span>model <b>${escapeHTML(TRACE.models?.orchestrator)}</b></span>`, "orchestrator"),
       `<p>The orchestrating model. It formalizes, judges, and plans the proof itself, and delegates the
-       read-back to the auditor and each lemma to ${cfg.workers ?? "several"} parallel solvers.</p>
-       ${stepList(callsByRole("captain"))}`);
+       read-back to the checker and each lemma to ${cfg.workers ?? "several"} parallel provers.</p>
+       ${stepList(callsByRole("orchestrator"))}`);
   }
   if (node.kind === "lemma") {
     const statement = node.statement || (finalSketch?.lemmas || []).find(l => lemmaName(l) === node.lemma);
-    const direction = eventsOf("lemma_direction").filter(d => d.lemma === node.lemma).at(-1);
-    return showDrawer(summaryHead(`<code>${escapeHTML(node.lemma)}</code>`, `<span>${plural(calls.filter(c => c.lemma === node.lemma).length, "solver call")}</span>`, "solver"),
+    const guidance = eventsOf("lemma_guidance").filter(d => d.lemma === node.lemma).at(-1);
+    return showDrawer(summaryHead(`<code>${escapeHTML(node.lemma)}</code>`, `<span>${plural(calls.filter(c => c.lemma === node.lemma).length, "prover call")}</span>`, "prover"),
       `${statement ? `<div class="tagblock"><span class="tagname">statement</span>${leanHTML(statement)}</div>` : ""}
-       ${direction?.direction ? `<div class="tagblock"><span class="tagname">direction · ${escapeHTML(roleName(direction.source || "captain"))}</span><div class="prose">${mathHTML(direction.direction)}</div></div>` : ""}
+       ${guidance?.guidance ? `<div class="tagblock"><span class="tagname">guidance · ${escapeHTML(roleName(guidance.source || "orchestrator"))}</span><div class="prose">${mathHTML(guidance.guidance)}</div></div>` : ""}
        ${node.win ? `<div class="tagblock"><span class="tagname">kept proof · ${winnerText(node.win)}</span>${leanHTML(node.win.proof || "")}</div>` : ""}
        ${stepList(steps.filter(s => s.lemma === node.lemma))}`);
   }

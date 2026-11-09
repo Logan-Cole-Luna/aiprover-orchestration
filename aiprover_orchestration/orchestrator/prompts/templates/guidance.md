@@ -1,4 +1,4 @@
-Below is the task a Lean prover receives for the lemma `{lemma_name}`: the informal statement with the Lean setting, the fixed Lean statement, and the source's informal proof of the main result. Write the informal proof of the lemma `{lemma_name}` that you, as captain, give the prover as its direction.
+Below is the task a Lean prover receives for the lemma `{lemma_name}`: the informal statement with the Lean setting, the fixed Lean statement, and the source's informal proof of the main result. Write the informal proof of the lemma `{lemma_name}` that you, as orchestrator, give the prover as its guidance.
 
 Requirements:
 - Numbered steps that a Lean proof can follow in order, in plain mathematical language.

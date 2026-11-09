@@ -1,4 +1,4 @@
-# Shell environment of the aiprover-captain skill. Shell state does not
+# Shell environment of the aiprover-orchestrator skill. Shell state does not
 # persist between commands, so every command sources this file first:
 #     . <skill directory>/scripts/env.sh
 # It defines the repository locations and the functions that record a run in
@@ -19,9 +19,9 @@ else HARNESS=$ROOT/AIProver; fi
 AIP=$HARNESS/AIProver_plugin/bin/aiprover
 WS=$ROOT/orchestration_workspace
 JOBS=$("$AIP" config --shell | sed -n 's/^AIP_WORK_ROOT=//p')/jobs
-# The lemma solver: AIProver jobs, or Claude subagents when ./setup configured no model server
+# The lemma prover: AIProver jobs, or Claude subagents when ./setup configured no model server
 # (endpoint mode none).
-SOLVER=$(python3 -c 'import sys, tomllib; print("claude" if tomllib.load(open(sys.argv[1], "rb"))["endpoint"].get("mode") == "none" else "aiprover")' \
+PROVER=$(python3 -c 'import sys, tomllib; print("claude" if tomllib.load(open(sys.argv[1], "rb"))["endpoint"].get("mode") == "none" else "aiprover")' \
     "$ROOT/orchestration_plugin/endpoint.toml" 2>/dev/null || echo aiprover)
 
 # Brings the model server up as the harness reaches it: SSH master and tunnel when the endpoint
@@ -32,37 +32,37 @@ endpoint_up() {
 }
 
 # Creates results/<run>/ and temp/<run>/ and writes the trace header.
-# Arguments: run id, problem row (JSON file), theorem name, captain model.
+# Arguments: run id, problem row (JSON file), theorem name, orchestrator model.
 trace_start() {
-    local run=$1 problem=$2 theorem=$3 captain=$4
+    local run=$1 problem=$2 theorem=$3 orchestrator=$4
     mkdir -p "$ROOT/results/$run" "$ROOT/temp/$run"
     (cd "$ROOT" && python3 -c '
 import json, os, sys, time
 from aiprover_orchestration.orchestrator import prompts
 from aiprover_orchestration.orchestrator.config import ALGORITHM, LEAN_ENVIRONMENT
-run, problem, theorem, captain, solver_kind = sys.argv[1:]
+run, problem, theorem, orchestrator, prover_kind = sys.argv[1:]
 config = json.load(open("configs/orchestrator/aiprover_vista_served.json"))
-solver = {**config.pop("agents")["solver"], "config": os.environ["AIPROVER_CONFIG"]}
-if solver_kind == "claude":
-    solver = {"backend": "claude_code", "model": "sonnet"}
+prover = {**config.pop("agents")["prover"], "config": os.environ["AIPROVER_CONFIG"]}
+if prover_kind == "claude":
+    prover = {"backend": "claude_code", "model": "sonnet"}
 print(json.dumps({
     "run_id": run,
     "problem": json.load(open(problem)),
     "theorem_name": theorem,
-    "models": {"orchestrator": captain, "worker": solver_kind},
-    "agents": {"captain": {"backend": "claude_code", "model": captain},
-               "solver": solver},
+    "models": {"orchestrator": orchestrator, "worker": prover_kind},
+    "agents": {"orchestrator": {"backend": "claude_code", "model": orchestrator},
+               "prover": prover},
     "config": config,
     "algorithm": ALGORITHM,
     "lean_environment": LEAN_ENVIRONMENT,
-    "system_prompts": {"captain": prompts.CAPTAIN_SYSTEM,
-                       "auditor": prompts.auditor_system(),
+    "system_prompts": {"orchestrator": prompts.ORCHESTRATOR_SYSTEM,
+                       "checker": prompts.checker_system(),
                        "reviewer": prompts.REVIEWER_SYSTEM,
                        "writer": prompts.WRITER_SYSTEM},
-    "driver": "aiprover-captain skill",
+    "driver": "aiprover-orchestrator skill",
     "started": time.strftime("%Y-%m-%dT%H:%M:%S"),
     "time": int(time.time()),
-}))' "$run" "$problem" "$theorem" "$captain" "$SOLVER") > "$ROOT/results/$run/trace.jsonl"
+}))' "$run" "$problem" "$theorem" "$orchestrator" "$PROVER") > "$ROOT/results/$run/trace.jsonl"
 }
 
 # Appends one step. Arguments: run id, then jq options and a filter that
@@ -95,7 +95,7 @@ traced_check() {
     return $verdict
 }
 
-# Records a finished AIProver job as a solver step. render fills in each
+# Records a finished AIProver job as a prover step. render fills in each
 # sample's ending, check, Lean file and session from the job directory.
 # Arguments: run id, stage, lemma name, job id, round.
 traced_job() {
@@ -107,7 +107,7 @@ traced_job() {
         --rawfile prompt "$JOBS/$job/problem.txt" \
         --slurpfile result "$report" '$result[0] as $r | {
             kind: "model_call", stage: $stage, label: ($lemma + "/aiprover"),
-            role: "solver", backend: "aiprover", model: "aiprover",
+            role: "prover", backend: "aiprover", model: "aiprover",
             lemma: $lemma, round: $round, aiprover_job: $job,
             prompt: $prompt, response: ($r.best.status // "empty"),
             seconds: ([$r.samples[].elapsed_sec // 0] | max),
@@ -119,7 +119,7 @@ traced_job() {
         | join(", "))' "$report"
 }
 
-# Records a subagent call (auditor, reviewer, writer). Arguments: run id,
+# Records a subagent call (checker, reviewer, writer). Arguments: run id,
 # stage, label, role, model, prompt file, reply file.
 traced_subagent() {
     local run=$1 stage=$2 label=$3 role=$4 model=$5

@@ -1,13 +1,13 @@
-"""Theorem proving with open steps (`Config.gaps`, `Config.approaches`,
-`Config.captain_first`).
+"""Theorem proving with open steps (`Config.open_subgoals`, `Config.approaches`,
+`Config.orchestrator_first`).
 
-A proof attempt may contain steps that no one can yet prove. The captain
+A proof attempt may contain steps that no one can yet prove. The orchestrator
 drafts several approaches, each with its gaps named, and a judge orders them
 by evidence: a gap that is false, or as strong as the theorem, rules its
 approach out. The sketch names each open step `gap_...`. Routine lemmas are
-proved first, by the captain where a short proof suffices and by AIProver
+proved first, by the orchestrator where a short proof suffices and by AIProver
 otherwise; a gap receives `GAP_ATTEMPTS` jobs once every routine lemma is
-proved, after which its hand-back may split it into smaller steps. A sketch
+proved, after which its escalation may split it into smaller steps. A sketch
 the judge still rejects after its repairs passes to the next approach. When
 only gaps remain, the run records a checkpoint, a file in which Lean has
 checked that the theorem follows from the gap lemmas, the only statements
@@ -41,7 +41,7 @@ from ..structures import (
 logger = logging.getLogger(__name__)
 
 GAP_PREFIX = "gap_"
-# AIProver jobs a gap receives before its hand-back, which may split it.
+# AIProver jobs a gap receives before its escalation, which may split it.
 GAP_ATTEMPTS = 2
 
 
@@ -59,7 +59,7 @@ class GapStage:
             return self.draft_proof(form)
         ranked = sorted(self.result_dir.glob("approach_*.md"))
         if not ranked:
-            reply = self._captain(
+            reply = self._orchestrator(
                 prompts.APPROACHES_TEMPLATE.format(
                     count=self.config.approaches,
                     informal_statement=self.row["informal_statement"],
@@ -87,7 +87,7 @@ class GapStage:
             f'<approach name="{k + 1}">\n{draft}\n</approach>'
             for k, draft in enumerate(drafts)
         )
-        reply = self._captain(
+        reply = self._orchestrator(
             prompts.RANK_APPROACHES_TEMPLATE.format(
                 statement=form.statement, approaches=listing
             ),
@@ -134,9 +134,9 @@ class GapStage:
         logger.info("every approach rejected; returning to approach 1")
         return self._accept_sketch(sketch, self.config.max_repairs)
 
-    def captain_proofs(self, form: Formalization, sketch: Sketch) -> None:
-        """One captain call proves the routine lemmas it can prove quickly;
-        each proof must pass the same Lean check as a solver's."""
+    def orchestrator_proofs(self, form: Formalization, sketch: Sketch) -> None:
+        """One orchestrator call proves the routine lemmas it can prove quickly;
+        each proof must pass the same Lean check as a prover's."""
         pending = [
             lemma
             for lemma in sketch.lemmas
@@ -144,14 +144,14 @@ class GapStage:
         ]
         if not pending:
             return
-        reply = self._captain(
-            prompts.CAPTAIN_PROOFS_TEMPLATE.format(
+        reply = self._orchestrator(
+            prompts.ORCHESTRATOR_PROOFS_TEMPLATE.format(
                 definitions=self._own_definitions(form),
                 preamble=form.preamble,
                 lemmas=stub_listing(sketch.lemmas),
                 pending=", ".join(f"`{lemma.name}`" for lemma in pending),
             ),
-            phase="captain_proofs",
+            phase="orchestrator_proofs",
         )
         proofs = extract_named(reply, "proof")
         helpers = extract_named(reply, "helpers")
@@ -169,15 +169,15 @@ class GapStage:
                     lemma,
                     own_helpers,
                     proof,
-                    f"{lemma.name}_captain",
+                    f"{lemma.name}_orchestrator",
                 )
                 problems = [problem] if problem else []
             if problems:
-                logger.info(f"{lemma.name}: captain's proof rejected")
+                logger.info(f"{lemma.name}: orchestrator's proof rejected")
                 continue
             lemma.helpers, lemma.proof, lemma.proved = own_helpers, proof, True
-            logger.info(f"lemma {lemma.name} proved by the captain")
-            self._record_proof(lemma, "captain")
+            logger.info(f"lemma {lemma.name} proved by the orchestrator")
+            self._record_proof(lemma, "orchestrator")
 
     def reduction(self, form: Formalization, sketch: Sketch) -> dict:
         """The assembled file with only the gap lemmas left as `sorry`, and

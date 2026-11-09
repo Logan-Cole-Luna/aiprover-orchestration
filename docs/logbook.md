@@ -8,10 +8,10 @@ Theorem library (`aiprover_orchestration/library/`)
   decomposition graph, CLI and HTTP API, and role prompts.
 
 Orchestration (`aiprover_orchestration/orchestrator/`)
-- Automated formalize, audit, sketch, prove, assemble pipeline with captain,
-  auditor and solver roles; role prompts of the theorem library.
+- Automated formalize, audit, sketch, prove, assemble pipeline with orchestrator,
+  faithfulness checker and prover roles; role prompts of the theorem library.
 - Pluggable agent backends: Claude, OpenAI-compatible endpoints (local
-  vLLM, OpenAI, Hugging Face, OpenRouter), and AIProver jobs as solver.
+  vLLM, OpenAI, Hugging Face, OpenRouter), and AIProver jobs as prover.
 - AIProver integration: sample extraction and Lean gate, fallback that keeps
   the answer's own theorem under its `open` commands, helpers spliced under
   the answer's `open` commands.
@@ -25,8 +25,8 @@ Orchestration (`aiprover_orchestration/orchestrator/`)
 - Weighted session sharing across AIProver jobs (`aiprover_session_slots`):
   each job takes a share of the free sessions weighted by its lemma's failed
   attempts, so freed sessions go to the remaining, harder lemmas.
-- Hand-back to the captain after repeated failures
-  (`aiprover_handback_after`): the captain proves the lemma, splits it into
+- Escalation to the orchestrator after repeated failures
+  (`aiprover_escalation_after`): the orchestrator proves the lemma, splits it into
   new lemmas, restates it, or asks for a retry; every proposal is checked by
   Lean before it is applied, while the other lemmas keep running.
 - Libraries of verified results: runs build on earlier verified results
@@ -38,16 +38,16 @@ Orchestration (`aiprover_orchestration/orchestrator/`)
   each statement checked against its code by the referee.
 - Assembly in dependency order of the proofs, so proofs kept across a
   replan precede none of the lemmas they use.
-- Replan prompt with the solvers' failed code and the Lean errors located in
+- Replan prompt with the provers' failed code and the Lean errors located in
   it.
-- Interactive captain: skill `aiprover-captain` (`orchestration_plugin/`)
-  runs the method in Claude Code with the session's agent as captain and
-  subagents as auditor, reviewer and writer; runs are recorded in the same
+- Interactive orchestrator: skill `aiprover-orchestrator` (`orchestration_plugin/`)
+  runs the method in Claude Code with the session's agent as orchestrator and
+  subagents as faithfulness checker, reviewer and writer; runs are recorded in the same
   result layout and rendered by the same trace pages.
 - Knowledge carried across attempts on a lemma (searches, files read, last
   reasoning, code), given to later sessions as guidance and curated by the
-  captain at hand-backs (`orchestrator/knowledge.py`).
-- Captain on Opus 5.5 with high effort and a 128,000-token reply limit.
+  orchestrator at escalations (`orchestrator/knowledge.py`).
+- Orchestrator on Opus 5.5 with high effort and a 128,000-token reply limit.
 
 Model serving and infrastructure (`scripts/`, `aiprover_orchestration/server/`,
 `configs/aiprover/`)
@@ -67,7 +67,7 @@ Trace pages (`aiprover_orchestration/orchestrator/trace_view/`)
   embedding prompts, replies, Lean returns, AIProver session transcripts
   and the model's reasoning.
 - Replay as one tree per sketch, attempts stacked under each lemma,
-  hand-backs and split lemmas in place, interrupted jobs left out.
+  escalations and split lemmas in place, interrupted jobs left out.
 
 Results
 - JiatuBook BoundedArithmetic 000004 proved with the AIProver models.
@@ -77,7 +77,7 @@ Results
 - OpenAI benchmark (`openai_benchmark.md` §5): add 153, 259, 138, 268, and
   284 to `data/openai_math.jsonl` as unconditional entries, and run both
   arms with 332 as calibration.
-- Fidelity chain: give the skill route of `aiprover-captain` the probes and
+- Fidelity chain: give the skill route of `aiprover-orchestrator` the probes and
   a judge outside Claude; it currently audits with Claude subagents only.
 - Fidelity chain: prove equivalence with custom definitions through an
   AIProver job, since the automation cascade rarely bridges them.
@@ -85,7 +85,7 @@ Results
 - Nix setup: first `./setup` on a Linux device with Nix (commit the
   generated `flake.lock`); then macOS, where the AIProver harness has not
   run before (`setup.sh full` as acceptance test).
-- `aiprover-captain` skill: first end-to-end run in Claude Code on
+- `aiprover-orchestrator` skill: first end-to-end run in Claude Code on
   `JiatuBook_BoundedArithmetic_000004` with a model server up; compare
   with the pipeline's run of the same problem.
 - `utils/share_results.py` selects runs by `trace.json` and `srv_*` run
@@ -110,19 +110,18 @@ Results
 - Orchestrator runs read and extend the theorem library in place of the
   single-file libraries of `libraries/`.
 - Library search, remaining items of `docs/proposed/mathlib_search.md`:
-  retrieval before each job, captain adjudication of stated gaps (closure
+  retrieval before each job, orchestrator adjudication of stated gaps (closure
   probe), coverage triage at sketch time; evaluate items 1, 2, 5, 6 against
   the baseline table there.
 - Project upload with our own Lean meta-programs.
 - Authentication for the HTTP API.
-- Missions and milestones; several pinned Lean environments.
 
 - Render `trace.html` automatically at the end of each run.
-- Evaluate a Lean-specialized open-weights solver that fits 16 GB (for
+- Evaluate a Lean-specialized open-weights prover that fits 16 GB (for
   example Goedel-Prover-V2-8B or Kimina-Prover-Distill-8B in FP8) against
   Qwen3-4B-Instruct on `000004`.
 - Resume `jiatu_000020_sonnet_haiku` (or fork `local_000020` at `prove`
-  with another solver) to complete the 000020 attempt.
+  with another prover) to complete the 000020 attempt.
 - Vista: set the AIProver checkpoint path; run `check_rl_compat.py` on it;
   submit `scripts/submit_aiprover_vista.sh <ckpt> gh-dev 2` as a launch check,
   then on `gh`; confirm `$SCRATCH` resolves to `/scratch/11757/loganluna`
@@ -185,8 +184,8 @@ Results
   reported all targets up to date. Remedy: the package tree read-only,
   and the harness refuses `lake build|exe|update|clean` (`lake_refusal`).
   Cost: 11 failed attempts of 332 and 28 of 048 ran mostly inside the
-  window, and 8 hand-backs of 048 were rejected because the Lean gate
-  timed out (300 s), leaving those lemmas handed back without review.
+  window, and 8 escalations of 048 were rejected because the Lean gate
+  timed out (300 s), leaving those lemmas escalated without review.
 
 - Vista server jobs named `aiprover_srv` are cancelled by our account from
   outside this server (1057849 at 00:58, 1060100 at 01:38 while pending,
@@ -214,12 +213,12 @@ Results
   `vista_smoke_000004`; runs with sketch repairs or replans stop before
   assembly.
 
-- Solver calls in flight when a lemma is proved still complete and are
+- Prover calls in flight when a lemma is proved still complete and are
   billed; the timeline marks them as discarded (9 of 19 calls in
   `smoke_000004`).
-- `local_000004`: the captain restated the same failed lemma in both replans
+- `local_000004`: the orchestrator restated the same failed lemma in both replans
   instead of decomposing the induction into base and step lemmas.
-- Local solvers reference constructors without their namespace
+- Local provers reference constructors without their namespace
   (`ax_ITR_eps` for `Deriv.ax_ITR_eps`) and invent recursors
   (`Term.induction`); 16 of 45 checks failed on unknown identifiers.
 - A model call in flight when the run is terminated completes before the
@@ -255,14 +254,14 @@ Results
   boxes, no machine models or computation, and a single-session triage under
   condition `lean` (`openai_benchmark.md` §3). 284, 138, 268, and 122 are out
   of scope; 259 and its rank bound 259r are stretch problems.
-- Proposal at the milestone phase (2026-11-03): before any result of a project
-  has a run, Write paper writes a proposal from the latest milestone report
+- Proposal at the blueprint phase (2026-11-03): before any result of a project
+  has a run, Write paper writes a proposal from the latest blueprint report
   (`ProposalBuilder`, `templates/proposal.md`), checked against that report,
   so that the expert reviews the plan and its open decisions before
   formalization. It takes the paper's place and links, and the paper of the
   proved results replaces it later.
 - Projects on the page (2026-11-02): a project must be reproducible from the
-  server page alone. Research and milestone planning share one task, a Claude
+  server page alone. Research and blueprint planning share one task, a Claude
   session and a referee, and differ only in the question, so the planner needs
   no index of the paper; dependency order is then the model's reading, checked
   by the user before launch. Claims record a person's decision and Claude's
@@ -330,12 +329,12 @@ Results
   the proofs above it. Assembly time limits grow with the file (10 lines per
   second, against 22 in the slowest recorded run), and a timeout stops the run
   for a resume, since no lemma is to blame.
-- Context for long runs (2026-11-01): reference material reaches the captain
+- Context for long runs (2026-11-01): reference material reaches the orchestrator
   by retrieval. The agent option `source_dir` copies a directory into each
   tool call's project as `source/`, with an index to read first, and a short
   excerpt stays in the prompt. The copy keeps the original out of the model's
   reach. Research sessions keep notes and a current report, so that their work
-  survives a stop, and milestones run as separate short runs on one library.
+  survives a stop, and the theorems run as separate short runs on one library.
 - Interchangeable models (2026-11-05): tokens are the unit that every backend
   reports. USD is reported only where a price is known, and a USD limit counts
   unpriced hosted tokens at 100,000 per USD, the rate of 78 retained runs, with a
@@ -344,7 +343,7 @@ Results
   Codex reports tokens only at the end of a call, so its limit becomes turns at
   20 per USD, enforced by the tool server; its session files would give tokens
   per response, but they keep prompts on disk, so calls stay ephemeral. Shared
-  code lies in `agents/common.py`. The hand-back follows the orchestrator unless
+  code lies in `agents/common.py`. The escalation follows the orchestrator unless
   chosen, on any backend.
 - Model-neutral limits (2026-11-05): `max_claude_usd`, `max_claude_calls`,
   `final_claude_calls`, and `informal_claude_calls` are now `max_hosted_usd`,
@@ -357,7 +356,7 @@ Results
   informal proof of the row is withheld.
   - A row's `formal_statement` is compiled and kept as given, without an audit.
     Without one, the informal statement is formalized and audited as before.
-  - The captain drafts the informal proof that the sketch decomposes
+  - The orchestrator drafts the informal proof that the sketch decomposes
     (`stages/draft.py`, kept in `draft.md` for a resumed run).
   - The sketch judge and the final reviewer are told that the proof is the
     run's own draft: the judge assesses whether the lemmas hold, and the
@@ -372,7 +371,7 @@ Results
   of the runs built on it, their files import its root modules, and Lean finds
   its build through `LEAN_PATH`, read only under `lean/sandbox.py`.
   - Agents read generated views: statements with proofs elided, and `toc.md`.
-    Captain projects carry them in `library/`, which `lean-check` skips and
+    Orchestrator projects carry them in `library/`, which `lean-check` skips and
     refuses as a target.
   - A verified run adds one module to `Extensions` and rebuilds.
 - Session restrictions (2026-11-05): a Codex call now has the restrictions of a
@@ -417,9 +416,9 @@ Results
   H200 4.44 USD per GPU-hour (median on-demand rate across 46 providers,
   2026-10-17). The model server `aip-leanstral` uses four DGX nodes with one
   GB10 GPU each, confirmed by the system's administrators.
-- Prompt cache for directions (2026-10-30): the theorem and the setting above
-  the earlier lemmas repeat across a run's directions and form the system
-  prompt of the direction phase; the earlier lemmas differ per lemma and stay
+- Prompt cache for guidance (2026-10-30): the theorem and the setting above
+  the earlier lemmas repeat across a run's guidance and form the system
+  prompt of the guidance phase; the earlier lemmas differ per lemma and stay
   in the request, and the first call of a cold prompt finishes before the
   rest of its burst. On two long runs the per-lemma request was written to
   the cache at twice the input price and rarely read back, which cost 29 to
@@ -434,7 +433,7 @@ Results
   orchestration with Claude as prover proved it in 0.65 h for 14.23 USD. Both
   review models and the Claude judge prompts accept both sessions; Judge2
   (Bedrock) is not available on this machine. Details in `ablations.md` §7.7.
-- Failed assembly returns to the captain (2026-10-30): `#print axioms` on every
+- Failed assembly returns to the orchestrator (2026-10-30): `#print axioms` on every
   lemma names the lemmas responsible; their proofs are withdrawn and handed
   back at once, for up to `max_assembly_rounds` rounds. A failure with no
   responsible lemma goes to a replan.
@@ -443,10 +442,10 @@ Results
   the query server and written up as one paper from their informalizations
   (writer Sonnet, reviewer Opus by default). Project files live in
   `data/projects/`, outside the repository.
-- A failed assembly returns to the captain instead of ending the run, for
+- A failed assembly returns to the orchestrator instead of ending the run, for
   up to `max_assembly_rounds` (3) rounds. `#print axioms` on every lemma
   names the lemmas whose own proofs cause the failure; their proofs are
-  withdrawn and each goes to a hand-back at once, while the other lemmas
+  withdrawn and each goes to an escalation at once, while the other lemmas
   stay proved. A failure no lemma causes goes to a replan. Event
   `assembly_rejected`, restored on resume.
 - A resumed run records `lemma_reused` for each restored proof of the
@@ -456,7 +455,7 @@ Results
   a proof that uses it is discarded instead (JiatuBook 000003,
   `evalTerm_subst`, refuted at 31 h).
 - A replan reinstates a dropped lemma that the proof of a kept lemma uses,
-  with `aiprover_handback_after` further attempts (`structures.reinstated`,
+  with `aiprover_escalation_after` further attempts (`structures.reinstated`,
   decision `lemma_reinstated`). On JiatuBook 000003 the replan at 17.4 h
   dropped `evalTerms_vars` and `evalTerm_subst` (budgets spent), which
   discarded the proofs of `sound_congr`, `sound_ax_comp`, `sound_ax_lrn_s`,
@@ -477,11 +476,11 @@ Results
   completed about 7 turns per hour; on JiatuBook 000003, 66 of 94 failed
   sessions reached the 3-hour limit without an answer.
 - `aiprover_condensed_prompt` is on by default: a directed job receives
-  the direction and the lemmas it names in place of the source's proof,
+  the guidance and the lemmas it names in place of the source's proof,
   which reduces prompts of about 45k tokens per request on the DGX.
-- The captain's hand-back output limit
-  (`configs/orchestrator/captain_phases.json`) is 64000 tokens: a
-  hand-back on a lemma of 10k characters (004,
+- The orchestrator's escalation output limit
+  (`configs/orchestrator/orchestrator_phases.json`) is 64000 tokens: a
+  escalation on a lemma of 10k characters (004,
   `h10q_tests_construction_system_main`) exceeds 32000.
 - The repository stores no file in Git LFS, and run records in git are
   limited to Lean files, summaries, reports and informalizations (LaTeX
@@ -493,7 +492,7 @@ Results
   without its name) over the whole run, live and on resume; a replan may
   not state an unproved proposition whose budget is spent (rejected like a
   refuted one), and the replan prompt marks such lemmas `BUDGET SPENT`. A
-  captain's retry still extends the budget by `aiprover_handback_after`.
+  orchestrator's retry still extends the budget by `aiprover_escalation_after`.
 - Tests use the standard library's `unittest` (`tests/`), so they run in
   every environment of the repository without a new package.
 - Device setup uses Nix (flake, uv2nix virtualenvs) linked into
@@ -501,10 +500,10 @@ Results
   shell; elan stays outside Nix (`~/.elan`), where the harness expects it.
   The leanfinder edit of the VM's lean-lsp-mcp is not carried over: it is
   part of the experimental Mathlib index, not of AIProver's setup.
-- The `aiprover-captain` skill makes no programmatic model calls (no
+- The `aiprover-orchestrator` skill makes no programmatic model calls (no
   `claude -p`, no orchestrator driver, no `aiprover expand`,
   `backtranslate` or `ask`); blind roles are subagents of the session.
-  Solvers are AIProver jobs only; hand-backs are the captain's.
+  Provers are AIProver jobs only; escalations are the orchestrator's.
 - Skill runs record their trace as `trace.jsonl`, appended line by line
   from the shell; `Trace.load` reads it, so no trace writer process is
   needed.
@@ -512,7 +511,7 @@ Results
   and `informal_claude_calls`, stored in existing traces, although they
   now count calls to every hosted model.
 - Explicit Claude prompt caching (a `cache_control` block on the stable
-  prefix of a hand-back) is deferred: hand-backs of a run are often more
+  prefix of an escalation) is deferred: escalations of a run are often more
   than the cache lifetime apart.
 - Decode settings are measured on one allocation per arm set
   (`bench_serve_vista.sbatch`) before the serve defaults change; the
@@ -563,7 +562,7 @@ Results
   carry a background halo so they stay legible over edges.
 - Page templates in `orchestrator/` hold no run data; opened directly they
   display a notice pointing to `results/<run_id>/`.
-- Replay positions are logical (stage, lemma, solver, round); time drives
+- Replay positions are logical (stage, lemma, prover, round); time drives
   only when nodes appear and finish, so parallel chains run side by side.
 - Both pages share `trace_common.css`/`trace_common.js`, inlined by the
   generator so each output file stays standalone.
@@ -571,7 +570,7 @@ Results
 - Subagent backends use the OpenAI chat schema so that a local server, a
   hosted open-weights model and a proprietary model are interchangeable;
   the orchestrator package stays standard-library only (HTTP via urllib).
-- Local solver: Qwen3-4B-Instruct-2507 (Apache-2.0, already cached, 8 GB in
+- Local prover: Qwen3-4B-Instruct-2507 (Apache-2.0, already cached, 8 GB in
   bf16, non-reasoning instruct model with reliable tag-format following).
   8B Lean provers need about 16 GB in bf16 and exceed the card without
   quantization.
@@ -582,13 +581,13 @@ Results
 
 - Resume state is derived from the trace rather than a separate checkpoint
   file, so the trace remains the single record of a run.
-- Captain calls on `claude` time out after 2400 s (`config.json`); a
+- Orchestrator calls on `claude` time out after 2400 s (`config.json`); a
   sketch for `000020` exceeded the 900 s default.
 
 - AIProver runs with its own configuration file through `$AIPROVER_CONFIG`;
   the plugin is used in place and not copied.
 - Model on Vista, everything else on the VM: compute nodes have no egress
-  (captain calls) and the harness runs on the calling machine.
+  (orchestrator calls) and the harness runs on the calling machine.
 - Two-node TP: the bf16 checkpoint (~222 GiB) exceeds 2 x 95 GiB HBM; the
   surplus weights per rank are offloaded to Grace memory by default, which
   preserves the measured numerics; fp8 is an option.
@@ -609,7 +608,14 @@ Results
 
 ## Done
 
-- Setting `disproof` (prove mode, off by default): the captain first judges
+- Standard vocabulary (2026-11-08): orchestrator (was captain), prover
+  (solver), faithfulness checker (auditor), escalation (hand-back), guidance
+  (direction), vacuity check (setting check), open subgoals (gaps setting),
+  blueprint and theorems to prove (milestones). Records keep their names;
+  `utils/vocabulary.py` translates former names on reading, and all 117
+  recorded runs restore the same resume state as before.
+
+- Setting `disproof` (prove mode, off by default): the orchestrator first judges
   whether the statement holds (`side.md`); judged false, the run's theorem
   becomes the statement's negation, and a verified run ends as `disproved`.
 
@@ -631,7 +637,7 @@ Results
 - The user guide shows the open lemmas and claims of a project (Figure 14), and its glossary defines an open lemma.
 - Fidelity chain extended (`orchestrator/fidelity.py`, `stages/formalize.py`):
   Lean probes for contradictory hypotheses, closure by automation, and
-  counterexamples; optional `judge` role whose verdict joins the captain's;
+  counterexamples; optional `judge` role whose verdict joins the orchestrator's;
   optional `formalizer` role whose reference statement Lean compares with the
   formal statement in both directions.
 
@@ -649,7 +655,7 @@ Results
   a user guide. White, warm, and dark themes share `server/static/palette.css`
   and `theme.js` with the trace pages, which receive the theme through their link.
 - Replay filter (2026-10-30): "Successful only" on the replay page lays out the
-  tree with the attempts behind kept proofs, and the hand-backs that proved or
+  tree with the attempts behind kept proofs, and the escalations that proved or
   split a lemma, alone. The page opens on the completed tree, and Play restarts
   it from the beginning.
 - Machine limits (2026-10-30): `limits.py` holds `flock` slots in a directory
@@ -728,18 +734,18 @@ Results
   `paths.locate`); the shared server's user page rejects Claude roles
   (`QUERY_SERVER_PER_USER`). Tests in `tests/test_per_user.py`.
 
-- Query server (2026-10-22): a hand-back role on the run form sets the
-  Claude model of the captain's `handback` phase (for example Sonnet for
-  hand-backs under an Opus captain); and a run can start a new library
+- Query server (2026-10-22): an escalation role on the run form sets the
+  Claude model of the orchestrator's `escalation` phase (for example Sonnet for
+  escalations under an Opus orchestrator); and a run can start a new library
   (`new_library`) that it extends with its result. Tests in
   `tests/test_stores.py`; server restarted, running runs adopted.
 
 - 004 stopped (2026-10-22 19:15) to free the DGX for other runs; it
   resumes from its trace with all 62 open lemmas unchanged.
 
-- Replay colours (2026-10-22): a lemma proved by the captain (hand-back or
-  conflict analysis), and the hand-back that proved or split it, are drawn
-  in the captain's blue instead of the green of solver proofs.
+- Replay colours (2026-10-22): a lemma proved by the orchestrator (escalation or
+  conflict analysis), and the escalation that proved or split it, are drawn
+  in the orchestrator's blue instead of the green of prover proofs.
 
 - Verdict colours (2026-10-22): a REVISE verdict, of the faithfulness
   judge or of the sketch judge, is drawn in amber with a dashed border and
@@ -753,9 +759,9 @@ Results
   header. Test `test_named_argument_in_statement`; 75 tests pass.
 - Jiatu 000000 and 000001 (2026-10-22) ended with status failed when their
   first replan found the served Claude call budget (`max_claude_calls` 10)
-  spent: 5 setup calls and one lemma direction per lemma. With
-  `aiprover_attempts_per_lemma` 1 below `aiprover_handback_after` 2, no
-  failed lemma reached a hand-back. 000000 proved 7 of 9 lemmas, 000001
+  spent: 5 setup calls and one lemma guidance per lemma. With
+  `aiprover_attempts_per_lemma` 1 below `aiprover_escalation_after` 2, no
+  failed lemma reached an escalation. 000000 proved 7 of 9 lemmas, 000001
   3 of 5.
 - Served defaults (2026-10-23, `configs/orchestrator/aiprover_vista_served.json`):
   `max_claude_calls` 60, `aiprover_attempts_per_lemma` 5, `max_replans` 2,
@@ -800,16 +806,16 @@ Results
   trace on the `_rep` split as `new_definitions` and extra `new_lemmas`,
   marked `manual_additions`. The statements compile with the `_rep_block`
   context; trace backup in temp/rewind_004_library/. Purpose: a later
-  hand-back of `_rep_block` defines its constraint family from these
+  escalation of `_rep_block` defines its constraint family from these
   operations instead of encoding it at the level of slots and codes.
 
-- Definitions in hand-back splits (2026-10-22): a split may define the
+- Definitions in escalation splits (2026-10-22): a split may define the
   object a lemma asks for and state its properties as separate lemmas
   (`<split_definitions>`, `Lemma.definitions`, `cdcl.adopt`,
   `stub_listing(before=...)`, `carry_definitions`). Motivated by 004's two
   open lemmas (`_point_design`, `_rep`), each of which existentially
   quantifies a computable constraint family with all its soundness
-  properties; the captain's clause asked to fix the family as a `def`,
+  properties; the orchestrator's clause asked to fix the family as a `def`,
   which a split could not express. Test
   `test_split_with_definitions_and_replay`; 72 tests pass. 004 restarted at
   13:19 to load it; its running job resumed.
@@ -829,7 +835,7 @@ Results
   `python3 -m aiprover_orchestration.orchestrator.reports.informal
   results/<run_id>`.
 
-- Hand-back prompt (2026-10-21): a statement in an encoding with little
+- Escalation prompt (2026-10-21): a statement in an encoding with little
   Mathlib API (germs over `Filter.hyperfilter`) is to be split or restated
   as `Filter.Eventually` statements about ordinary functions, connected to
   germs by `Filter.Germ.coe_eq`, `liftPred_coe` and `liftRel_coe`. 004
@@ -839,64 +845,64 @@ Results
   returned to a model now names the enclosing declaration and quotes the
   line with the column marked (`CheckResult.source`, set by `check_text`),
   instead of a position in an assembled file the model never sees; the
-  captain's split of `h10q_tests_construction_system_main` in 004 failed
+  orchestrator's split of `h10q_tests_construction_system_main` in 004 failed
   twice on one extra parenthesis reported as `2103:127`. New option
   `aiprover_condensed_prompt` (off by default): a directed job omits the
-  source's proof and keeps only the earlier lemmas its direction names; in
+  source's proof and keeps only the earlier lemmas its guidance names; in
   004 the job prompt of `_rep` was 131,000 characters (51,000 context,
   48,000 source proof). Enabled for 004, restarted at 15:42; its four
   running jobs resumed their sessions with the original context.
 
-- 004, manual application of a captain split (2026-10-21 14:32): the
-  hand-back on `h10q_tests_construction_system_main` split it into five
+- 004, manual application of an orchestrator split (2026-10-21 14:32): the
+  escalation on `h10q_tests_construction_system_main` split it into five
   lemmas (`_root`, `_rec`, `_comb3`, `_point`, `_rep`) with a 68-line proof
   from them; both replies were rejected for one extra closing parenthesis at
   the end of `_rep`. With that parenthesis removed the sketch compiled
   (`temp/manual_split/check.lean`). The run was stopped, the split and the
-  proof appended to the trace as a `lemma_handback` (with a `manual_fix`
+  proof appended to the trace as a `lemma_escalation` (with a `manual_fix`
   note) and a `lemma_proved` decision (backup `temp/rewind_004_split/`),
   and the run resumed with the five lemmas as AIProver jobs.
-- Hand-back effort limits (2026-10-21): hand-back calls are capped at 3 USD
-  and 60 turns (`configs/orchestrator/captain_phases*.json`; 95% of 156
-  earlier hand-backs, mostly short fixes of the solvers' code, cost under
+- Escalation effort limits (2026-10-21): escalation calls are capped at 3 USD
+  and 60 turns (`configs/orchestrator/orchestrator_phases*.json`; 95% of 156
+  earlier escalations, mostly short fixes of the provers' code, cost under
   1.63 USD). A call stopped at its spend, turn or reply-length limit raises
   `AgentLimitReached`, is billed and not retried, and is followed by one
   call without the direct-proof action, so the lemma is split, restated,
   retried or refuted. The prompt reserves a direct proof for a short fix or
   a routine argument. In 004, the
-  hand-backs of `h10q_tests_construction_system_main` (10,169 characters)
+  escalations of `h10q_tests_construction_system_main` (10,169 characters)
   each ran for up to 31 minutes and 195,000 output tokens and exhausted the
   Claude session limit.
 - Citing earlier lemmas (2026-10-21, `aiprover_cite_lemmas`, on by
   default): the earlier lemmas in an AIProver job's fixed context sit under
   a header stating that they are proved elsewhere and are facts to cite,
   not goals; the job's guidance opens with the full statements of the
-  earlier lemmas its direction names; the direction prompt asks for cited
-  lemmas to be named, and the solver prompt states that a lemma ending in
+  earlier lemmas its guidance names; the guidance prompt asks for cited
+  lemmas to be named, and the prover prompt states that a lemma ending in
   `sorry` is never to be proved again (`prompts.EARLIER_LEMMAS_HEADER`,
   `CITED_LEMMAS`, `_cited_lemmas`). Motivation: sessions re-proved context
   lemmas in their own files, which dropped the fixed setting, and re-derived
   facts inline.
 
-- Lemma directions (2026-10-20, `aiprover_direction`, on by default): before
-  a statement's first AIProver job the captain writes the lemma's informal
+- Lemma guidance (2026-10-20, `aiprover_guidance`, on by default): before
+  a statement's first AIProver job the orchestrator writes the lemma's informal
   proof, which every job on it receives ahead of the source's proof
-  (`prompts/templates/direction.md`, `_directed_proof`; decision
-  `lemma_direction`, rebuilt on resume; tool-free captain phase
-  `direction/`). Adopted from a paired comparison on 12 lemmas that failed
+  (`prompts/templates/guidance.md`, `_directed_proof`; decision
+  `lemma_guidance`, rebuilt on resume; tool-free orchestrator phase
+  `guidance/`). Adopted from a paired comparison on 12 lemmas that failed
   their first job (one 1 h session per arm, same statement and setting):
-  with the direction 2 of 6 completed pairs verified, without it 0. The
+  with the guidance 2 of 6 completed pairs verified, without it 0. The
   comparison continues to all 12 pairs. A run uses one extra Claude call
-  per lemma statement. `aiprover_direction` selects the source: `captain`
+  per lemma statement. `aiprover_guidance` selects the source: `orchestrator`
   (default, the call above), `sketch` (the comments above the lemma in the
-  captain's reply that stated it; no call), or empty for none.
+  orchestrator's reply that stated it; no call), or empty for none.
 
 - Trace pages (2026-10-20): an AIProver job's Lean checks and
   `lemma_proved` decision are attributed to it from its
   `aiprover_job_started` decision on, since the job's own step is recorded
   when its last session ends (`jobStartIndex`, `trace_common.js`). A job
   whose session proved its lemma before the others were cancelled shows as
-  the winning job, not as after the proof or interrupted. The captain's role
+  the winning job, not as after the proof or interrupted. The orchestrator's role
   colour in the editorial theme is blue, distinct from the failure red, and
   the root node is filled neutrally.
 
@@ -911,7 +917,7 @@ Results
 
 - GPU group `cpu` on the query server (`server/model_servers.py`): a group
   without a model server, for runs whose roles all use Claude or hosted
-  models (for example Claude as captain and subagent). Submissions to it
+  models (for example Claude as orchestrator and subagent). Submissions to it
   that select AIProver for any role are rejected; its runs have their own
   run slots and never wait for a Vista or DGX server.
 
@@ -949,7 +955,7 @@ Results
   the previous code.
 - Theorem library with CLI and HTTP API; Haiku smoke test passed.
 
-- `orchestration.md`: design of the captain/solver loop (sketch, hand-back,
+- `orchestration.md`: design of the orchestrator/prover loop (sketch, escalation,
   replan, subagent information flow, assembly), failure
   analysis, contributions, ranked future work.
 - Resumable AIProver sessions: `aiprover resume <job>` continues cut-off
@@ -963,11 +969,11 @@ Results
 - Trace walkthrough, graph and replay pages for `smoke_000004`.
 - Pluggable agent layer; local vLLM serving; run `local_000004`.
 - Resumable runs with automatic restart after infrastructure failures.
-- AIProver harness provisioned and integrated as the `aiprover` solver backend.
+- AIProver harness provisioned and integrated as the `aiprover` prover backend.
 - Orchestration VM provisioned for the AIProver model on Vista; server job and
   configurations written.
 - `vista_smoke_000004` proved and verified with the AIProver base model on
-  Vista (Sonnet 5.5 captain).
+  Vista (Sonnet 5.5 orchestrator).
 - Query server with run queue, live progress and Claude call budget.
 - Per-run model choice for orchestrator and subagent (Claude model and
   reasoning level, or AIProver trained/base) on the query server page.
@@ -977,7 +983,7 @@ Results
 - Test suite `tests/` (50 tests, about 100 s; `python3 -m unittest discover
   -s tests -t .`): Lean text filters, LaTeX filters, the CDCL tree and
   clauses, replay of every trace in `results/`, the attempt budget, the
-  AIProver phase with a fake solver and real Lean, hand-back and conflict
+  AIProver phase with a fake prover and real Lean, escalation and conflict
   analysis with scripted replies, termination, the SQLite stores and the
   trace writer. Lean tests are skipped without the workspace.
 - Termination: SIGTERM and SIGINT set `agents.base.STOPPING`. Model calls
@@ -990,7 +996,7 @@ Results
   seconds.
 - Attempt budget per statement over the run (`ResumeState.attempts`,
   `count_attempt`, `load_attempts`), applied at sketch acceptance, split,
-  restate and backjump; chat-solver prove phases count (`lemma_failed`).
+  restate and backjump; chat-prover prove phases count (`lemma_failed`).
   Of 11 replans in `results/`, 9 stated a failed lemma again unchanged
   (048: 12 lemmas at 5 attempts each). Replay of the 38 traces changes only
   004, where two lemmas state `Primrec (fun a : ℤ => -a)` under different
@@ -999,11 +1005,11 @@ Results
   `\write18` is caught.
 - `stages/aiprover.py` (1,302 lines, one 760-line function of closures)
   split into `stages/aiprover.py` (812: scheduling, jobs, the Lean gate;
-  shared state in `Phase`) and `stages/handback.py` (441: hand-back,
+  shared state in `Phase`) and `stages/escalation.py` (441: escalation,
   conflict analysis, backjump). One proof check for chat chains, AIProver
-  samples and captain proofs (`Orchestration._check_proof`), one
-  `lemma_proved` record (`_record_proof`), the captain's view of session
-  notes (`_for_captain`), and the trace record of a sample
+  samples and orchestrator proofs (`Orchestration._check_proof`), one
+  `lemma_proved` record (`_record_proof`), the orchestrator's view of session
+  notes (`_for_orchestrator`), and the trace record of a sample
   (`agents.aiprover.sample_record`).
 
 ## 2026-10-16: Code audit of `aiprover_orchestration/`
@@ -1017,12 +1023,12 @@ Results
   the location of each "declaration uses 'sorry'" warning (`sorry_after`).
   The library verifier rejects a submission whose own module uses `sorry`
   (a sketch's `sorryAx` comes only from its imported theorems). Lemma gates
-  (AIProver samples, chat solvers, hand-back proofs) reject a compiled proof
+  (AIProver samples, chat provers, escalation proofs) reject a compiled proof
   that uses `sorry` after the stubs, e.g. through `stop`.
 - AIProver helpers are renamed to `<lemma>_<name>` before the Lean gate,
   and accepted under the sketch lock only if no other proved lemma declares
   the same names, so helpers of different lemmas never collide in the
-  assembled file; hand-back helpers are checked the same way. A sample no
+  assembled file; escalation helpers are checked the same way. A sample no
   longer proves a lemma retracted by a backjump while Lean ran.
 - AIProver phase: ends only after the conflict watcher and the rebalancer
   have returned, and continues with work an analysis in progress submitted;
@@ -1057,8 +1063,8 @@ Results
   `DECL_START`, `declarations`, `declaration_names`), `forbidden_problems`,
   `stub_listing`, `recorded_lemmas` (resume reads recorded statements
   verbatim), `cdcl.insert_split` and `cdcl.retract` for live run and
-  resume, `unchanged_names` for proof reuse, `_captain_repairs` and
-  `_restated_lemma` for hand-back and conflict analysis, `LatexBuilder`
+  resume, `unchanged_names` for proof reuse, `_orchestrator_repairs` and
+  `_restated_lemma` for escalation and conflict analysis, `LatexBuilder`
   for the report and the informalization, `utils/sqlite.SqliteStore` for
   the job store and the library, `utils/files.write_atomic`, and
   `agents/base` (`RETRYABLE_STATUS`, `retry_after_seconds`, `add_usage`).
@@ -1066,7 +1072,7 @@ Results
 ## 2026-10-16: Conflict-driven learning (branch `cdcl-learning`)
 
 - Diagnosis on 004 (summary at 10:04): 118 lemmas, 76 proved (57 by the
-  captain, 19 by AIProver); 289 sessions, 10 verified (3.5%), 219 ended by
+  orchestrator, 19 by AIProver); 289 sessions, 10 verified (3.5%), 219 ended by
   time or turn limit. Sessions searched Mathlib for the run's own
   declarations, which existed only as text in `problem.txt`; the run-wide
   Mathlib map then listed `ratHeight` and `RankOneHyp` as absent. The core
@@ -1076,7 +1082,7 @@ Results
 - `orchestrator/cdcl.py`: learned clauses (`ClauseStore`, rebuilt from the
   trace), conflict detection at the nearest decision with
   `cdcl_conflict_leaves` (3) stuck leaves or one refuted, conflict analysis
-  by the captain (`templates/conflict.md`), backjump with retraction, job
+  by the orchestrator (`templates/conflict.md`), backjump with retraction, job
   cancellation (`AIProverAgent.cancel`) and proof reuse. `Lemma.parent`
   links splits; `resume.restore_state` replays backjumps. Refuted statements
   stay excluded in every later sketch. Options `cdcl` (on) and
@@ -1091,8 +1097,8 @@ Results
   DGX config (REPL and cslib builds missing, unrelated).
 - Prompts: the sketch asks for lemmas in vocabulary with Mathlib API, with
   the expected declarations named and confirmed; the sketch judge revises
-  sparse-API encodings; hand-backs and replans list the learned clauses, and
-  a hand-back may add clauses.
+  sparse-API encodings; escalations and replans list the learned clauses, and
+  an escalation may add clauses.
 - Checks: on the 004 trace, conflict detection finds `h10q_integer_model`
   (4 stuck leaves; `h10q_uniform_height` has 2); a synthetic backjump
   replayed by `restore_state` retracts 6 lemmas and reopens the decision;
@@ -1147,7 +1153,7 @@ Results
   004: `aiprover_relevant_context` (default on; `cdcl.context_lemmas`), a
   job receives the sketch's lemmas and those split along its branch
   (late-lemma context 60 KB to 21 KB, `problem.txt` 122 KB to 85 KB);
-  extracted proofs are logged as checked; the captain system prompt states
+  extracted proofs are logged as checked; the orchestrator system prompt states
   the lemma shape on which AIProver verifies (short, few hypotheses, one
   step, Mathlib vocabulary, concrete conclusions). 004 restarted at 22:29
   (the context change resubmitted five in-progress jobs) and at 22:33
@@ -1161,67 +1167,67 @@ Results
 - Clause selection by relevance (`cdcl.ClauseStore.text`,
   `cdcl.branch_names`): run-wide kinds first, then clauses learned on the
   focus lemmas' branches (the lemma, its ancestors, its split siblings),
-  then the newest others; 4,000 characters for solver jobs, 8,000 for
-  captain prompts (`CAPTAIN_CLAUSES_CHARS`); conflict prompts focus on the
+  then the newest others; 4,000 characters for prover jobs, 8,000 for
+  orchestrator prompts (`ORCHESTRATOR_CLAUSES_CHARS`); conflict prompts focus on the
   decision and its stuck leaves, replans on the failed lemmas. Replay over
-  004's 13 captain calls since 22:33: on-branch clauses shown 34 to 52,
+  004's 13 orchestrator calls since 22:33: on-branch clauses shown 34 to 52,
   clauses whose declarations the reply used 31 to 68; the four
   `uniform_height` route clauses of 2026-10-16 would have reached the
-  hand-back that proved `uniform_height_sum`. Test:
+  escalation that proved `uniform_height_sum`. Test:
   `test_text_ranks_the_branch_before_newer_clauses`. 004 restarted at
   09:49 (hints are not part of a job's resume key; sessions resumed).
 - Early revision (`aiprover_early_revision`, default on;
   `AIProverStage._revise`): a lemma whose statement has used its attempts
-  is handed back once more (once per statement, counted toward
-  `max_handbacks`, event `early_revision`) instead of waiting for the
+  is escalated once more (once per statement, counted toward
+  `max_escalations`, event `early_revision`) instead of waiting for the
   replan at the end of the phase; jobs continue after a restatement or a
   retry. In 004, `h10q_root_of_delta_zero` and `h10q_completeness` had
   used their attempts since 2026-10-17 while the `tests_construction`
-  subtree kept the phase open; an earlier hand-back of each left them
-  marked as handed back. Tests: `test_early_revision_once_per_statement`,
+  subtree kept the phase open; an earlier escalation of each left them
+  marked as escalated. Tests: `test_early_revision_once_per_statement`,
   `test_early_revision_split`.
 - 004 restarted at 20:45 (step 1868) with early revision and
-  `max_handbacks` 160 (was 120; 100 used); sessions resumed. The captain
+  `max_escalations` 160 (was 120; 100 used); sessions resumed. The orchestrator
   proved `h10q_root_of_delta_zero` (20:46) and `h10q_completeness` (20:47)
   in their early revisions.
-- Restatement in a hand-back is checked against the proved lemmas when it
-  is applied, not only when the hand-back starts (`handback.py`,
+- Restatement in an escalation is checked against the proved lemmas when it
+  is applied, not only when the escalation starts (`escalation.py`,
   `used_by_proofs`): in 004 a proof of `h10q_completeness` found during the
-  captain's call on `h10q_index_congruence` used the statement that call
+  orchestrator's call on `h10q_index_congruence` used the statement that call
   then replaced. Test: `test_restate_refused_after_a_proof_found_meanwhile`.
   004 loads it at its next restart.
 - Error analysis of 004 updated (`docs/error_analysis.md`, 2026-10-19).
-- Retry limit (`aiprover_max_retries`, default 2): the captain may grant a
-  lemma statement at most two retries; later hand-backs offer proof, split,
+- Retry limit (`aiprover_max_retries`, default 2): the orchestrator may grant a
+  lemma statement at most two retries; later escalations offer proof, split,
   restatement or refutation (`NO_RETRY`), and a lemma retried more often
-  returns to the captain before its next job. In 004 the captain had
+  returns to the orchestrator before its next job. In 004 the orchestrator had
   retried `h10q_tests_construction_system_main` three times (six failed
   jobs, none past the statement). Test:
   `test_retry_refused_past_the_limit`. 004 restarted at 07:37 on
   2026-10-20 (step 2320); sessions resumed.
-- 004 hand-backs moved from Sonnet to Opus (high effort): server option
-  `captain_phases` from `economy` to the default phases; judges stay on
-  Sonnet. Over 004, Sonnet hand-backs on lemmas under 1,000 characters all
+- 004 escalations moved from Sonnet to Opus (high effort): server option
+  `orchestrator_phases` from `economy` to the default phases; judges stay on
+  Sonnet. Over 004, Sonnet escalations on lemmas under 1,000 characters all
   ended in a proof or split (83), while those on larger lemmas included
   every retry it chose (4 of 21); the two open lemmas of
   `system_main` are of the larger kind. Restarted at 08:18 (step 2330);
   sessions resumed.
-- 004 rewound to before the Sonnet hand-back of
+- 004 rewound to before the Sonnet escalation of
   `h10q_tests_construction_system_main` (07:56; split into `_engine` and
   `_axioms`, the latter 10,287 characters against 7,869 for the lemma):
   trace cut after step 2321, the split and its two jobs removed, so the
-  lemma (three retries, past the limit) returns to the captain on Opus.
+  lemma (three retries, past the limit) returns to the orchestrator on Opus.
   The removed call (3.72 USD) no longer appears in the trace totals. Backup
   of the full trace in `temp/rewind_004/`. Resumed at 08:26 (step 2322).
 - `docs/contributions.md` updated: CDCL unit propagation and clause
-  relevance, branch-relevant solver context, solver-shaped decomposition,
-  run definitions in `Context.lean`, sandboxed captain tools, grep routing,
+  relevance, branch-relevant prover context, prover-shaped decomposition,
+  run definitions in `Context.lean`, sandboxed orchestrator tools, grep routing,
   run control, result 164, 004 in progress, findings 8 to 12.
 - Decision: conflict-driven learning is disabled pending a controlled
   evaluation. `cdcl.ENABLED = False` and `cdcl.CONFLICT_LEAVES` replace the
   config fields `cdcl` and `cdcl_conflict_leaves`, which are commented out
   with their ALGORITHM step; template loading strips HTML comments, which
-  hold the clause instructions of `handback.md` and `replan_feedback.md`.
+  hold the clause instructions of `escalation.md` and `replan_feedback.md`.
   The `cdcl_conflict_leaves` option was removed from 004's job. The running
   004 process keeps the code it loaded until its next restart.
 - The query server's user page lists the latest proved OpenAI runs (011,
@@ -1238,7 +1244,7 @@ Results
 - `srv_20261008_212508_OpenAIMath_164_HindmanDistinctExpressions` proved
   (2026-10-15 23:26): Corollary 1.2 with Theorem 1.1 as the hypothesis
   `HindmanFSFP.Thm11`; 15 lemmas, 839 lines of Lean, standard axioms only,
-  final review faithful; 8.7 h on the DGX solver, 26 sessions, $1.07 of
+  final review faithful; 8.7 h on the DGX prover, 26 sessions, $1.07 of
   Claude usage without the LaTeX write-up.
 - `docs/slides/aiprover_orchestration_openai_math.pptx`: seven slides (method,
   formalization of 332, results for 332, 011 and 164, run trace, cost,
@@ -1302,9 +1308,9 @@ Results
 - `./setup --endpoint none` (or an empty answer at the endpoint prompt):
   `endpoint.toml` with `mode = "none"`; `setup.sh endpoint` does nothing and
   `setup.sh doctor` checks the environment only. The skill's `env.sh` sets
-  `SOLVER=claude`, and each lemma attempt is a solver subagent
-  (`model: sonnet`, the pipeline's `solver.md` prompts) gated as a hand-back
-  proof; budgets, hand-backs and replans are unchanged. Lean checks run on
+  `PROVER=claude`, and each lemma attempt is a prover subagent
+  (`model: sonnet`, the pipeline's `prover.md` prompts) gated as an escalation
+  proof; budgets, escalations and replans are unchanged. Lean checks run on
   the device's CPU.
 - READMEs: clone command with the repository URL.
 
@@ -1325,20 +1331,20 @@ Results
 
 ## 2026-10-14: Sketches for problems without a known proof
 
-- Issue: on P versus NP the captain submitted one lemma equivalent to the
+- Issue: on P versus NP the orchestrator submitted one lemma equivalent to the
   theorem, with a main proof that only unpacked it, and stated that no
   progress was made.
 - Decision: the sketch prompt requires an attempt when no proof is known:
   a named approach, lemmas each strictly simpler than the theorem, and
-  conjectural lemmas allowed (tested by solvers, hand-backs and
+  conjectural lemmas allowed (tested by provers, escalations and
   refutation). The replan prompt asks for a changed approach rather than an
   isolated equivalent lemma.
 - The P versus NP trace was rewound to before the sketch (backup in
   `temp/trace_backup/`) and the run requeued; formalization, audit and
-  setting check are kept.
+  vacuity check are kept.
 - Its second sketch (P ⊆ P/poly and NP ⊄ P/poly) moved the difficulty into
   a lemma stronger than the theorem. Added a sketch judge: a second model
-  (Sonnet, captain phase `judge`) checks each compiled sketch and returns
+  (Sonnet, orchestrator phase `judge`) checks each compiled sketch and returns
   REVISE for a lemma equivalent to or stronger than the theorem, an open or
   false lemma, a lemma that is not self-contained, or bundled steps; REVISE
   is a repair round, and the last round accepts a compiled sketch
@@ -1354,7 +1360,7 @@ Results
 - 2026-10-16: a private open problem cancelled after 7.5 h of proving
   with no lemma proved (its sketch reduces the problem to a length-preserving
   quadratization, which is the open step). Problem 004 resumed on the DGX in
-  its place (DGX solver, 6 lemmas and slots, its hand-back and Claude limits
+  its place (DGX prover, 6 lemmas and slots, its escalation and Claude limits
   of 120 and 220 kept), so it needs no Vista SUs.
 - 2026-10-16: Claude-alone baseline for problem 164
   (`temp/claude_alone_164/`). One headless Claude Code session
@@ -1379,20 +1385,20 @@ Results
   by about a quarter. Cache token counts are now kept in the usage of each
   call and in the run totals. Prompt layout for cache reuse is idea 30.
   Running processes (004) keep the previous setting until restarted.
-- 2026-10-16: Lean tools for the Claude captain, on by default
+- 2026-10-16: Lean tools for the Claude orchestrator, on by default
   (`agents/claude_cli.py`, `agents/pool.py` `role_spec`). A call with tools
   runs in a scratch Lake project under `temp/lean_tools/` (removed after the
   call) with Write, Edit, Read, Glob, Grep and the single shell command
   `lake env lean`; other commands and files outside the project are denied
   (probed), and a call is limited to 10 USD. Off by default for the
-  formalization and sketch judges, the auditor, the reviewer and the writer.
+  formalization and sketch judges, the faithfulness checker, the reviewer and the writer.
   The form has a tools choice per Claude role and one for the orchestrator's
-  judges; `captain_phases` now merges with the selection's phase choices.
-  Motivation: in 004, 16 blind sketch calls cost 21.84 USD and 68 hand-backs
+  judges; `orchestrator_phases` now merges with the selection's phase choices.
+  Motivation: in 004, 16 blind sketch calls cost 21.84 USD and 68 escalations
   36.98 USD; Claude with a compiler proved 164 in 3.4 min. 004 cancelled on
-  the DGX and resumed at 09:37 with captain tools (limits and economy phases
+  the DGX and resumed at 09:37 with orchestrator tools (limits and economy phases
   unchanged).
-- 2026-10-16: audit of the captain tool sandbox (decoy files, benign
+- 2026-10-16: audit of the orchestrator tool sandbox (decoy files, benign
   commands only). Denied: Read and Write outside the project (absolute,
   relative, through the packages symlink), shell commands other than
   `lake env lean` and `echo` (cat, ls, grep, find, printenv, touch, python3,
@@ -1405,36 +1411,36 @@ Results
   ineffective on this host (user namespaces restricted by AppArmor);
   Landlock is available.
 - 2026-10-16: two layers around every Lean elaboration (pipeline checks and
-  module builds, and the captain's tools). (1) `EXECUTION_PATTERNS` in
+  module builds, and the orchestrator's tools). (1) `EXECUTION_PATTERNS` in
   `lean/checker.py`: constructs that run code are rejected before
   elaboration and added to the forbidden constructs; no match in 13,882 Lean
   files of past runs and sessions. (2) `lean/sandbox.py`: Landlock (ABI 4)
   limits Lean to reading the toolchain, packages and the checked file's
   directory, writing in the project or workspace, executing the toolchain,
   ELF loader and `git`, no TCP, and a minimal environment; it refuses to run
-  without Landlock. The captain's shell command is now `lean-check`
+  without Landlock. The orchestrator's shell command is now `lean-check`
   (`lean/tool_check.py`), which accepts only Lean files inside its project.
   Verified with decoys: reads outside, writes outside, process spawns and
   network access are blocked; checks and builds pass (9 s and 18 s). Lake
   runs `git` to check package sources, and without it tries to clone them
   again, so `git` is executable in the sandbox (no shell, no TCP).
 - A private open problem moved to group `dgx`, after 164 (`after`),
-  with the DGX solver and the settings of 164; it needs no Vista SUs.
-- Problem 004 (2026-10-15 18:30): `max_handbacks` raised to 120 and
-  `max_claude_calls` to 220 after the 60 hand-back limit was reached; then
+  with the DGX prover and the settings of 164; it needs no Vista SUs.
+- Problem 004 (2026-10-15 18:30): `max_escalations` raised to 120 and
+  `max_claude_calls` to 220 after the 60 escalation limit was reached; then
   cancelled with its Vista server 1072443 (about 4.4 h of 12 unused) to save
   SUs until the allocation is renewed. State at cancellation: 84 lemmas, 69
   resolved, 15 open; the trace resumes with the new limits.
 - Problem 109 cancelled (2026-10-15): its two open lemmas are the
   Harvey-van der Hoeven multiplier and the paper's reduction, each an
   explicit multitape Turing machine construction for which neither Mathlib
-  nor CSLib provides the means; the captain's last four splits each
+  nor CSLib provides the means; the orchestrator's last four splits each
   restated a single lemma. Its trace is kept for a conditional rerun.
   Problem 164 (Corollary 1.2 from Theorem 1.1) resumed on the DGX in its
-  place, from its audited formalization, with the `economy` captain phases,
-  150 Claude calls, 60 hand-backs and 6 lemmas.
-- Replay tree (`trace_replay.html`): lemmas split by a hand-back are laid
-  out as subtrees below that hand-back instead of beside the sketch's
+  place, from its audited formalization, with the `economy` orchestrator phases,
+  150 Claude calls, 60 escalations and 6 lemmas.
+- Replay tree (`trace_replay.html`): lemmas split by an escalation are laid
+  out as subtrees below that escalation instead of beside the sketch's
   lemmas, so edges run downward; jobs without the kept proof are one node
   with a coloured mark per session (click to show the sessions); lemma
   nodes show their split depth and `subtree k/n`. The 109 tree narrowed
@@ -1442,12 +1448,12 @@ Results
 - Problem 004 after its server ended (2026-10-15): 199 of 211 sessions of
   the prove phase reached the 60-minute limit, with 25 to 40 sessions on one
   server configured for 8. Its options now cap lemmas and session slots at
-  8, set a 7200 s session limit, raise `max_handbacks` from 30 (reached) to
-  60, and select the `economy` captain phases (hand-backs on Sonnet 5.5),
-  since the subscription's session limit blocked a hand-back for 3 h.
+  8, set a 7200 s session limit, raise `max_escalations` from 30 (reached) to
+  60, and select the `economy` orchestrator phases (escalations on Sonnet 5.5),
+  since the subscription's session limit blocked an escalation for 3 h.
 - Problem 004 resumed on 1072443 (2026-10-15 11:04) and reached its
   run-wide `max_claude_calls` of 60 (65 billed calls), which stopped
-  hand-backs. The budget is now 150; the run was stopped and resumed from
+  escalations. The budget is now 150; the run was stopped and resumed from
   its trace at 11:42.
 - A private open problem added to `data/open_problems.jsonl`. Its run is
   queued in group `open` after 004 (`after`): the allocation cannot cover a
@@ -1467,8 +1473,8 @@ Results
 
 ## 2026-10-13: Session policy
 
-- Decisions, from the session accounting of the first 332 run: hand back
-  after 2 failed jobs (`aiprover_handback_after`, was 3); Vista session
+- Decisions, from the session accounting of the first 332 run: escalate
+  after 2 failed jobs (`aiprover_escalation_after`, was 3); Vista session
   limit 3,600 s (was 5,400; no verified session of that run exceeded 75
   min); at most 3 sessions per job (`aiprover_job_sessions`, new; jobs of
   5 or more sessions proved 1 of 15 lemmas). The DGX keeps 10,800 s.
@@ -1483,9 +1489,9 @@ Results
 
 - `srv_20261013_195822_OpenAIMath_332_MetricMarkovCotypeL1` queued from
   scratch on group `main` with the settings of the first run (5 attempts
-  per lemma, 2 replans, 60 Claude calls, 30 hand-backs, captain phases)
-  and the session policy above, to measure the run on the current code (setting check, refute action,
-  uniform hand-back schedule, semantic Mathlib index, per-run accounting).
+  per lemma, 2 replans, 60 Claude calls, 30 escalations, orchestrator phases)
+  and the session policy above, to measure the run on the current code (vacuity check, refute action,
+  uniform escalation schedule, semantic Mathlib index, per-run accounting).
   The first run's records stay in
   `results/srv_20261009_010221_OpenAIMath_332_MetricMarkovCotypeL1/`.
 - The run uses the servers of groups `main` and `openai` (two requests of
@@ -1499,27 +1505,27 @@ Results
   defines both classes, which Mathlib lacks). No proof is supplied.
 - Queued as `srv_20261013_184750_Open_P_vs_NP` on group `open` (Vista)
   with the budgets of the other runs (5 attempts per lemma, 2 replans, 60
-  Claude calls, 30 hand-backs, session limit 3,600 s), setting check and
+  Claude calls, 30 escalations, session limit 3,600 s), vacuity check and
   refute action enabled.
 
-## 2026-10-13: Refutation and setting check
+## 2026-10-13: Refutation and vacuity check
 
 - Refute action (`docs/ideas.md` 14; `docs/orchestration.md` 2.3, 3.2). A
   statement counts as false only when Lean accepts a proof of its negation,
   `theorem <name>_refuted : ¬ (type_of% @<name>)`, against the definitions
   alone and with the standard axioms (`SketchStage._refutation`). At a
-  hand-back (`<refute>`) the lemma is marked refuted, no further job or
-  hand-back starts, and the prove phase ends in a replan that lists the
+  escalation (`<refute>`) the lemma is marked refuted, no further job or
+  escalation starts, and the prove phase ends in a replan that lists the
   refutation, may not state the lemma again and is not counted against
   `max_replans`. In place of a sketch (`<refutation>`) the theorem is
   refuted and the run ends with status `disproved`
   (`<slug>_refutation.lean`).
-- Setting check (`setting_check`, default on): before the first sketch the
-  captain proves facts about the setting (contradictory hypotheses,
+- Vacuity check (`vacuity_check`, default on): before the first sketch the
+  orchestrator proves facts about the setting (contradictory hypotheses,
   degenerate structures, small cases) as theorems `setting_...`; the
-  compiled facts are appended to the definitions (`setting_checked`).
+  compiled facts are appended to the definitions (`vacuity_checked`).
 - Decision: facts join the definitions rather than the sketch, so that
-  solvers, hand-backs, replans and the final modules see them without a
+  provers, escalations, replans and the final modules see them without a
   second mechanism; the target statement is unchanged.
 - Decision: a refutation is checked without the other lemmas of the
   sketch, since unproved lemmas may themselves be false.
@@ -1536,7 +1542,7 @@ Results
 ## 2026-10-11: Sample problem set in git
 
 - `data/openai_math.jsonl` (five problems: 332, 011, 164, 048, 259) is
-  tracked as the sample set for the aiprover-captain skill; the rest of
+  tracked as the sample set for the aiprover-orchestrator skill; the rest of
   `data/` stays out of git. Source: openai/math, Apache-2.0.
 
 ## 2026-10-11: One-command setup with Nix
@@ -1600,10 +1606,10 @@ Results
 - Checked on the VM (no Nix): dry runs of every preset; the generated config
   parsed by `aiprover config`; locks against the pins.
 
-## 2026-10-10: Interactive captain skill
+## 2026-10-10: Interactive orchestrator skill
 
 - Plugin `orchestration_plugin/` (marketplace
-  `aiprover-orchestration-local`, skill `aiprover-captain`), packaged as
+  `aiprover-orchestration-local`, skill `aiprover-orchestrator`), packaged as
   the AIProver plugin is; `setup.sh` links the repository at
   `~/.config/aiprover_orchestration/root` and reinstalls the plugin.
 - `scripts/env.sh` of the skill: repository paths and recording functions
@@ -1623,32 +1629,32 @@ Results
 
 ## 2026-10-10: Hosted model spend
 
-- Claude spend over the 30 traces in `results/` ($86.4): captain
-  hand-backs 34%, sketches 22.5%, formalization and judge 13.5%,
+- Claude spend over the 30 traces in `results/` ($86.4): orchestrator
+  escalations 34%, sketches 22.5%, formalization and judge 13.5%,
   reviewer and writer about 20%. Output, mostly adaptive thinking at
-  `effort: high`, is about 60%. Hand-backs recurse through splits
+  `effort: high`, is about 60%. Escalations recurse through splits
   (lemma generations up to 3).
 - Refusals are a field of `Completion` set by every backend (Claude,
   OpenAI-compatible `refusal` / `content_filter`). A refused
-  call is not retried and raises `AgentRefusal`; outside a hand-back the
+  call is not retried and raises `AgentRefusal`; outside an escalation the
   run ends with `error_kind: refused`, which is not resumed automatically.
 - The call budget (`max_claude_calls`) counts billed calls to hosted
   models on any backend: successful calls and refusals.
-- Hand-backs: `max_handbacks` per run (served config: 12); a lemma from a
-  split is handed back after `aiprover_handback_after` × (1 + generation)
+- Escalations: `max_escalations` per run (served config: 12); a lemma from a
+  split is escalated after `aiprover_escalation_after` × (1 + generation)
   failures; `last_attempts` keeps the two most complete samples, 6,000
   characters each.
-- The hand-back prompt begins with the run-stable context (definitions,
+- The escalation prompt begins with the run-stable context (definitions,
   preamble, informal proof, main proof) for provider prefix caching.
 - Per-phase agents: an agent specification's `phases` maps phase-label
   prefixes to option overrides (`build_agent`, `Agent.for_phase`). Our
-  runs carry the server option `captain_phases`, which applies
-  `configs/orchestrator/captain_phases.json` to a Claude captain: judge on
-  Sonnet 5.5 at medium effort, formalize at medium effort, hand-back
+  runs carry the server option `orchestrator_phases`, which applies
+  `configs/orchestrator/orchestrator_phases.json` to a Claude orchestrator: judge on
+  Sonnet 5.5 at medium effort, formalize at medium effort, escalation
   output limited to 32K tokens; sketch on Opus at high effort. Other
   runs use the selected model in every phase.
 
-## 2026-10-10: Hosted captains, trace repair, Lake commands refused
+## 2026-10-10: Hosted orchestrators, trace repair, Lake commands refused
 
 - Without a lemma concurrency limit, the prove phase runs every lemma's
   jobs at once, including lemmas added by a split (`MAX_LEMMA_JOBS`); its
@@ -1659,11 +1665,11 @@ Results
   A run set back to `queued` before the worker has registered its
   exit is overwritten as `finished`; requeue after the exit is logged.
 
-- Lemmas from a split are handed back after `aiprover_handback_after`
+- Lemmas from a split are escalated after `aiprover_escalation_after`
   failures, as other lemmas are. The former threshold of
-  `aiprover_handback_after` times (1 + split depth) exceeded
+  `aiprover_escalation_after` times (1 + split depth) exceeded
   `aiprover_attempts_per_lemma` at depth 1 (6 > 5), so a split lemma ran
-  out of attempts without reaching the captain.
+  out of attempts without reaching the orchestrator.
 
 - `aiprover resume` on a job whose workers are alive returns the job name,
   and the stage waits on it. A job can outlive the run that submitted it;
@@ -1672,12 +1678,12 @@ Results
 
 - 2026-10-10 23:00: 332 (metric Markov cotype of L1) proved: 49 lemmas,
   final review faithful, 41.6 h wall clock over 10 resumptions. Both
-  halves of the `mc_cut_real` split were proved by the captain on
-  hand-back after their AIProver attempts (`mono` 21:22, `pointwise`
+  halves of the `mc_cut_real` split were proved by the orchestrator on
+  escalation after their AIProver attempts (`mono` 21:22, `pointwise`
   22:49).
 
 - Run accounting: `benchmark.run_costs` gives hosted calls by role, model
-  and purpose, and the solver's jobs, sessions, session-hours and GPU-hours
+  and purpose, and the prover's jobs, sessions, session-hours and GPU-hours
   (attributed by session slots: a server's GPUs over
   `aiprover_session_slots`; GPU groups carry `gpu` and `gpus`). It feeds
   trace.html (cost and compute panels), the report's summary table and
@@ -1733,18 +1739,18 @@ Results
 - Hosted models (`Agent.hosted`: the Claude backends, and an
   OpenAI-compatible agent with a `provider`) receive the carried notes
   without the sessions' reasoning (`knowledge.without_reasoning`). The
-  captain's hand-back prompts carried it, and Opus's safeguards refused
-  17 of 72 hand-backs of 332 and 048 (`[reasoning_extraction]`), each
+  orchestrator's escalation prompts carried it, and Opus's safeguards refused
+  17 of 72 escalations of 332 and 048 (`[reasoning_extraction]`), each
   billed at about $0.4 to $0.6 with no reply. The last refused prompt,
   resent without the reasoning, was answered.
-- A Lean check of a hand-back reply that times out stops the run as an
+- A Lean check of an escalation reply that times out stops the run as an
   infrastructure failure instead of rejecting the reply.
 - `orchestrator.trace` repairs stopped runs: `--rewind N` (`rewound`)
   drops the steps from N on and the AIProver jobs still running at N, and
-  `--refused-handbacks` drops refused hand-backs, so that a resume hands
+  `--refused-escalations` drops refused escalations, so that a resume hands
   those lemmas back again.
 - 048 rewound to step 254 (01:13, before the Mathlib rebuild; no proof
-  lost); 332's seven refused hand-backs removed. Both requeued. The
+  lost); 332's seven refused escalations removed. Both requeued. The
   previous traces are in `temp/trace_backup/`.
 - The harness refuses `lake build|exe|update|clean` (`lake_refusal`).
 - Calls refused by a provider's safety classifier are left out of the
@@ -1758,10 +1764,10 @@ Results
   (ending, Mathlib searches with those that found nothing, files read, last
   reasoning, code); a lemma carries its newest notes (6,000 characters) to
   later jobs through the harness's `--hint-file`. The notes are recorded in
-  `solver_budget_exhausted` and restored on resume.
-- Hand-back: the captain sees the carried notes and may replace or clear
-  them (`<knowledge>`) with any action; a retry lets the captain review the
-  lemma again after `aiprover_handback_after` further failures. A lemma with
+  `prover_budget_exhausted` and restored on resume.
+- Escalation: the orchestrator sees the carried notes and may replace or clear
+  them (`<knowledge>`) with any action; a retry lets the orchestrator review the
+  lemma again after `aiprover_escalation_after` further failures. A lemma with
   notes but no code is no longer deferred.
 - Harness: subagents (`explore`) bounded together by 20 % of the session's
   time limit and 30 % of its turn budget, and by the hard fence; past them
@@ -1774,7 +1780,7 @@ Results
   moved there (it held a place in group `openai`); the DGX vLLM refused
   connections 09:55-10:05 and returned with about 32 requests of another
   client in flight.
-- DGX sessions: 10,800 s (`SOLVER_TIMEOUTS`, `dgx.toml`); the DGX completes a
+- DGX sessions: 10,800 s (`PROVER_TIMEOUTS`, `dgx.toml`); the DGX completes a
   median 11 turns per hour (8 sessions) against 76 on Vista (89 sessions).
 - Self-contained result directories: a resumed run takes its config
   (unless `--config` is given) and its problem from the trace, and its
@@ -1800,13 +1806,13 @@ Results
 - Library search, experimental (`docs/proposed/mathlib_search.md`):
   run-level Mathlib map in every job's guidance (`knowledge.MathlibMap`,
   rebuilt from the trace); harness search fence (12 searches without an edit
-  or Lean check); stated `sorry` gaps listed in session notes; hand-back on
-  exhaustion with a retry granting `aiprover_handback_after` further
+  or Lean check); stated `sorry` gaps listed in session notes; escalation on
+  exhaustion with a retry granting `aiprover_escalation_after` further
   attempts. Session notes now match tool results to calls by tool name and
   grep pattern (results had been paired with the wrong calls).
-- A captain hand-back refused by the model's safety classifier no longer
+- An orchestrator escalation refused by the model's safety classifier no longer
   stops the run: the lemma continues without it (decision action
-  `refused`, restored on resume). Markov's `mc_cube_energy` hand-back was
+  `refused`, restored on resume). Markov's `mc_cube_energy` escalation was
   refused at 18:43 and 21:11, each time ending the run for a resumption.
 - Semantic Mathlib index, experimental (`aiprover_orchestration/search/`,
   service `aiprover_mathlib_index` on 127.0.0.1:18570): 259,660 declarations
@@ -1836,10 +1842,10 @@ Results
   depends on a split lemma of the earlier sketch that was never proved) and
   was relaunched at 13:57; it is reproving `mc_cut_real`.
 - 2026-10-10 15:41: 332 limits raised for our run (`max_claude_calls` 60,
-  `max_handbacks` 30); its trace lost the split of `mc_cut_real` and the
-  captain's proof that used the never-proved `mc_cut_real_pointwise`
+  `max_escalations` 30); its trace lost the split of `mc_cut_real` and the
+  orchestrator's proof that used the never-proved `mc_cut_real_pointwise`
   (steps 203-204; backup in `temp/trace_backup/`), so that the lemma could
-  be handed back again. Resumed: the captain split it into
+  be escalated again. Resumed: the orchestrator split it into
   `mc_cut_real_mono` and `mc_cut_real_pointwise` at 15:43.
 - 2026-10-10 20:15: 332 has 46 of its 47 sketch lemmas proved; open is
   `mc_cut_real`, through its split lemmas `mc_cut_real_mono` (job 3/5, 10
@@ -1849,7 +1855,7 @@ Results
 - Trace pages show AIProver jobs in flight (`live`, read from the job
   directories at render time: per session its state, model replies so far,
   and once ended its status and turns): a "Jobs in progress" panel in the
-  solver chapter and a count in the overview. The query server re-renders
+  prover chapter and a count in the overview. The query server re-renders
   running runs every 5 min (`LIVE_PAGE_REFRESH_SECONDS`) as well as on new
   trace steps; query server restarted at 20:14.
 
@@ -1934,7 +1940,7 @@ Results
 
 ## 2026-10-08: Benchmark logging; 048 on the DGX server
 
-- `orchestrator/benchmark.py`: every run samples the solver endpoint's vLLM
+- `orchestrator/benchmark.py`: every run samples the prover endpoint's vLLM
   metrics and this machine's load every 30 s (`metrics.jsonl`) and writes
   `benchmark.json` at its end (server tokens, throughput, running and
   waiting requests, KV-cache use, mean context length, queue time, time to
@@ -1962,8 +1968,8 @@ Results
   `vista_logged_openai.toml`, unit `aiprover_reasoning_proxy_openai`).
 - The five problems of `data/openai_math.jsonl` queued in bank order (332,
   011, 164, 048, 259) with these settings: Opus
-  5.5 (high) captain, reviewer and writer, Sonnet 5.5 auditor, trained
-  AIProver solver, 5 attempts per lemma, 2 replans, 30 Claude calls. Server
+  5.5 (high) orchestrator, reviewer and writer, Sonnet 5.5 faithfulness checker, trained
+  AIProver prover, 5 attempts per lemma, 2 replans, 30 Claude calls. Server
   job 1059513 submitted (pending).
 
 ## 2026-10-08: OpenAI math problem bank
@@ -2080,7 +2086,7 @@ Results
   libraries, analyses and results moved from `aiprover_prove2me_workspace`
   (archived); AIProver is a submodule at `5d71cc5`.
 - The orchestrator uses the library's Lean workspace, Lean checker, locked
-  module build, Claude access and auditor prompt.
+  module build, Claude access and faithfulness checker prompt.
 - AIProver venvs and ripgrep provisioned under `aiprover/` with the
   submodule's `setup.sh`; configurations and systemd units point to the new
   repository.
@@ -2094,7 +2100,7 @@ Results
   store, and `Library` (publish, verify, resolve).
 - `interface/`: CLI and FastAPI router; `prompts/`: role prompts and agent
   guide; `agents/claude.py`: Claude access; `utils/smoke.py`:
-  end-to-end test with Claude Haiku as solver.
+  end-to-end test with Claude Haiku as prover.
 
 - Smoke test with Claude Haiku 4.5 passed: definition and theorem
   published, ill-typed theorem rejected; `sorry`, wrong-type and
@@ -2106,7 +2112,7 @@ Results
 ## 2026-10-06: Work log
 
 - No reply reached the proxy's token cap.
-- Lemmas waiting on a hand-back are no longer counted in the session split.
+- Lemmas waiting on an escalation are no longer counted in the session split.
 
 ## 2026-10-06: Final review, report, replay spacing
 
@@ -2139,7 +2145,7 @@ Results
 - `orchestrator/library.py`; `Config.library`, `Config.extend_library`.
   A run given a library formalizes its statement against the library's
   definitions (`FORMALIZE_LIBRARY_TEMPLATE`); the library text is the prefix
-  of the definitions, so lemma checks, solver contexts and the final file
+  of the definitions, so lemma checks, prover contexts and the final file
   contain it. `formalization_compiled` records the library and its length;
   the run's contribution is the text after that prefix. A library is checked
   to compile without `sorry` at the start of a run. Reports cite library
@@ -2167,27 +2173,27 @@ Results
   failure of the run (resumed, not counted as an attempt). A run with
   `after` starts only once that run has finished.
 
-## 2026-10-05: Session sharing and hand-back to the captain
+## 2026-10-05: Session sharing and escalation to the orchestrator
 
 - `aiprover_session_slots` (served: 8): sessions per AIProver job are
   `free * w / (w + sum of rivals' w)`, at least 1, where `w = 1 + failed
   attempts` and the rivals are the unproved lemmas that could start
   alongside it (up to `aiprover_lemma_concurrency`). A mocked run of two
   lemmas gave 6 and 2 sessions, then 8 to the last one.
-  A lemma waiting on a hand-back is not a rival; if its hand-back fails
+  A lemma waiting on an escalation is not a rival; if its escalation fails
   with no free slot, its job takes 1 session above the limit.
-- `aiprover_handback_after` (served: 3): before a lemma's next job, once per
-  statement, the captain receives the sketch, the informal proof and the
+- `aiprover_escalation_after` (served: 3): before a lemma's next job, once per
+  statement, the orchestrator receives the sketch, the informal proof and the
   failed attempts and chooses: prove (helpers and proof checked by Lean),
-  split (new lemmas placed before it and handed to solvers, with a proof of
+  split (new lemmas placed before it and handed to provers, with a proof of
   it from them), restate (the sketch must compile with the new statement;
   refused if proved lemmas use it), or retry. One repair on Lean errors. A
-  hand-back is deferred when no session left code (setup failure) and
-  skipped when fewer than 2 Claude calls remain. `lemma_handback` decisions
+  escalation is deferred when no session left code (setup failure) and
+  skipped when fewer than 2 Claude calls remain. `lemma_escalation` decisions
   are restored on resume.
-- Captain: `effort = "high"`, `max_output_tokens = 128000`.
-- Pages: jobs with different session counts, hand-back nodes in the lemma's
-  column, split lemmas hanging from their hand-back, captain proofs as
+- Orchestrator: `effort = "high"`, `max_output_tokens = 128000`.
+- Pages: jobs with different session counts, escalation nodes in the lemma's
+  column, split lemmas hanging from their escalation, orchestrator proofs as
   winners.
 
 ## 2026-10-05: Replay per sketch; stalled AIProver replies
@@ -2195,11 +2201,11 @@ Results
 - The replay draws one tree per accepted sketch, stacked downward: the
   sketch fans out left to right into its lemmas, and the attempts on each
   lemma stack downward beneath it (AIProver: a job block with its sessions
-  below, each later job under the previous one; chat solvers: one lane per
+  below, each later job under the previous one; chat provers: one lane per
   chain). A replan starts the next tree below the previous one; lemmas it
   keeps appear as single nodes, and the edge to the replan runs down the
   left of the previous tree.
-- Chat-solver Lean checks are matched to the latest call with the same
+- Chat-prover Lean checks are matched to the latest call with the same
   lemma, worker and round; checks of later sketches had been attributed to
   the first sketch's calls.
 - The reasoning proxy sets `max_tokens = 24576` on chat requests without
@@ -2210,14 +2216,14 @@ Results
   to 3 times per session). Capped replies are marked `truncated` in
   `reasoning.jsonl` and in the replay's Reasoning tab.
 
-## 2026-10-05: Attempts per lemma; Opus captain
+## 2026-10-05: Attempts per lemma; Opus orchestrator
 
 - `aiprover_attempts_per_lemma` (default 1): a lemma is retried by new
   AIProver jobs until proved or until that many jobs on its statement ran to
   completion. Jobs stopped by a lost server or an interruption do not count.
   Counts are restored from the trace on resume, so a resumption does not
   re-run a lemma whose attempts are used up. Replay label: retry.
-- Served config: captain Opus 5.5 (auditor Sonnet 5.5).
+- Served config: orchestrator Opus 5.5 (faithfulness checker Sonnet 5.5).
 - Per-run settings in the server (`options` column, JSON).
 - An AIProver answer's helper declarations are spliced under the answer's
   `open` commands, as its kept theorem already was.
@@ -2236,15 +2242,15 @@ Results
 
 ## 2026-10-05: Failed attempts in the replan
 
-- The replan prompt now gives, for each failed lemma, the solvers' last code
+- The replan prompt now gives, for each failed lemma, the provers' last code
   besides the Lean errors. For AIProver, each sample's own declarations
   (helpers and its version of the lemma, comments kept) with the Lean errors
   located in them, ordered by: some proof written, fewer errors, fewer
-  `sorry`. Samples that left only `sorry` are omitted. Chat solvers give
+  `sorry`. Samples that left only `sorry` are omitted. Chat provers give
   their last helpers and proof.
-- The harness's sample status is not shown to the captain: it counts the
+- The harness's sample status is not shown to the orchestrator: it counts the
   `sorry` stubs of earlier lemmas in the sample's file.
-- `solver_budget_exhausted` decisions record the errors and attempts;
+- `prover_budget_exhausted` decisions record the errors and attempts;
   resuming restores them, so a replan after an interruption sees them.
 - AIProver jobs themselves are unchanged (no feedback from earlier jobs).
 
@@ -2261,7 +2267,7 @@ Results
 
 ## 2026-10-04: Work log
 
-- Solver `max_turns` 100 -> 200 (clock 5400 s): in the first sketch of
+- Prover `max_turns` 100 -> 200 (clock 5400 s): in the first sketch of
   a run, 12 of 22 failed samples stopped at the 100-turn limit, most with
   clock time left.
 - `wrapped_lemma_proof`: if an AIProver proof does not check under the
@@ -2286,7 +2292,7 @@ Results
 
 ## 2026-10-04: AIProver sessions, Lean returns and reasoning in the replay
 
-- The replay's step drawer, for an AIProver solver box, has the tabs Reply
+- The replay's step drawer, for an AIProver prover box, has the tabs Reply
   (the sample's final file), Prompt, System prompt, Lean returns (the
   harness's check of the final file with Lean's diagnostics, and the
   pipeline's check of the extracted proof), Session (the agent's transcript:
@@ -2307,7 +2313,7 @@ Results
 
 ## 2026-10-04: Served settings for the 000000 retry
 
-- Solver `max_turns` 60 → 100 (clock unchanged at 5400 s).
+- Prover `max_turns` 60 → 100 (clock unchanged at 5400 s).
 - Model server jobs on `gh`, 12 h (unit environment): the 2 h `gh-dev`
   limit ended sessions mid-lemma in both trained-model runs.
 
@@ -2324,7 +2330,7 @@ Results
   `replan` or `new job` instead of `errors`; a job without an extractable
   proof shows each sample's ending (`sorry`, `does not compile`, `no answer`,
   `server lost`) in a neutral colour.
-- Each AIProver sample is drawn as its own solver lane (replay, graph,
+- Each AIProver sample is drawn as its own prover lane (replay, graph,
   walkthrough timeline) with its own ending, turns, Lean check and timing.
 - AIProver sample endings in the trained-model runs (30 samples): 3
   verified; 11 stopped at the 60-turn limit after 20-55 min; 12 reached the
@@ -2336,16 +2342,16 @@ Results
 - `srv_20261003_232555_000004` (`prop: bounding ite base`): proved and
   verified (axioms `propext`), 1627 s wall; sketch of 1 lemma
   (`itr_eps_var`), proved by sample 0 in 14 turns (1092 s); sample 1 ended
-  `sorry` at 1472 s and held the job until then. Calls captain 3, auditor 1,
-  solver 1; 0.19 USD. Base model: 23 turns, 1557 s, 36 min over three
+  `sorry` at 1472 s and held the job until then. Calls orchestrator 3, faithfulness checker 1,
+  prover 1; 0.19 USD. Base model: 23 turns, 1557 s, 36 min over three
   invocations.
 - `srv_20261003_232550_000000` (`lmm: Fp subset F`): formalization
   FAITHFUL; sketch of 2 lemmas, neither proved in 5400 s; replan to 5
   lemmas; `lemmas_unproved` after 5.4 h and two server-job resumptions.
   Proved: `rec_length_arith`, `cobhamF_length_bound` (the latter on its third
   attempt, in a resumed pass); failed: `cobhamF_append`,
-  `cobhamF_smash_bound`, `cobhamF'_rec_bound`. Calls captain 4, auditor 1,
-  solver 15.
+  `cobhamF_smash_bound`, `cobhamF'_rec_bound`. Calls orchestrator 4, faithfulness checker 1,
+  prover 15.
 - GPU use: server jobs 1046962, 1047196, 1047408 at their 2 h limit (12
   node-hours); launch checks 0.8 node-hours.
 
@@ -2362,13 +2368,13 @@ Results
   core, ~4 GB each); vLLM's CUTLASS FP8 MoE is disabled for this scheme;
   `--moe-backend triton` starts cleanly.
 
-## 2026-10-03: Served-run solver settings
+## 2026-10-03: Served-run prover settings
 
 - `Config.aiprover_lemma_concurrency` (AIProver lemma jobs in flight; 0 =
   all): after a failure, lemmas not yet started are skipped, the flag being
   set by the failing thread before its worker is reused.
-- Served config: lemma concurrency 1, at most 5 lemmas, solver timeout
-  5400 s. Checked with stub captain and solver.
+- Served config: lemma concurrency 1, at most 5 lemmas, prover timeout
+  5400 s. Checked with stub orchestrator and prover.
 - Lemma concurrency raised to 4 after the launch check (8 sessions at
   28 tokens/s each with the trained model).
 
@@ -2417,7 +2423,7 @@ Results
 - Checks: API, ownership, queueing, cancellation, adoption of a live run and
   resumption of a lost run after a server restart (stub orchestrator); budget
   stop with the real orchestrator at `--max-claude-calls 1`
-  (`failed`, `budget`, one captain call).
+  (`failed`, `budget`, one orchestrator call).
 
 ## 2026-10-02: AIProver server on Vista, launch checks
 
@@ -2441,13 +2447,13 @@ Results
   statement preamble become file-level commands, since the preamble precedes
   every lemma and `solution` in sketches and solutions; applied on parse and
   on resume.
-- Run `vista_smoke_000004` (Sonnet 5.5 captain and auditor, AIProver base
-  solvers): formalization FAITHFUL in round 0; sketch with one lemma
+- Run `vista_smoke_000004` (Sonnet 5.5 orchestrator and faithfulness checker, AIProver base
+  provers): formalization FAITHFUL in round 0; sketch with one lemma
   (`itr_eps_all`) after the preamble fix; `itr_eps_all` proved by the
   AIProver base model (both samples verified; sample 1 in 23 turns, 1557 s).
   Solution verified: compiles, no `sorry`, no axioms, module build matches
-  the theorem. Wall time 2159 s over three invocations; calls captain 11,
-  auditor 1, solver 1.
+  the theorem. Wall time 2159 s over three invocations; calls orchestrator 11,
+  faithfulness checker 1, prover 1.
 
 ## 2026-10-02: Deployment for the AIProver model on Vista
 
@@ -2468,15 +2474,15 @@ Results
   parsers, handoff file `$SCRATCH/servers/aiprover_server.txt`, server restart
   inside the allocation.
 - `aiprover/aiprover_vista.toml` (ssh mode over `~/.ssh/vista.sock`, handoff
-  followed) and `orchestrator/config_aiprover_vista.json` (captain
-  `claude-opus-5-5`, auditor `claude-haiku-4-5`, solvers AIProver at 4
-  samples, 100 turns, 5400 s). Captain and auditor probes answer.
+  followed) and `orchestrator/config_aiprover_vista.json` (orchestrator
+  `claude-opus-5-5`, faithfulness checker `claude-haiku-4-5`, provers AIProver at 4
+  samples, 100 turns, 5400 s). Orchestrator and faithfulness checker probes answer.
 - `orchestrator/config_aiprover_vista_smoke.json`: smoke configuration with
-  captain and auditor `claude-sonnet-5-5` and AIProver solvers on the base
+  orchestrator and faithfulness checker `claude-sonnet-5-5` and AIProver provers on the base
   checkpoint `/work/11428/pjana/leanstral_hf_fused` (222.4 GiB bf16, fused
   experts): 2 samples, 60 turns, 1800 s per rollout.
 
-## 2026-10-02: AIProver harness as solver backend
+## 2026-10-02: AIProver harness as prover backend
 
 - AIProver (`../PartitionAndProve/AIProver_plugin`, champion harness
   `d01_r04`, mistral-vibe 2.24.2, lean-lsp-mcp 0.30.0) provisioned against
@@ -2486,7 +2492,7 @@ Results
 - `orchestrator/aiprover_agent.py`: `aiprover` backend; one job per lemma with
   `workers` samples, fixed context (definitions, earlier lemmas) and fixed
   statement; each sample's proof is extracted and passed through the pipeline's
-  Lean gate. Configuration `config_aiprover.json` (Haiku captain, Qwen auditor,
+  Lean gate. Configuration `config_aiprover.json` (Haiku orchestrator, Qwen faithfulness checker,
   Qwen through AIProver).
 - Serving for the harness: fp8 weights and KV cache, tool calling (`hermes`),
   28,672-token context at 0.565 GPU memory utilization alongside other GPU
@@ -2504,14 +2510,14 @@ Results
 - Target: two-variable structural induction in PV; no system in the
   JiatuBook evaluation produced a semantically correct proof (16 produced
   type-correct output).
-- Run `local_000020` (captain Sonnet 5, auditor and solvers Qwen3-4B):
+- Run `local_000020` (orchestrator Sonnet 5, faithfulness checker and provers Qwen3-4B):
   formalization compiled at the first attempt and was judged FAITHFUL; it
   encodes PV functions as variable-free combinators (`PVFunc n` with `proj`,
   `comp`, `srec`) and omits the length bound of limited recursion. Sketch with
   three lemmas (`congr_app_two`, `itr_self_trim`, `key_diag`); no lemma proved
   in the first round. Cancelled during the first replan.
 - Run `jiatu_000020_sonnet_haiku`: forked from `local_000020` at the prove
-  stage (`--fork-from`), solvers Haiku 4.5. `congr_app_two` proved at the
+  stage (`--fork-from`), provers Haiku 4.5. `congr_app_two` proved at the
   first attempt; `itr_self_trim` unproved by 3 of 4 chains when cancelled
   (outcome `interrupted`, resumable).
 - `run.py --fork-from <run> --fork-stage <stage>` starts a new run from the
@@ -2530,23 +2536,23 @@ Results
   (`--max-restarts`, `--restart-delay`). SIGTERM unwinds the run so the
   outcome is recorded.
 - Verified on copies of `smoke_000004` truncated before assembly (resumed with
-  no model calls, verified) and with one lemma unproved (3 solver calls,
+  no model calls, verified) and with one lemma unproved (3 prover calls,
   verified).
 
-## 2026-09-30: Pluggable subagents; local open-weights solvers
+## 2026-09-30: Pluggable subagents; local open-weights provers
 
 - `orchestrator/agents.py`: `Agent` interface with backends `claude`,
   `openai_compatible` and `python` (custom class by import path);
   `AgentPool` routes calls by role, retries transient failures and records
   each call in `calls.jsonl` and `trace.json` (fields `backend`, `model`,
-  `usage`). Roles are configured in `config.json` (captain on Claude,
-  auditor and solvers local) and `config_claude.json` (all Claude).
+  `usage`). Roles are configured in `config.json` (orchestrator on Claude,
+  faithfulness checker and provers local) and `config_claude.json` (all Claude).
 - Local serving: `.venv_serve` (uv, Python 3.12, vLLM 0.30.0, torch
   2.13.0+cu132), `scripts/serve_local.sh`; Qwen3-4B-Instruct-2507 in bf16,
   max length 24576, GPU memory utilization 0.84, KV cache 26.8k tokens.
-- Run `local_000004` (captain Sonnet 5, auditor and solvers Qwen3-4B):
+- Run `local_000004` (orchestrator Sonnet 5, faithfulness checker and provers Qwen3-4B):
   formalization compiled at the first attempt, audit FAITHFUL, sketch with one
-  lemma (`ITR_eps_var_eq_eps`, structural induction); 60 solver calls over
+  lemma (`ITR_eps_var_eq_eps`, structural induction); 60 prover calls over
   three sketches produced no compiling proof. Status `lemmas_unproved`,
   963 s.
 
@@ -2554,15 +2560,15 @@ Results
 
 - `orchestrator/trace_view.py` renders any `trace.json` into
   `results/<run_id>/trace.html`: ten chapters (overview, problem, algorithm
-  flow chart, roles and prompts, formalization, blind audit, sketch, solver
+  flow chart, roles and prompts, formalization, blind audit, sketch, prover
   timeline, verification, filterable step log) and a drawer with the prompt,
   reply, Lean source and compiler errors of each step.
-- `trace_graph.html`, rendered alongside: pan/zoom graph with the captain as
+- `trace_graph.html`, rendered alongside: pan/zoom graph with the orchestrator as
   root, subtasks (formalize, audit, verdict, sketch, one node per lemma,
   assemble), their agents, and attempt chains with repair edges and lemma
   dependencies; subtasks fold, nodes open the same step records.
 - `trace_replay.html`: top-to-bottom animation on the trace clock (input →
-  captain → formalize/audit/verdict/sketch → lemma fan-out → solver lanes by
+  orchestrator → formalize/audit/verdict/sketch → lemma fan-out → prover lanes by
   round → winning proofs → assembly → verified proof). Play/pause, 5–60×
   speed, scrubber, event stepping, narration, event log, auto-following
   camera; the full graph is shown faintly before playback.
@@ -2580,7 +2586,7 @@ Results
 - Run `smoke_000004`: formalization compiled at the first attempt and was
   judged FAITHFUL from the Haiku read-back; the sketch had three lemmas
   (`concat_eps_subst`, `ITR_eps_var_eps`, `ITR_eps_subst`); all were proved
-  by Haiku solvers (19 solver calls). Final solution verified: compiles, no
+  by Haiku provers (19 prover calls). Final solution verified: compiles, no
   `sorry`, axioms `[propext]`, type equal to the target theorem.
 - Wall time 787 s; notional cost 0.60 USD (Sonnet) + 1.43 USD (Haiku).
 - Full trace: `results/smoke_000004/trace.json`.
