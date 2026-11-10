@@ -24,7 +24,7 @@ v4.23.0 and Mathlib v4.23.0.
 
 | Section | Contents | Guide |
 | --- | --- | --- |
-| [1. Setup](#1-setup) | Installation, model server, search, services | [setup](docs/guide/setup.md) |
+| [1. Setup](#1-setup) | Installation, model server, search, services | [setup](docs/guide/setup.md), [models](docs/guide/models.md) |
 | [2. Web server](#2-web-server) | Runs, blueprints, projects on the page | [web server](docs/guide/web_server.md) |
 | [3. Command line](#3-command-line) | The same runs and projects without the server | [command line](docs/guide/command_line.md) |
 | [4. Claude Code skill](#4-claude-code-skill) | The session's agent as orchestrator | [plugin](orchestration_plugin/README.md) |
@@ -43,7 +43,8 @@ report (C). Proved results extend a shared library.*
 
 Linux, WSL2, or macOS, with about 15 GB of disk. `./setup` installs Nix if
 needed, builds the tools and the Lean project, and connects the AIProver
-model server ([setup guide](docs/guide/setup.md)):
+model server ([setup guide](docs/guide/setup.md); serving the model and
+chat models of other providers: [models guide](docs/guide/models.md)):
 
 ```bash
 git clone --recurse-submodules https://github.com/Logan-Cole-Luna/aiprover-orchestration aiprover_orchestration

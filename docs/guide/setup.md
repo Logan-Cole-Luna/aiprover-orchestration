@@ -69,15 +69,9 @@ aiprover/nix/tools/bin/python3 -m aiprover_orchestration.agents.claude_cli --pro
 
 ## AIProver model server
 
-AIProver runs on vLLM behind an OpenAI-compatible API. The weights are FP8,
-about 112 GB, so the GPUs need well over 112 GB in total plus room for the
-cache: one node with two or more 80 GB GPUs (tensor parallel), or two nodes
-in a Ray cluster (pipeline parallel, `PP=2`). The checkpoint is not part of
-this repository.
-
-```bash
-AIProver/AIProver_plugin/serve/serve_aiprover.sh /path/to/aiprover_model   # PORT=8041 by default
-```
+AIProver runs on vLLM behind an OpenAI-compatible API, on a GPU host that
+needs only vLLM and the checkpoint. The [models guide](models.md) describes
+serving it, connecting it, and using chat models of other providers.
 
 ## Search
 
