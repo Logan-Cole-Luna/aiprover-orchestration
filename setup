@@ -23,6 +23,8 @@
 #   --yes                accept every default (the Nix installer still shows what it runs)
 #   --dry-run            print what would happen; change nothing
 #   --no-lean            skip the Lean build and the plugin installation (to change the endpoint)
+#   --search             also build the search services' virtualenv (CPU torch) and download the
+#                        prebuilt arXiv index into data/arxiv_index (about 1.6 GB)
 #   --installer official|determinate
 #
 # Steps: check the platform; fetch the submodules; find Nix, or offer to install it; build the
@@ -57,6 +59,10 @@ TURNS=""
 LEAN_PROJECT=""
 HARNESS=""
 PLUGIN=yes
+SEARCH=no
+# Prebuilt search indexes, as Hugging Face datasets. The Mathlib index is built locally
+# (docs/server.md, "Search indexes") until the license of its descriptions is confirmed.
+INDEXES="data/arxiv_index=LoganLuna/aiprover-arxiv-math-index"
 
 say() { printf '%s\n' "$*"; }
 step() { printf '\n==> %s\n' "$*"; }
@@ -66,7 +72,7 @@ die() {
   exit 1
 }
 
-usage() { sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,36p' "$0" | sed 's/^# \{0,1\}//'; }
 
 # ask QUESTION DEFAULT(y|n): yes or no from the terminal; --yes answers y.
 ask() {
@@ -161,7 +167,9 @@ check_nix() {
 build_environment() {
   step "Environment: tools and AIProver virtualenvs (the first build downloads a few GB)"
   run mkdir -p aiprover/nix
-  for package in tools venv-vibe venv-mcp; do
+  packages="tools venv-vibe venv-mcp"
+  [ "$SEARCH" = no ] || packages="$packages venv-search"
+  for package in $packages; do
     nix_cmd build ".#$package" --out-link "aiprover/nix/$(printf '%s' "$package" | tr - _)"
   done
 }
@@ -352,6 +360,17 @@ EOF
   fi
 }
 
+# Search indexes: a fresh download of each, or a newer revision over an existing one.
+fetch_indexes() {
+  [ "$SEARCH" = yes ] || return 0
+  step "Search index (arXiv) from Hugging Face"
+  for entry in $INDEXES; do
+    run aiprover/nix/venv_search/bin/hf download "${entry#*=}" --repo-type dataset \
+      --local-dir "${entry%%=*}"
+  done
+  say "Start the service: scripts/systemd/install aiprover_paper_search"
+}
+
 # Lean, plugin, doctor ---------------------------------------------------------------------------
 
 finish() {
@@ -396,6 +415,7 @@ main() {
     --yes | -y) YES=yes ;;
     --dry-run) DRY=yes ;;
     --no-lean) LEAN=no ;;
+    --search) SEARCH=yes ;;
     -h | --help) usage; exit 0 ;;
     *) die "unknown option $1 (see ./setup --help)" ;;
     esac
@@ -407,6 +427,7 @@ main() {
   fetch_submodules
   check_nix
   build_environment
+  fetch_indexes
   if choose_endpoint; then write_config; fi
   finish
   next_steps

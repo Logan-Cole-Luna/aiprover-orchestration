@@ -51,7 +51,7 @@ SESSION_TOOLS = Path(__file__).resolve().with_name("session_tools.py")
 SERVER_ENVIRONMENT = [
     "PATH", "HOME", "ELAN_HOME", "AIPROVER_ORCHESTRATION_HOME",
     "AIPROVER_LIMITS_DIR", "SESSION_PYTHON", "SESSION_PREFIX", "SESSION_SANDBOX",
-    "SESSION_READ", "SESSION_WRITE",
+    "SESSION_READ", "SESSION_WRITE", "PAPER_SEARCH_LOG", "PAPER_SEARCH_BEFORE",
 ]  # fmt: skip
 def token_usage(reported: dict) -> dict:
     """Codex's usage in the naming of `Completion.usage`. Its input tokens
@@ -155,9 +155,9 @@ class CodexCLIAgent(Agent):
 
     def complete_once(self, prompt: str, system_prompt: str) -> Completion:
         env = dict(os.environ)
-        workdir = CLI_WORKDIR
+        workdir, commands = CLI_WORKDIR, ()
         if self.tools:
-            workdir, note, env["PATH"] = tool_project(self.source_dir)
+            workdir, note, env["PATH"], commands = tool_project(self.source_dir)
             system_prompt += note
         workdir.mkdir(parents=True, exist_ok=True)
         try:
@@ -168,7 +168,7 @@ class CodexCLIAgent(Agent):
                     workdir,
                     self.tools,
                     read=(str(LEAN_PACKAGES_DIR),),
-                    tools=("lean-check",),
+                    tools=commands,
                     max_turns=self.max_turns,
                 ),
                 cwd=workdir,

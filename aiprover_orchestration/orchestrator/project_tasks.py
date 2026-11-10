@@ -25,7 +25,12 @@ from pathlib import Path
 from ..agents.base import TOKENS_PER_USD, TURNS_PER_USD, billed_tokens
 from ..agents.codex_cli import DEFAULT_CODEX_MODEL, parse_events, token_usage
 from ..agents.codex_cli import command as codex_command
-from ..agents.common import LEAN_CHECK_BIN, make_lean_project
+from ..agents.common import (
+    LEAN_CHECK_BIN,
+    PAPER_SEARCH_BIN,
+    PAPER_SEARCH_NOTE,
+    make_lean_project,
+)
 from ..agents.session_tools import TURN_LIMIT
 from ..utils.processes import run_group
 from ..paths import LIBRARIES_DIR
@@ -87,9 +92,14 @@ def session_environment(project: dict, folder: Path) -> dict[str, str]:
     trees = readable_files(project)
     if project.get("library"):
         trees.append(LIBRARIES_DIR / project["library"])
+    papers = {}
+    if project.get("paper_search"):
+        papers = {"PAPER_SEARCH_LOG": str(folder / "paper_search.jsonl")}
+    bins = [SESSION_BIN, LEAN_CHECK_BIN] + [PAPER_SEARCH_BIN] * bool(papers)
     return {
         **os.environ,
-        "PATH": f"{SESSION_BIN}:{LEAN_CHECK_BIN}:{os.environ.get('PATH', '')}",
+        **papers,
+        "PATH": ":".join([*map(str, bins), os.environ.get("PATH", "")]),
         "SESSION_PYTHON": sys.executable,
         "SESSION_PREFIX": sys.prefix,
         "SESSION_SANDBOX": str(SANDBOX),
@@ -104,6 +114,8 @@ def claude_command(project: dict, limit: float) -> list[str]:
     reads = [f"{rule}(/{path}/**)" for path in readable
              for rule in ("Read", "Glob", "Grep")]
     reads.append(f"Read(/{LIBRARIES_DIR / project.get('library', '')})")
+    if project.get("paper_search"):
+        reads.append("Bash(paper-search:*)")
     return ["claude", "-p", "--model", MODEL, "--effort", "high",
             "--tools", TOOLS, "--setting-sources", "", "--strict-mcp-config",
             "--no-session-persistence", "--permission-mode", "dontAsk",
@@ -128,7 +140,8 @@ def session(
             True,
             read=tuple(map(str, readable_files(project)))
             + ((str(LIBRARIES_DIR / project["library"]),) if project.get("library") else ()),
-            tools=("python3", "lean-check"),
+            tools=("python3", "lean-check")
+            + ("paper-search",) * bool(project.get("paper_search")),
             max_turns=round(limit * TURNS_PER_USD),
         )
         if codex
@@ -139,7 +152,10 @@ def session(
             command,
             cwd=folder,
             timeout=SESSION_SECONDS,
-            stdin=prompt + REPORT_NOTE + (CODEX_NOTE if codex else ""),
+            stdin=prompt
+            + REPORT_NOTE
+            + (CODEX_NOTE if codex else "")
+            + (PAPER_SEARCH_NOTE if project.get("paper_search") else ""),
             env=session_environment(project, folder),
         )
         payload = {} if codex else json.loads(reply.stdout)

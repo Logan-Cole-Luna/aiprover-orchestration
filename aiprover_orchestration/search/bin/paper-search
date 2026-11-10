@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# The paper search of an agent with tools; see ../paper_search.py.
+exec "${SESSION_PYTHON:-python3}" -I "$(dirname "$(readlink -f "$0")")/../paper_search.py" "$@"

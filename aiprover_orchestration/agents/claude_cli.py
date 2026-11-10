@@ -28,7 +28,6 @@ from ..utils.processes import ProcessStopped, run_group
 from .base import STOPPING, Agent, Completion, Terminated
 from .common import (
     CLI_WORKDIR,
-    LEAN_CHECK_BIN,
     LEAN_PACKAGES_DIR,
     LEAN_TOOLS_BUDGET_USD,
     MAX_RETRIES,
@@ -38,6 +37,8 @@ from .common import (
     add_source,
     failed_call,
     lean_scratch_project,
+    paper_search,
+    tool_commands,
 )
 
 logger = logging.getLogger(__name__)
@@ -138,11 +139,14 @@ def invoke_once(
     if tools:
         cmd += ["--permission-mode", "dontAsk", "--max-budget-usd"]
         cmd += [str(max_budget_usd), "--allowedTools", *LEAN_TOOL_PERMISSIONS]
+        if paper_search():
+            cmd += ["Bash(paper-search:*)"]
         if max_turns:
             cmd += ["--max-turns", str(max_turns)]
     env = dict(os.environ)
     if tools:
-        env["PATH"] = f"{LEAN_CHECK_BIN}:{env.get('PATH', '')}"
+        _, note, env["PATH"] = tool_commands()
+        cmd[cmd.index("--system-prompt") + 1] += note
     # The CLI writes every prompt to the one-hour cache at twice the input
     # price. A single-turn call reads it back only when the whole prompt
     # repeats, which orchestration prompts do not, so caching is disabled;

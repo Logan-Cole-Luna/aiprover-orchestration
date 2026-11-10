@@ -123,7 +123,9 @@ MAX_IMPORTS_PER_USER = 20
 LIBRARY_DIR = LIBRARIES_DIR
 # A single-file library, or a package library (a folder).
 LIBRARY_NAME = re.compile(r"^[A-Za-z0-9_-]+(?:\.lean)?$")
-RESULT_PAGES = ("trace.html", "trace_replay.html", "summary.json")
+RESULT_PAGES = (
+    "trace.html", "trace_replay.html", "summary.json", "paper_search.jsonl"
+)
 # Single files of a run, by the name the page links them under.
 ROOT_FILES = {
     "standalone.lean": "*_standalone.lean",
@@ -1479,7 +1481,8 @@ def project_view(path: Path, account: str = "") -> dict:
 class ModelServer(BaseModel):
     name: str
     url: str = Field(pattern=r"^https?://")
-    api_key: str = ""
+    # API keys are not accepted while the server runs without authentication.
+    # api_key: str = ""
     model: str = ""
     kind: Literal["aiprover", "general", "hosted"] = "general"
 
@@ -1532,12 +1535,13 @@ def finish_sign_in(body: Secret, user: str = Depends(server_admin)) -> dict:
     return {"account": accounts.account("claude")}
 
 
-@app.post("/api/accounts/{service}/api-key")
-def set_api_key(
-    service: Service, body: Secret, user: str = Depends(server_admin)
-) -> dict:
-    accounts.set_api_key(service, body.value)
-    return {"account": accounts.account(service)}
+# API keys are not accepted while the server runs without authentication.
+# @app.post("/api/accounts/{service}/api-key")
+# def set_api_key(
+#     service: Service, body: Secret, user: str = Depends(server_admin)
+# ) -> dict:
+#     accounts.set_api_key(service, body.value)
+#     return {"account": accounts.account(service)}
 
 
 @app.post("/api/model-servers", status_code=201)
@@ -1548,14 +1552,14 @@ def add_model_server(
     if not model_servers.SERVER_NAME.fullmatch(body.name):
         raise HTTPException(400, "a name has letters, digits, - and _")
     url = body.url.rstrip("/")
-    served = served_models(url, body.api_key)
+    served = served_models(url, "")
     model = body.model or next(iter(served), "")
     if model not in served:
         raise HTTPException(
             400, f"the server offers {', '.join(served) or 'no model'}"
         )
     server = {"url": url, "model": model, "kind": body.kind}
-    model_servers.add_custom_server(body.name, server, body.api_key)
+    model_servers.add_custom_server(body.name, server, "")
     return {"name": body.name, "model": model}
 
 
@@ -1596,6 +1600,7 @@ class NewProject(BaseModel):
     service: Service = "claude"  # of the orchestrator and its reviewers
     # A library in libraries/ (a file or a package) instead of a new file.
     library: str = ""
+    paper_search: bool = False  # for research sessions and member runs
 
 
 @app.post("/api/projects", status_code=201)
@@ -1655,6 +1660,8 @@ def create_project(
         "gpu_group": body.gpu_group,
         "service": body.service,
         "selection": selection,
+        "paper_search": body.paper_search,
+        "settings": {"paper_search": True} if body.paper_search else {},
         "members": [],
         "created": time.time(),
     })

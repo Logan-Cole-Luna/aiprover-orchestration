@@ -232,6 +232,11 @@ class Config:
     # Keep AIProver sessions off the internet (lean/offline.py), for problems
     # whose answer may be published.
     aiprover_offline: bool = False
+    # Give the orchestrator `paper-search` (search/papers.py) over arXiv math
+    # abstracts and papers, hiding those submitted from `paper_search_before`
+    # (YYYY-MM-DD), the cutoff of a benchmark taken from arXiv.
+    paper_search: bool = False
+    paper_search_before: str = ""
     # Session time limit of a lemma's first job (s); 0 = the prover's own.
     # A short first job finds the easy lemmas before long jobs start.
     aiprover_first_job_seconds: int = 0

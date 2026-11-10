@@ -20,7 +20,8 @@ pkgs.buildEnv {
     ripgrep
     # npm: the server installs Codex when a user first needs it.
     nodejs
-    # pdftoppm and pdftotext, with which Claude reads a project's PDF sources.
+    # pdftoppm and pdftotext, with which Claude reads a project's PDF sources and the paper
+    # service converts arXiv PDFs.
     poppler-utils
     git
     curl

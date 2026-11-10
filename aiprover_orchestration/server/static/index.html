@@ -410,6 +410,7 @@ figcaption { font-size: .9rem; line-height: 1.45; color: var(--caption); margin-
         <label for="project-prover">Prover <small>what proves the lemmas</small></label>
         <select id="project-prover"></select>
         <div class="row"><button type="button" class="plain" data-add-server>Model servers</button></div>
+        <label class="check"><input type="checkbox" id="project-papers"> Search arXiv: research and the orchestrator search arXiv math abstracts and read papers</label>
         <p class="error" id="project-error"></p>
         <div class="row"><button type="submit">Create project</button></div>
       </form>
@@ -463,9 +464,11 @@ figcaption { font-size: .9rem; line-height: 1.45; color: var(--caption); margin-
       <input id="account-code" type="password" autocomplete="off">
       <div class="row"><button type="button" id="account-finish">Finish sign-in</button></div></li>
   </ol>
+  <!-- API keys are not accepted while the server runs without authentication.
   <label for="account-key">Or use an API key</label>
   <input id="account-key" type="password" autocomplete="off">
-  <div class="row"><button type="button" class="plain" id="account-save-key">Save key</button><button type="button" class="plain" id="account-cancel">Close</button></div>
+  -->
+  <div class="row"><button type="button" class="plain" id="account-cancel">Close</button></div>
   <p class="error" id="account-error"></p>
 </dialog>
 <dialog id="server-dialog">
@@ -481,8 +484,10 @@ figcaption { font-size: .9rem; line-height: 1.45; color: var(--caption); margin-
     <select id="server-kind"><option value="general">General model</option><option value="hosted">Hosted model, billed by its provider</option><option value="aiprover">AIProver</option></select>
     <label for="server-model">Model <small>empty takes the first the server offers</small></label>
     <input id="server-model">
+    <!-- API keys are not accepted while the server runs without authentication.
     <label for="server-key">API key <small>optional; never shown again</small></label>
     <input id="server-key" type="password" autocomplete="off">
+    -->
     <p class="error" id="server-error"></p>
     <div class="row"><button type="submit">Check and add</button><button type="button" class="plain" id="server-cancel">Close</button></div>
   </form>
@@ -1067,11 +1072,12 @@ $("account-finish").onclick = () => {
   accountAction(() => api("/api/accounts/claude/code", {method: "POST", body: JSON.stringify({value: code})}));
 };
 $("account-copy").onclick = () => navigator.clipboard?.writeText($("account-device").textContent).catch(() => {});
-$("account-save-key").onclick = () => {
-  const key = $("account-key").value;
-  $("account-key").value = "";
-  accountAction(() => api(`/api/accounts/${$("account-dialog").dataset.service}/api-key`, {method: "POST", body: JSON.stringify({value: key})}));
-};
+// API keys are not accepted while the server runs without authentication.
+// $("account-save-key").onclick = () => {
+//   const key = $("account-key").value;
+//   $("account-key").value = "";
+//   accountAction(() => api(`/api/accounts/${$("account-dialog").dataset.service}/api-key`, {method: "POST", body: JSON.stringify({value: key})}));
+// };
 $("account-dialog").addEventListener("close", () => clearInterval(signInPoll));
 $("home-recent").addEventListener("click", event => {
   const link = event.target.closest("[data-recent]");
@@ -1558,7 +1564,7 @@ document.addEventListener("click", async event => {
 });
 $("server-form").addEventListener("submit", async event => {
   event.preventDefault();
-  const body = {name: $("server-name").value, url: $("server-url").value, kind: $("server-kind").value, model: $("server-model").value, api_key: $("server-key").value};
+  const body = {name: $("server-name").value, url: $("server-url").value, kind: $("server-kind").value, model: $("server-model").value};
   try {
     await api("/api/model-servers", {method: "POST", body: JSON.stringify(body)});
     $("server-form").reset();
@@ -1580,7 +1586,7 @@ $("project-form").addEventListener("submit", async event => {
     }
     const {name} = await api("/api/projects" + PAGE_QUERY, {method: "POST", body: JSON.stringify({
       service: $("project-service").value, title: $("project-title").value, goal: $("project-goal").value, gpu_group: $("project-group").value, lean_release: $("project-lean").value,
-      subagent: {provider, model, effort: ""}, library})});
+      subagent: {provider, model, effort: ""}, library, paper_search: $("project-papers").checked})});
     $("project-error").textContent = "";
     const [file] = $("project-source").files;
     if (file) await api(`/api/projects/${name}/source${PAGE_QUERY}&file=${encodeURIComponent(file.name)}`, {method: "POST", body: file});

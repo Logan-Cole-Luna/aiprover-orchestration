@@ -13,6 +13,7 @@ state, the helpers the stages share, and the driver (`run`).
 
 import json
 import logging
+import os
 import threading
 import time
 from contextlib import contextmanager
@@ -131,6 +132,10 @@ class Orchestration(
         }
         specs = {"reviewer": orchestrator, "writer": orchestrator, **config.agents}
         prover = specs.get("prover") or {}
+        if config.paper_search:
+            # Read by `paper-search` and by the agents with tools.
+            os.environ["PAPER_SEARCH_LOG"] = str(self.result_dir / "paper_search.jsonl")
+            os.environ["PAPER_SEARCH_BEFORE"] = config.paper_search_before
         if config.aiprover_offline and prover.get("backend") == "aiprover":
             specs["prover"] = {**prover, "offline": True}
         agents = {

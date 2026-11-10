@@ -1,0 +1,27 @@
+# Virtualenv of the search services (the Mathlib index and arXiv paper search), built by
+# nix/venvs.nix with uv2nix. Torch is the CPU build on Linux, from PyTorch's own index; the
+# PyPI build for macOS is CPU only. Regenerate uv.lock with `uv lock` after a change.
+[project]
+name = "aiprover-search-env"
+version = "0"
+requires-python = "==3.12.*"
+dependencies = [
+    "aiohttp==3.14.3",
+    "huggingface_hub==1.28.0",
+    "numpy==2.2.6",
+    "safetensors==0.8.0",
+    "tokenizers==0.22.2",
+    "torch==2.10.0",
+    "transformers==5.15.1",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+torch = [{ index = "pytorch-cpu", marker = "sys_platform == 'linux'" }]
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true

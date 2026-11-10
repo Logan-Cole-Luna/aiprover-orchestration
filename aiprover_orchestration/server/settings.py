@@ -96,6 +96,9 @@ SETTINGS = {
         "sketch's comments, or none",
         choices=("orchestrator", "sketch", ""),
     ),
+    "paper_search": Setting(
+        "Proof search", "Orchestrator searches arXiv abstracts and reads papers"
+    ),
     "aiprover_offline": Setting(
         "AIProver", "Keep AIProver sessions off the internet"
     ),

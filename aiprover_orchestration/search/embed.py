@@ -27,10 +27,14 @@ def query_text(query: str) -> str:
 
 
 class Embedder:
-    def __init__(self, model_dir: str, device: str = "cpu"):
+    """`pooling` "last" (Qwen3-Embedding) takes the last token's state, "cls"
+    (BERT models) the first token's."""
+
+    def __init__(self, model_dir: str, device: str = "cpu", pooling: str = "last"):
         self.tokenizer = AutoTokenizer.from_pretrained(
-            model_dir, padding_side="left"
+            model_dir, padding_side="left" if pooling == "last" else "right"
         )
+        self.position = -1 if pooling == "last" else 0
         dtype = torch.float16 if device != "cpu" else torch.float32
         self.model = AutoModel.from_pretrained(model_dir, dtype=dtype)
         self.model.to(device).eval()
@@ -45,7 +49,7 @@ class Embedder:
             max_length=MAX_TOKENS,
             return_tensors="pt",
         ).to(self.device)
-        hidden = self.model(**batch).last_hidden_state[:, -1]
+        hidden = self.model(**batch).last_hidden_state[:, self.position]
         hidden = torch.nn.functional.normalize(hidden.float(), dim=-1)
         return hidden.cpu().numpy()
 

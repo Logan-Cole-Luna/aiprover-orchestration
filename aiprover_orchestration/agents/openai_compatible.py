@@ -241,12 +241,12 @@ class OpenAICompatibleAgent(Agent):
                 ],
                 None,
             )
-        workdir, note, search_path = tool_project(self.source_dir)
+        workdir, note, search_path, commands = tool_project(self.source_dir)
         try:
             session = Session(
                 str(workdir),
                 [str(LEAN_PACKAGES_DIR)],
-                ["lean-check"],
+                list(commands),
                 self.max_turns,
                 partial(
                     run_group,

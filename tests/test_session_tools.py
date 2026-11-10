@@ -14,7 +14,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from aiprover_orchestration.agents import openai_compatible, session_tools
+import numpy as np
+
+from aiprover_orchestration.agents import common, openai_compatible, session_tools
 from aiprover_orchestration.agents.base import BudgetExhausted, billed_tokens
 from aiprover_orchestration.agents.codex_cli import command, token_usage
 from aiprover_orchestration.agents.common import failed_call
@@ -22,7 +24,8 @@ from aiprover_orchestration.agents.pool import AgentPool
 from aiprover_orchestration.lean import tool_check
 from aiprover_orchestration.lean.sandbox import abi_version
 from aiprover_orchestration.orchestrator import libraries, project_tasks
-from aiprover_orchestration.server import models
+from aiprover_orchestration.search import arxiv_index, paper_search, papers
+from aiprover_orchestration.server import models, settings
 
 
 def tool_call(name: str, **arguments) -> dict:
@@ -225,7 +228,7 @@ class SessionRestrictionsTest(unittest.TestCase):
                 work.mkdir()
                 with mock.patch.object(
                     openai_compatible, "tool_project",
-                    return_value=(work, " note", ""),
+                    return_value=(work, " note", "", ("lean-check",)),
                 ):
                     agent = openai_compatible.OpenAICompatibleAgent(
                         "m",
@@ -256,7 +259,7 @@ class SessionRestrictionsTest(unittest.TestCase):
                     work.mkdir()
                     with mock.patch.object(
                         openai_compatible, "tool_project",
-                        return_value=(work, "", ""),
+                        return_value=(work, "", "", ("lean-check",)),
                     ):
                         completion = openai_compatible.OpenAICompatibleAgent(
                             "m",
@@ -358,3 +361,53 @@ class SessionRestrictionsTest(unittest.TestCase):
                 )["orchestrator"], {})
             self.assertEqual(spec["backend"], "openai_compatible")
             self.assertTrue(spec["hosted"] and spec["tools"])
+        with self.subTest("paper search is local, delimited, logged, and off by default"):
+            self.check_paper_search()
+
+    def check_paper_search(self):
+        page = b"""<OAI-PMH xmlns="http://www.openarchives.org/OAI/2.0/"><ListRecords>
+<record><metadata><arXiv xmlns="http://arxiv.org/OAI/arXiv/"><id>2604.00001</id>
+<created>2026-04-01</created><authors><author><keyname>Noether</keyname>
+<forenames>Emmy</forenames></author></authors><title>Rings  and
+ideals</title><categories>math.AC</categories><abstract> On ideals. </abstract>
+</arXiv></metadata></record><resumptionToken cursor="0"></resumptionToken>
+</ListRecords></OAI-PMH>"""
+        found, token = arxiv_index.records(page)
+        self.assertEqual((found[0]["title"], found[0]["authors"], token),
+                         ("Rings and ideals", "Emmy Noether", ""))
+        for good in ("2604.26311", "2604.26311v2", "math/0601001", "math.AG/0601001v1"):
+            self.assertTrue(papers.ARXIV_ID.fullmatch(good), good)
+        for bad in ("https://evil.org/x", "../etc/passwd", "2604.26311 x", ""):
+            self.assertFalse(papers.ARXIV_ID.fullmatch(bad), bad)
+        index = object.__new__(papers.Papers)
+        index.documents = [{"id": "a", "date": "2019-05-01"}, {"id": "b", "date": "2021-01-01"}]
+        index.dates = np.array([d["date"] for d in index.documents])
+        index.vectors = np.eye(2, dtype=np.float32)
+        index.embedder = lambda texts: np.array([[0.0, 1.0]], dtype=np.float32)
+        index.lock = threading.Lock()
+        # "b" ranks first by embedding; "a", first by keywords, also ranks second
+        # by embedding, so the fusion puts it first.
+        index.keywords = SimpleNamespace(scores=lambda query: np.array([2.0, 0.0]))
+        self.assertEqual([d["id"] for d in index.search("q", 5, "")], ["a", "b"])
+        self.assertEqual([d["id"] for d in index.search("q", 5, "2020-01-01")], ["a"])
+        reply = {"results": [{"id": "2604.00001", "date": "2026-04-01",
+                              "title": "Rings", "authors": "E", "abstract": "On ideals."}]}
+        server = scripted_endpoint([reply], received := [])
+        with tempfile.TemporaryDirectory() as folder:
+            log = Path(folder) / "log.jsonl"
+            environment = {"PAPER_SEARCH_LOG": str(log), "PAPER_SEARCH_BEFORE": "2027-01-01"}
+            with mock.patch.dict(os.environ, environment), mock.patch.object(
+                paper_search, "SERVICE", f"http://127.0.0.1:{server.server_port}"
+            ):
+                shown = paper_search.main(["ideals", "-n", "3"])
+                self.assertIn("paper-search", common.tool_commands()[0])
+            self.assertTrue(shown.startswith(paper_search.HEADER))
+            self.assertIn('<paper id="2604.00001" date="2026-04-01">', shown)
+            self.assertEqual(received[0], {"query": "ideals", "top_k": 3, "before": "2027-01-01"})
+            self.assertEqual(json.loads(log.read_text())["ids"], ["2604.00001"])
+        server.shutdown()
+        server.server_close()
+        with mock.patch.dict(os.environ):
+            os.environ.pop("PAPER_SEARCH_LOG", None)
+            self.assertEqual(common.tool_commands()[0], ("lean-check",))
+        self.assertEqual(settings.validate({"paper_search": True}), {"paper_search": True})

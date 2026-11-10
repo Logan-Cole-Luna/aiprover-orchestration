@@ -23,6 +23,11 @@ in
     name = "vibe";
     project = ./python/vibe;
   };
+  # The search services: Mathlib index and arXiv paper search (CPU torch).
+  venv-search = virtualenv {
+    name = "search";
+    project = ./python/search;
+  };
   # The three lean-lsp-mcp fixes of AIProver/AIProver_plugin/setup.sh (step_venvs).
   venv-mcp = virtualenv {
     name = "mcp";
