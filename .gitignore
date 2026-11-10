@@ -44,6 +44,9 @@ logs/
 results/
 libraries/
 lean_releases/
+# Links to scratch that scripts/slurm/setup.sh and lean_release.sh make.
+/aiprover
+/lean_releases
 data/*
 !data/openai_math.jsonl
 analysis/

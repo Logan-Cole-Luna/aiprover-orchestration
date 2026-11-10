@@ -1,6 +1,6 @@
 # systemd user unit of the web server (aiprover_orchestration/server/app.py).
 # Install with scripts/systemd/install aiprover_query_server, which fills in
-# @ROOT@ (the checkout), @PYTHON@ (its interpreter), and @HOME@.
+# @ROOT@ (the checkout), @PYTHON@ (its interpreter), @HOME@, and @ENVIRONMENT@ (see install).
 [Unit]
 Description=AIProver orchestration query server
 After=network-online.target
@@ -12,7 +12,7 @@ Environment=PATH=@PYTHON_DIR@:@HOME@/.elan/bin:@HOME@/.local/bin:/usr/local/bin:
 Environment=QUERY_SERVER_AUTH=off
 # Runs in progress at once per GPU group; they share its model server.
 Environment=QUERY_SERVER_MAX_RUNS=2
-ExecStart=@PYTHON@ -m uvicorn aiprover_orchestration.server.app:app --host 0.0.0.0 --port 8443 --workers 1
+ExecStart=/bin/bash -c '@ENVIRONMENT@ exec @PYTHON@ -m uvicorn aiprover_orchestration.server.app:app --host 0.0.0.0 --port 8443 --workers 1'
 # Runs are started in their own session; on a restart the server adopts or
 # resumes them, so only the server process is stopped.
 KillMode=process

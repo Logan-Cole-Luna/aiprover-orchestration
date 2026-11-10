@@ -68,7 +68,7 @@ PROBLEM_DIR = STATE_DIR / "problems"
 DATASET = DATA_DIR / "val_JiatuBook_unlabelled.jsonl"
 # The run configuration of the page, before the selected models: the site's,
 # else the generic one, whose prover uses the model server of ./setup.
-CONFIG = ROOT / SITE.get("served_config", "configs/orchestrator/standard.json")
+CONFIG = ROOT / SITE.get("served_config", "configs/orchestrator/default.json")
 # Per-phase orchestrator settings applied to a run whose options set
 # `orchestrator_phases` (our own runs); other runs use the selected model as is.
 ORCHESTRATOR_PHASES = CONFIG_DIR / "orchestrator" / "orchestrator_phases.json"

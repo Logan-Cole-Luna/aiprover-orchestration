@@ -4,7 +4,7 @@
 # that need the network, which compute nodes lack, and submits the builds as CPU
 # jobs, since a login node runs nothing heavy.
 #
-#   bash scripts/slurm/setup.sh [--claude] [--no-build]
+#   bash scripts/slurm/setup.sh [--claude] [--codex] [--search] [--no-build]
 #
 # Each step is skipped when its result exists:
 #   1. the AIProver/ submodule (the harness)
@@ -15,23 +15,32 @@
 #   4. elan's Lean toolchain and the harness's Lean project (Mathlib, REPL,
 #      cslib) at AIPROVER_LEAN_PROJECT with Mathlib's prebuilt oleans;
 #      orchestration_workspace/ links its packages
-#   5. with --claude, the claude CLI, whose login in ~/.claude compute nodes share
+#   5. with --claude or --codex, that client. Hosted roles run the client on the
+#      compute node of the run, which shares the home directory and so the login
+#      of the login node (`claude`, then /login; `codex login`), and reaches the
+#      provider through the SSH session of the run job.
+#      With --search, the virtualenv of the paper search and its arXiv index.
 #   6. with AIPROVER_MODEL, the virtualenv VLLM_VENV with vLLM, unless it exists
 #   7. CPU jobs: the Lean builds, then the packs of scripts/slurm/pack.sh (the
 #      Lean project, and the vLLM virtualenv VLLM_VENV with its Python, if set)
 #
+# The script first checks its prerequisites. VLLM_VERSION selects the vLLM release.
 # configs/aiprover/slurm.toml names these paths. The account is SBATCH_ACCOUNT.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 cd "$ROOT"
 . "$ROOT/scripts/slurm/env.sh"
 CLAUDE=no
+CODEX=no
+SEARCH=no
 BUILD=yes
 while [ $# -gt 0 ]; do
   case "$1" in
     --claude) CLAUDE=yes ;;
+    --codex) CODEX=yes ;;
+    --search) SEARCH=yes ;;
     --no-build) BUILD=no ;;
-    -h|--help) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option $1" >&2; exit 2 ;;
   esac
   shift
@@ -39,14 +48,43 @@ done
 LEAN_TOOLCHAIN="leanprover/lean4:v4.23.0"
 LEAN_PROJECT="$AIPROVER_LEAN_PROJECT"
 RG_VERSION=14.1.1
-export PATH="$HOME/.elan/bin:$HOME/.local/bin:$PATH"
+# The vLLM release that serves the model (VLLM_VERSION overrides it), and the free space in GB
+# that the Lean project, Mathlib files, and the vLLM environment need together.
+VLLM_VERSION="${VLLM_VERSION:-0.26.0}"
+MIN_FREE_GB=40
+export PATH="$ELAN_HOME/bin:$HOME/.local/bin:$PATH"
 # Login nodes cap a user's threads; uv sizes its pools by the node's cores
 # and panics ("failed to initialize global rayon pool") without these.
 export RAYON_NUM_THREADS="${RAYON_NUM_THREADS:-4}" UV_CONCURRENT_INSTALLS="${UV_CONCURRENT_INSTALLS:-4}" \
        UV_CONCURRENT_DOWNLOADS="${UV_CONCURRENT_DOWNLOADS:-8}" UV_CONCURRENT_BUILDS="${UV_CONCURRENT_BUILDS:-2}"
 step() { printf '\n==> %s\n' "$*"; }
 ok() { printf '    ok: %s\n' "$*"; }
-command -v uv >/dev/null || { echo "uv is needed: curl -LsSf https://astral.sh/uv/install.sh | sh" >&2; exit 1; }
+# Check what the steps below need, and report every problem at once.
+preflight() {
+  local problems=() parent
+  for tool in git curl tar uv; do
+    command -v "$tool" >/dev/null || problems+=("$tool is not on PATH${tool/uv/ (curl -LsSf https://astral.sh/uv/install.sh | sh)}")
+  done
+  [ "$BUILD" = no ] || command -v sbatch >/dev/null || problems+=("sbatch is not on PATH (--no-build skips the jobs)")
+  parent=$(dirname "$LEAN_PROJECT")
+  mkdir -p "$parent" 2>/dev/null
+  [ -w "$parent" ] || problems+=("$parent is not writable; set AIPROVER_LEAN_PROJECT")
+  if [ -n "${AIPROVER_MODEL:-}" ] && [ ! -e "$AIPROVER_MODEL/config.json" ] && [ ! -e "$AIPROVER_MODEL/params.json" ]; then
+    problems+=("AIPROVER_MODEL=$AIPROVER_MODEL has no config.json or params.json")
+  fi
+  if [ "${#problems[@]}" -gt 0 ]; then
+    printf 'setup: %s\n' "${problems[@]}" >&2
+    exit 1
+  fi
+  if [ "$(df -Pk "$parent" | awk 'NR==2 {print int($4 / 1048576)}')" -lt "$MIN_FREE_GB" ]; then
+    echo "setup: warning: less than $MIN_FREE_GB GB is free in $parent" >&2
+  fi
+}
+preflight
+# The virtualenvs hold many small files, which suit scratch better than a home directory.
+if [ ! -e aiprover ] && [ -n "${SCRATCH:-}" ]; then
+  mkdir -p "$SCRATCH/aiprover_envs" && ln -s "$SCRATCH/aiprover_envs" aiprover
+fi
 
 step "Harness: AIProver/ submodule"
 if [ -x AIProver/AIProver_plugin/bin/aiprover ] || [ -e aiprover/harness ]; then
@@ -93,7 +131,7 @@ else
 fi
 
 step "Lean: $LEAN_TOOLCHAIN and the harness's Lean project"
-if [ ! -x "$HOME/.elan/bin/elan" ]; then
+if [ ! -x "$ELAN_HOME/bin/elan" ]; then
   curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh \
     | sh -s -- -y --default-toolchain none --no-modify-path
 fi
@@ -103,12 +141,26 @@ for f in lakefile.lean lake-manifest.json lean-toolchain; do
   [ -f "$LEAN_PROJECT/$f" ] || cp "AIProver/AIProver_plugin/setup/lean_project/$f" "$LEAN_PROJECT/$f"
 done
 [ -f "$LEAN_PROJECT/TmpProjDir.lean" ] || echo "-- library root (intentionally empty)" > "$LEAN_PROJECT/TmpProjDir.lean"
+# An interrupted download leaves a package checkout with an emptied index or
+# stray files, and lake then fails to check out its revision; resetting the
+# checkout to its HEAD lets lake continue.
+repair_packages() {
+  for package in "$LEAN_PROJECT"/.lake/packages/*/; do
+    [ -e "$package/.git" ] || continue
+    if ! git -C "$package" diff --quiet HEAD 2>/dev/null \
+       || [ -n "$(git -C "$package" ls-files --others --exclude-standard | head -n 1)" ]; then
+      git -C "$package" reset -q --hard HEAD && git -C "$package" clean -fdq
+    fi
+  done
+}
 # Fetching Mathlib's prebuilt files hashes every file of the project, which is
 # slow on a shared file system, so it runs once; the marker records that it did.
 if [ -e "$LEAN_PROJECT/.cache_fetched" ]; then
   ok "Mathlib's files fetched"
 else
-  (cd "$LEAN_PROJECT" && lake exe cache get) && touch "$LEAN_PROJECT/.cache_fetched"
+  repair_packages
+  (cd "$LEAN_PROJECT" && lake exe cache get)
+  touch "$LEAN_PROJECT/.cache_fetched"
 fi
 mkdir -p orchestration_workspace/.lake
 [ -e orchestration_workspace/.lake/packages ] \
@@ -126,10 +178,30 @@ if [ "$CLAUDE" = yes ]; then
     || echo "    run \`claude\` once and /login, or set ANTHROPIC_API_KEY"
 fi
 
+if [ "$CODEX" = yes ]; then
+  step "codex CLI"
+  if command -v codex >/dev/null; then
+    ok "$(codex --version 2>/dev/null | head -1)"
+  elif command -v npm >/dev/null; then
+    npm install -g --prefix "$HOME/.local" @openai/codex
+  else
+    echo "    npm is needed (on a cluster, load a Node.js module first)" >&2
+  fi
+  echo "    run \`codex login\`, or set OPENAI_API_KEY"
+fi
+
+if [ "$SEARCH" = yes ]; then
+  step "Paper search: virtualenv and arXiv index"
+  UV_PROJECT_ENVIRONMENT="$ROOT/aiprover/venv_search" uv sync -q --frozen --python 3.12 --project nix/python/search
+  aiprover/venv_search/bin/hf download LoganLuna/aiprover-arxiv-math-index --repo-type dataset \
+    --local-dir data/arxiv_index
+  ok "data/arxiv_index; start the service with scripts/systemd/install aiprover_paper_search"
+fi
+
 if [ -n "${AIPROVER_MODEL:-}" ] && [ ! -x "$VLLM_VENV/bin/vllm" ]; then
   step "vLLM virtualenv: $VLLM_VENV"
   uv venv -q --python 3.12 "$VLLM_VENV"
-  VIRTUAL_ENV="$VLLM_VENV" uv pip install -q vllm
+  VIRTUAL_ENV="$VLLM_VENV" uv pip install -q "vllm==$VLLM_VERSION"
 fi
 
 if [ "$BUILD" = yes ]; then

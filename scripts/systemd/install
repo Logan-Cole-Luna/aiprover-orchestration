@@ -2,8 +2,9 @@
 # Install systemd user units of this directory for this checkout and account, then enable and
 # start them. The units name the checkout as @ROOT@, the home directory as @HOME@, and the
 # interpreter as @PYTHON@ (its directory @PYTHON_DIR@): the one ./setup builds
-# (aiprover/nix/venv_search for the search services, aiprover/nix/tools otherwise), unless
-# AIPROVER_PYTHON names another.
+# (aiprover/nix/venv_search for the search services, aiprover/nix/tools otherwise), or
+# the one scripts/slurm/setup.sh builds, unless AIPROVER_PYTHON names another. @ENVIRONMENT@
+# is the Slurm environment (scripts/slurm/env.sh) of a checkout without Nix, else empty.
 #
 #   scripts/systemd/install aiprover_query_server aiprover_paper_search ...
 set -eu
@@ -15,12 +16,19 @@ for unit in "$@"; do
   source="$root/scripts/systemd/$unit.service"
   [ -f "$source" ] || { echo "no unit $source" >&2; exit 1; }
   case $unit in
-    *mathlib_index|*paper_search) python=$root/aiprover/nix/venv_search/bin/python3 ;;
-    *) python=$root/aiprover/nix/tools/bin/python3 ;;
+    *mathlib_index|*paper_search) python=$root/aiprover/nix/venv_search/bin/python3
+      [ -x "$python" ] || python=$root/aiprover/venv_search/bin/python3 ;;
+    *) python=$root/aiprover/nix/tools/bin/python3
+      [ -x "$python" ] || python=$root/aiprover/venv_tools/bin/python3 ;;
   esac
   python=${AIPROVER_PYTHON:-$python}
+  # Without Nix, the checkout was set up for Slurm (scripts/slurm/setup.sh), and the
+  # service starts with that environment.
+  environment=
+  [ -d "$root/aiprover/nix" ] || environment=". $root/scripts/slurm/env.sh;"
   sed -e "s|@ROOT@|$root|g" -e "s|@PYTHON@|$python|g" \
       -e "s|@PYTHON_DIR@|$(dirname "$python")|g" -e "s|@HOME@|$HOME|g" \
+      -e "s|@ENVIRONMENT@|$environment|g" \
       "$source" > "$units/$unit.service"
   echo "installed $units/$unit.service ($python)"
 done

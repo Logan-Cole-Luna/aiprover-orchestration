@@ -41,7 +41,7 @@ import json, os, sys, time
 from aiprover_orchestration.orchestrator import prompts
 from aiprover_orchestration.orchestrator.config import ALGORITHM, LEAN_ENVIRONMENT
 run, problem, theorem, orchestrator, prover_kind = sys.argv[1:]
-config = json.load(open("configs/orchestrator/standard.json"))
+config = json.load(open("configs/orchestrator/default.json"))
 prover = {**config.pop("agents")["prover"], "config": os.environ["AIPROVER_CONFIG"]}
 if prover_kind == "claude":
     prover = {"backend": "claude_code", "model": "sonnet"}

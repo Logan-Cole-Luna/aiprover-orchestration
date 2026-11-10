@@ -24,6 +24,13 @@ class MatchingTest(unittest.TestCase):
         self.assertIsNone(releases.matching_tags("v4.36.0", TAGS))
         self.assertEqual(set(releases.offers(TAGS)), {"v4.35.0", "v4.34.1"})
 
+    def test_a_release_is_read_from_a_name_or_a_link_but_not_from_a_candidate(self):
+        link = "https://github.com/leanprover/lean4/releases/tag/v4.28.0"
+        self.assertEqual((releases.release_of("v4.28.0"), releases.release_of(link)), ("v4.28.0",) * 2)
+        for text in ("v4.28.0-rc1", "latest"):
+            with self.assertRaises(SystemExit):
+                releases.release_of(text)
+
     def test_a_requested_release_cannot_leave_its_folder(self):
         self.assertFalse(releases.is_installed("../results/run"))
 

@@ -7,7 +7,7 @@ problem, from a dataset or from files, and a config that names the models.
 
 ```bash
 PY=aiprover/nix/tools/bin/python3
-RUN="$PY -m aiprover_orchestration.orchestrator.run --config configs/orchestrator/standard.json"
+RUN="$PY -m aiprover_orchestration.orchestrator.run --config configs/orchestrator/default.json"
 
 # A problem from a dataset: a JSONL file of rows with `uuid`,
 # `informal_statement`, and `informal_proof`.
@@ -29,7 +29,7 @@ $PY -m aiprover_orchestration.orchestrator.run --run-id my_result --resume
 
 | Flag | Effect |
 | --- | --- |
-| `--config FILE` | Models of each role and default settings: `standard.json` (the page's defaults, AIProver on the `./setup` server) or `claude.json` (hosted models only) |
+| `--config FILE` | Models of each role and default settings: `default.json` (Claude roles and the AIProver prover on the `./setup` server; the page's defaults), `aiprover.json` (AIProver in every role), `claude.json`, `codex.json`, or `codex_aiprover.json` |
 | `--dataset FILE`, `--problem-uuid ID` | A problem from a dataset |
 | `--statement FILE`, `--proof FILE` | A problem as files: an informal statement, and its proof if any |
 | `--formal-statement FILE` | A Lean statement to prove as given (with `--mode prove`) |
@@ -71,7 +71,7 @@ A project is a file `data/projects/<name>.json` (format in
 
 ```bash
 P="$PY -m aiprover_orchestration.orchestrator.project"
-$P run <name> --config configs/orchestrator/standard.json    # prove its results in order
+$P run <name> --config configs/orchestrator/default.json    # prove its results in order
 $P task <name> research "Which lemmas does the main theorem need?"
 $P task <name> check "<claim>"                               # referee one claim
 $P task <name> paper                                          # write the paper

@@ -30,7 +30,7 @@ max_turns = 100
 
 [paths]
 lean_project = "$AIPROVER_LEAN_PROJECT"
-elan_home = "~/.elan"
+elan_home = "$ELAN_HOME"
 vibe_venv = "$AIPROVER_ORCHESTRATION_ROOT/aiprover/venv_vibe"
 mcp_venv = "$AIPROVER_ORCHESTRATION_ROOT/aiprover/venv_mcp"
 rg_dir = "$AIPROVER_ORCHESTRATION_ROOT/aiprover/bin"

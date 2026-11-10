@@ -79,7 +79,8 @@ slurm.spec_path("r2").write_text(json.dumps({
     "environment": {"AIPROVER_CONFIG": "configs/aiprover/slurm.toml"}, "config": str(config), "group": "g",
 }))
 code = slurm.job_main(slurm.spec_path("r2"))
-agents = json.loads(config.read_text())["agents"]
+job_config = config.with_name("r2.config.job.json")
+agents = json.loads((job_config if job_config.exists() else config).read_text())["agents"]
 print(json.dumps([
     code, slurm.outcome("r2"), agents["captain"]["base_url"], agents["solver"]["config"],
     Path(agents["solver"]["config"]).read_text(), json.loads(seen.read_text()) if seen.exists() else None,
@@ -151,6 +152,21 @@ print(json.dumps([
 ]))
 """
 
+RESUME = """
+import json, os, sys
+from pathlib import Path
+from aiprover_orchestration.paths import RESULTS_DIR
+from aiprover_orchestration.server import model_servers, slurm
+
+model_servers.remote = lambda command, timeout=60: model_servers.run_command(["bash", "-c", command], timeout)
+(RESULTS_DIR / "b5").mkdir(parents=True, exist_ok=True)
+(RESULTS_DIR / "b5" / "trace.json").write_text("{}")
+sys.argv = ["slurm", "submit", "--resume", "b5"]
+slurm.main()
+spec = json.loads(slurm.spec_path("b5").read_text())
+print(json.dumps([sorted(json.loads(Path(spec["config"]).read_text())["agents"]), spec["arguments"], spec["group"]]))
+"""
+
 HOSTS = """
 import json
 from aiprover_orchestration.server import slurm
@@ -169,6 +185,25 @@ from aiprover_orchestration.server import model_servers as servers
 
 group = servers.GPU_GROUPS["slurm"]
 print(json.dumps([servers.DEFAULT_GROUP, servers.LOCAL_CLUSTER, servers.CHECKPOINTS, group.job_name, group.checkpoint]))
+"""
+
+LIST = """
+import contextlib, io, json, os, sys
+from pathlib import Path
+from aiprover_orchestration.paths import RESULTS_DIR
+from aiprover_orchestration.server import slurm
+
+(Path(os.environ["FAKE_SLURM"]) / "queue").write_text("4242|aiprover_run_q1|RUNNING\\n")
+for run_id, summary in (("done1", {"status": "proved"}), ("halted", None)):
+    (RESULTS_DIR / run_id).mkdir(parents=True, exist_ok=True)
+    (RESULTS_DIR / run_id / "trace.json").write_text("{}")
+    if summary:
+        (RESULTS_DIR / run_id / "summary.json").write_text(json.dumps(summary))
+sys.argv = ["slurm", "list"]
+listing = io.StringIO()
+with contextlib.redirect_stdout(listing):
+    slurm.main()
+print(json.dumps(listing.getvalue().splitlines()))
 """
 
 WORKER = """
@@ -344,6 +379,20 @@ class SlurmTest(ServerProcessTest):
         )
         self.assertEqual((default, local, checkpoints), ("slurm", True, {"trained": "/weights"}))
         self.assertEqual((job_name, checkpoint), ("aiprover_server", "trained"))
+
+    def test_the_list_shows_queued_runs_before_finished_ones_with_their_states(self):
+        lines = self.run_python(LIST, **self.environment)
+        rows = [line.split("\t") for line in lines]
+        self.assertEqual(rows[0], ["q1", "RUNNING", "4242"])
+        self.assertEqual({tuple(row[:2]) for row in rows[1:]}, {("done1", "proved"), ("halted", "stopped")})
+
+    def test_a_resumed_run_keeps_the_config_and_group_of_its_submission(self):
+        self.run_python(BATCH, "", "b5", **self.environment)
+        agents, arguments, group = self.run_python(RESUME, **self.environment)
+        self.assertEqual(agents, ["captain", "solver"])  # run.json of BATCH, not the default config
+        self.assertIn("--resume", arguments)
+        self.assertNotIn("--problem-uuid", arguments)
+        self.assertEqual(group, "g")
 
     def test_the_hosts_of_hosted_models_come_from_the_roles(self):
         hosts = self.run_python(HOSTS, **self.environment)

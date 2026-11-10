@@ -1,0 +1,110 @@
+{
+  "_comment": [
+    "Codex in the orchestrator, checker, reviewer, and writer roles, and the AIProver model as prover.",
+    "Keys that start with an underscore are comments and are ignored.",
+    "A copy of this file with other models or limits is a new configuration (--config FILE)."
+  ],
+  "_roles": {
+    "orchestrator": "Formalizes the problem, plans the proof as lemmas, and takes the lemmas that the prover could not prove.",
+    "checker": "Audits each formal statement against the informal one and judges each sketch.",
+    "reviewer": "Referees the verified file against the source; a run is proved only if the reviewer finds it faithful.",
+    "writer": "Writes the report and the informal proof.",
+    "prover": "Proves each lemma. The backend aiprover runs the AIProver harness on the model server of the site."
+  },
+  "_agent_fields": {
+    "backend": "claude or codex (the provider's client), openai_compatible (any server with that API), or aiprover (the harness).",
+    "model": "The model name; the AIProver server is served as aiprover.",
+    "base_url": "Address of an openai_compatible role. http://127.0.0.1:18575/v1 is the model server of the default GPU group (the run job substitutes its own proxy). An address outside the cluster is called through the egress session.",
+    "group": "Name of a GPU group in configs/site.json whose server hosts an openai_compatible model.",
+    "api_key_file": "Absolute path of a file with the key of an external API.",
+    "tools": "Whether the role may use the Lean tools.",
+    "effort": "Reasoning effort of a hosted role.",
+    "timeout": "Seconds allowed for one call; for the prover, for one job.",
+    "max_output_tokens": "Tokens allowed in one reply.",
+    "config / max_turns": "Prover only: the harness configuration, and the turns of one session.",
+    "phases": "Overrides for the phases of a role whose names start with the key, for example judge or escalation."
+  },
+  "agents": {
+    "orchestrator": {
+      "timeout": 2400,
+      "max_output_tokens": 128000,
+      "backend": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "high",
+      "tools": true,
+      "phases": {
+        "judge": {
+          "tools": false
+        },
+        "escalation": {
+          "backend": "codex",
+          "model": "gpt-6.1-sol",
+          "effort": "high",
+          "tools": true
+        }
+      }
+    },
+    "checker": {
+      "backend": "codex",
+      "model": "gpt-6.1-sol",
+      "tools": false
+    },
+    "reviewer": {
+      "timeout": 2400,
+      "max_output_tokens": 128000,
+      "backend": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "high",
+      "tools": false
+    },
+    "writer": {
+      "timeout": 2400,
+      "max_output_tokens": 128000,
+      "backend": "codex",
+      "model": "gpt-6.1-sol",
+      "effort": "high",
+      "tools": false
+    },
+    "prover": {
+      "backend": "aiprover",
+      "model": "aiprover",
+      "config": "orchestration_plugin/aiprover.toml",
+      "timeout": 3600,
+      "max_turns": 200
+    }
+  },
+  "_options": {
+    "mode": "autoformalize translates the informal proof of the problem; prove searches for a proof.",
+    "workers": "Parallel prover chains per lemma.",
+    "max_repairs": "Rounds of Lean error feedback per chain.",
+    "max_replans": "Revisions of the proof sketch after failed lemmas.",
+    "max_audit_rounds": "Revisions of the formalization after a checker finds it unfaithful.",
+    "lean_parallel": "Concurrent Lean checks of this run.",
+    "lean_timeout": "Seconds allowed for one Lean check.",
+    "max_hosted_calls": "Calls to hosted models per run; 0 is unlimited.",
+    "max_hosted_usd": "Cost of hosted calls per run, in USD at list prices; 0 is unlimited.",
+    "aiprover_attempts_per_lemma": "Failed attempts allowed per lemma statement.",
+    "aiprover_session_slots": "AIProver sessions that share one model server; 0 is one job's workers.",
+    "aiprover_job_sessions": "Sessions of one AIProver job; 0 is no limit.",
+    "aiprover_escalation_after": "Failed jobs after which a lemma goes back to the orchestrator; 0 is never.",
+    "max_escalations": "Escalations per run; 0 is unlimited.",
+    "library": "A library of verified results to build on; empty for none. See libraries.py.",
+    "final_hosted_calls": "Hosted calls kept for the final review and the report."
+  },
+  "mode": "autoformalize",
+  "workers": 2,
+  "max_repairs": 4,
+  "max_replans": 2,
+  "max_audit_rounds": 2,
+  "lean_parallel": 4,
+  "lean_timeout": 300,
+  "max_hosted_calls": 40,
+  "max_hosted_usd": 50,
+  "aiprover_attempts_per_lemma": 5,
+  "aiprover_session_slots": 8,
+  "aiprover_job_sessions": 3,
+  "aiprover_escalation_after": 2,
+  "max_escalations": 12,
+  "library": "",
+  "final_hosted_calls": 8
+}

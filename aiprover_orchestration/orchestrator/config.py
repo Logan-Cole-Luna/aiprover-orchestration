@@ -19,8 +19,12 @@ MAIN_NAME = "solution"
 
 def current_names(values: dict) -> dict:
     """`values` with each setting, and each role of its agents, under its
-    current name."""
-    return modernize(values)
+    current name, and without comments (keys that start with an underscore)."""
+    return {
+        key: value
+        for key, value in modernize(values).items()
+        if not key.startswith("_")
+    }
 
 
 LEAN_ENVIRONMENT = {

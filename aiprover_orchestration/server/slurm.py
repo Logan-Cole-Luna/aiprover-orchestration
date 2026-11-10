@@ -464,12 +464,16 @@ def job_main(spec_file: Path) -> int:
             prepare_prover(agents, run_id, endpoints[used.name], contexts[used.name], environment)
     for agent in agents:
         served = agent.get("group") or (group.name if group and agent.get("base_url") == group.endpoint else "")
-        if served:
+        if served in endpoints:
             agent["base_url"] = endpoints[served]
             if contexts[served]:
                 agent.setdefault("max_context", contexts[served])
+    arguments = spec["arguments"]
     if config_file:
-        config_file.write_text(json.dumps(config, indent=1))
+        # The submitted config stays as it is, so that a resubmission starts from it.
+        job_config = config_file.with_name(f"{config_file.stem}.job.json")
+        job_config.write_text(json.dumps(config, indent=1))
+        arguments = [str(job_config) if argument == str(config_file) else argument for argument in arguments]
 
     allow = hosted_hosts(agents)
     if allow and os.environ.get("AIPROVER_EGRESS", "ssh") == "ssh":
@@ -484,7 +488,7 @@ def job_main(spec_file: Path) -> int:
     for name in ("NO_PROXY", "no_proxy"):
         environment[name] = ",".join([*no_proxy, environment.get(name, "")]).strip(",")
 
-    child = subprocess.Popen(spec["arguments"], cwd=ROOT, env=environment)
+    child = subprocess.Popen(arguments, cwd=ROOT, env=environment)
     signalled = []
 
     def forward(signum, _frame):
@@ -516,18 +520,29 @@ def submit(args) -> None:
     from ..orchestrator import libraries
     from . import jobs
 
-    group = model_servers.GPU_GROUPS[args.group]
-    config = jobs.group_config(json.loads(Path(args.config or jobs.CONFIG).read_text()), group)
-    # The group named on the command line serves every prover of the run.
+    suffix = args.problem_uuid.rsplit("_", 1)[-1] if args.problem_uuid else "files"
+    run_id = args.resume or args.run_id or f"{time.strftime('%Y%m%d_%H%M%S')}_{suffix}"
+    previous = {}
+    if args.resume:
+        resumable(run_id)
+        # A resumed run keeps the settings of its last submission unless given anew.
+        try:
+            previous = json.loads(spec_path(run_id).read_text())
+        except (OSError, ValueError):
+            pass
+        before = previous.get("arguments", [])
+        args.lean_release = args.lean_release or previous.get("environment", {}).get("AIPROVER_LEAN_RELEASE", "")
+        if not args.library and "--library" in before:
+            args.library = before[before.index("--library") + 1]
+    elif not (args.problem_uuid or args.statement):
+        raise SystemExit("--problem-uuid or --statement is needed for a new run")
+    group = model_servers.GPU_GROUPS[args.group or previous.get("group") or model_servers.DEFAULT_GROUP]
+    source = args.config or (previous.get("config") if Path(previous.get("config", "")).is_file() else "") or jobs.CONFIG
+    config = jobs.group_config(json.loads(Path(source).read_text()), group)
+    # The group of the run serves every prover of the run.
     for agent in config["agents"].values():
         if agent.get("backend") == "aiprover":
             agent["config"] = group.prover_config
-    suffix = args.problem_uuid.rsplit("_", 1)[-1] if args.problem_uuid else "files"
-    run_id = args.resume or args.run_id or f"{time.strftime('%Y%m%d_%H%M%S')}_{suffix}"
-    if args.resume:
-        resumable(run_id)
-    elif not (args.problem_uuid or args.statement):
-        raise SystemExit("--problem-uuid or --statement is needed for a new run")
     if run_id in (run_jobs() or {}):
         raise SystemExit(f"run {run_id} already has a job")
     config_path = TEMP_DIR / f"{run_id}.config.json"
@@ -563,10 +578,11 @@ def submit(args) -> None:
     if args.library and libraries.is_package(args.library):
         environment["AIPROVER_LIBRARY_PACKAGE"] = str(libraries.resolve(args.library))
     if args.lean_release:
-        if not releases.is_installed(args.lean_release):
-            raise SystemExit(f"Lean {args.lean_release} is not installed (lean/releases.py)")
+        release = releases.release_of(args.lean_release)
+        if not releases.is_installed(release):
+            raise SystemExit(f"Lean {release} is not installed: bash scripts/slurm/lean_release.sh {release}")
         environment |= jobs.release_environment(
-            args.lean_release, group.tunnel_config if group in groups else None, config["agents"]
+            release, group.tunnel_config if group in groups else None, config["agents"]
         )
     if "AIPROVER_LIBRARY_PACKAGE" in environment:
         jobs.library_search(environment, config["agents"], Path(args.library).name)
@@ -576,6 +592,27 @@ def submit(args) -> None:
     job_id = submit_run(run_id, arguments, environment, output, group.name, dependency)
     print(f"run {run_id}: job {job_id}{f' ({dependency})' if dependency else ''}")
     print(f"log {output}\nresults {RESULTS_DIR / run_id}")
+
+
+def list_runs(limit: int) -> None:
+    """Print the queued runs and then the newest finished ones: run id, state,
+    and job id."""
+    queued = run_jobs() or {}
+    states = job_states(0) or {}
+    finished = sorted(
+        (path.parent for path in RESULTS_DIR.glob("*/trace.json")),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
+    for run_id in [*queued, *(p.name for p in finished if p.name not in queued)][:limit]:
+        if run_id in queued:
+            state = states.get(queued[run_id], "queued")
+        else:
+            try:
+                state = json.loads((RESULTS_DIR / run_id / "summary.json").read_text()).get("status", "unknown")
+            except (OSError, ValueError):
+                state = "stopped"
+        print(f"{run_id}\t{state}\t{queued.get(run_id, '')}")
 
 
 def main() -> None:
@@ -590,19 +627,23 @@ def main() -> None:
     batch.add_argument("--library", default="", help="library of verified results to build on (libraries.py)")
     batch.add_argument("--dataset", default=str(DATA_DIR / "openai_math.jsonl"))
     batch.add_argument("--config", help="run config [the site's served config]")
-    batch.add_argument("--group", default=model_servers.DEFAULT_GROUP, help="GPU group")
+    batch.add_argument("--group", default="", help="GPU group [the site's default group]")
     batch.add_argument("--checkpoint", default="trained", help="version of cluster.checkpoints for a new server")
     batch.add_argument("--run-id", default="")
     batch.add_argument("--resume", default="", metavar="RUN_ID", help="continue a run from its trace")
-    batch.add_argument("--lean-release", default="", help="an installed Lean release other than the pin")
+    batch.add_argument("--lean-release", default="", help="an installed Lean release, such as v4.34.1, other than the pin")
     batch.add_argument("--no-server", action="store_true", help="submit no model server job")
     batch.add_argument("options", nargs="*", help="orchestrator options after --")
+    listing = commands.add_parser("list", help="show the queued runs and the newest finished ones")
+    listing.add_argument("-n", "--limit", type=int, default=20)
     commands.add_parser("cancel", help="stop a run job").add_argument("run_id")
     args = parser.parse_args()
     if args.command == "job":
         sys.exit(job_main(args.spec))
     if args.command == "submit":
         return submit(args)
+    if args.command == "list":
+        return list_runs(args.limit)
     job_id = (run_jobs() or {}).get(args.run_id)
     if not job_id:
         raise SystemExit(f"run {args.run_id} has no queued or running job")

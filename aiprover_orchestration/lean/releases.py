@@ -4,7 +4,12 @@ of the AIProver harness with the packages, and `workspace`, the orchestration's
 Lake project, which links those packages. Lean, Mathlib, REPL, and CSLib are
 installed together, since a Mathlib release fits one Lean release only.
 
-    python -m aiprover_orchestration.lean.releases v4.28.0 [fetch|build]
+    python -m aiprover_orchestration.lean.releases RELEASE [fetch|build]
+    python -m aiprover_orchestration.lean.releases list
+
+RELEASE is a name such as v4.28.0 or a link that contains one, for example
+https://github.com/leanprover/lean4/releases/tag/v4.28.0. `list` prints the
+releases that all packages support.
 """
 
 import fcntl
@@ -56,6 +61,14 @@ def tags(url: str) -> set[str]:
     ).stdout
     names = (line.rsplit("/", 1)[-1] for line in listing.splitlines())
     return {name for name in names if STABLE.fullmatch(name)}
+
+
+def release_of(text: str) -> str:
+    """The stable release that a name or a link names."""
+    found = re.search(r"v4\.\d+\.\d+(?![-\w])", text)
+    if not found:
+        raise SystemExit(f"no stable release such as v4.28.0 in {text!r}")
+    return found.group(0)
 
 
 def key(release: str) -> tuple[int, int]:
@@ -286,7 +299,10 @@ def harness_config(source: Path, release: str) -> Path:
 
 
 if __name__ == "__main__":
-    release_name, phase = sys.argv[1], (sys.argv[2:] or ["all"])[0]
+    if sys.argv[1] == "list":
+        supported = offers({name: tags(url) for name, url in PACKAGES.items()})
+        sys.exit(print(*sorted(supported, key=key), sep="\n"))
+    release_name, phase = release_of(sys.argv[1]), (sys.argv[2:] or ["all"])[0]
     try:
         install(release_name, phase=phase)
     except (Exception, SystemExit):

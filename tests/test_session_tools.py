@@ -345,7 +345,7 @@ class SessionRestrictionsTest(unittest.TestCase):
             self.assertEqual(selection["escalation"]["provider"], "codex")
             self.assertTrue(selection["escalation"]["tools"])
             config = models.build_config(
-                models.Path("configs/orchestrator/standard.json"),
+                models.Path("configs/orchestrator/default.json"),
                 selection | {"orchestrator": selection["orchestrator"]},
             )
             phase = config["agents"]["orchestrator"]["phases"]["escalation"]

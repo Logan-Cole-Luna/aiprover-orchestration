@@ -39,6 +39,8 @@ report (C). Proved results extend a shared library.*
 
 ## 1. Setup
 
+**For Slurm clusters** (login node, GPU model server job, no Nix), follow the [Slurm guide](docs/guide/slurm.md) instead of `./setup`.
+
 Linux, WSL2, or macOS, with about 15 GB of disk. `./setup` installs Nix if
 needed, builds the tools and the Lean project, and connects the AIProver
 model server ([setup guide](docs/guide/setup.md)):
@@ -112,18 +114,18 @@ lists every option):
 
 ```bash
 PY=aiprover/nix/tools/bin/python3
-RUN="$PY -m aiprover_orchestration.orchestrator.run --config configs/orchestrator/standard.json"
+RUN="$PY -m aiprover_orchestration.orchestrator.run --config configs/orchestrator/default.json"
 
 $RUN --statement statement.tex --proof proof.tex --run-id my_result   # formalize a given theorem and proof
 $RUN --statement statement.tex --mode prove --run-id my_result        # prove a theorem without a given proof
 $RUN --dataset data/openai_math.jsonl --problem-uuid <uuid>           # a problem from a dataset
 $PY -m aiprover_orchestration.orchestrator.run --run-id my_result --resume   # continue a stopped run
-$PY -m aiprover_orchestration.orchestrator.project run <name> --config configs/orchestrator/standard.json   # prove a project's results in order
+$PY -m aiprover_orchestration.orchestrator.project run <name> --config configs/orchestrator/default.json   # prove a project's results in order
 ```
 
 | Flag | Effect |
 | --- | --- |
-| `--config FILE` | Models of each role: `standard.json` (the page's defaults) or `claude.json` (hosted models only) |
+| `--config FILE` | Models of each role and the main options: `default.json` (Claude roles, AIProver prover; the page's defaults), `aiprover.json`, `claude.json`, `codex.json`, or `codex_aiprover.json` |
 | `--mode prove` | Withhold any given proof and prove the theorem |
 | `--library FILE --extend-library true` | Build on a library of earlier results, and add the proved result to it |
 | `--paper-search true` | Let the orchestrator search arXiv and read papers |
@@ -168,7 +170,7 @@ Each role of a run config (`configs/orchestrator/*.json`) names a backend:
 `aiprover` (prover only). A deployment's own settings, such as its model
 servers, a Slurm cluster, and hardware rates, lie in the untracked
 `configs/site.json` (`configs/site.example.json` lists them); without it, the
-page uses `standard.json` and the model server that `./setup` connects. The
+page uses `default.json` and the model server that `./setup` connects. The
 [configuration guide](docs/guide/configuration.md) covers both, and the limits
 and access settings.
 A Slurm cluster that is the machine itself, where model servers and runs are

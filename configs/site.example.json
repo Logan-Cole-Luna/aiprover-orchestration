@@ -15,7 +15,7 @@
     "groups: GPU groups whose server jobs run on the cluster.",
     "hardware: GPUs and hourly price of each server, from a date, for the reported GPU cost."
   ],
-  "served_config": "configs/orchestrator/standard.json",
+  "served_config": "configs/orchestrator/default.json",
   "default_group": "local",
   "host_address": "server.example.org",
   "python": "",

@@ -21,7 +21,7 @@ a USD limit counts tokens without a price at 100,000 per USD.
 A deployment's own settings lie in `configs/site.json`, which is untracked;
 `AIPROVER_SITE` names another file. Without it, the web server offers the
 model server that `./setup` connects (GPU group `local`) and group `cpu`
-(no model server), with `configs/orchestrator/standard.json`.
+(no model server), with `configs/orchestrator/default.json`.
 `configs/site.example.json` lists every key:
 
 | Key | Meaning |
