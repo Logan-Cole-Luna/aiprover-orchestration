@@ -1,8 +1,13 @@
 #!/usr/bin/env bash
 # The Python of a project session: reads SESSION_READ, writes SESSION_WRITE, and
 # has no network; see ../../lean/sandbox.py.
-reads=(--read "$SESSION_PREFIX")
+# SESSION_PREFIX: the interpreter's prefixes (a virtualenv's and its base's).
+reads=()
+IFS=: read -ra prefixes <<< "$SESSION_PREFIX"
+for prefix in "${prefixes[@]}"; do reads+=(--read "$prefix"); done
 IFS=: read -ra trees <<< "$SESSION_READ"
 for tree in "${trees[@]}"; do reads+=(--read "$tree"); done
+# A virtualenv's python is a link to the base interpreter, which is executed.
 exec "$SESSION_PYTHON" -I "$SESSION_SANDBOX" "${reads[@]}" \
-    --execute "$SESSION_PYTHON" --write "$SESSION_WRITE" -- "$SESSION_PYTHON" "$@"
+    --execute "$SESSION_PYTHON" --execute "$(readlink -f "$SESSION_PYTHON")" \
+    --write "$SESSION_WRITE" -- "$SESSION_PYTHON" "$@"

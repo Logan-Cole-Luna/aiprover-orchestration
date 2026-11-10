@@ -4,12 +4,13 @@ of the AIProver harness with the packages, and `workspace`, the orchestration's
 Lake project, which links those packages. Lean, Mathlib, REPL, and CSLib are
 installed together, since a Mathlib release fits one Lean release only.
 
-    python -m aiprover_orchestration.lean.releases v4.28.0
+    python -m aiprover_orchestration.lean.releases v4.28.0 [fetch|build]
 """
 
 import fcntl
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -165,35 +166,44 @@ def set_writable(project: Path, writable: bool) -> None:
     that finds a stale trace fails in its own session instead of rebuilding
     Mathlib under every run of the release."""
     for build in (project / ".lake" / "packages").glob("*/.lake"):
+        # One chmod per file is slow on a shared file system, so they run in parallel.
         subprocess.run(
-            ["chmod", "-R", "u+w" if writable else "a-w", str(build)],
+            f"find {shlex.quote(str(build))} ! -type l -print0 | xargs -0 -P 16 -n 500 "
+            f"chmod {'u+w' if writable else 'a-w'}",
+            shell=True,
             check=True,
         )
 
 
-def install(release: str, run=subprocess.run) -> None:
+def install(release: str, run=subprocess.run, phase: str = "all") -> None:
     """Download Lean, Mathlib's cache, and the packages of `release`, build
-    the packages, and check the result on a small file."""
-    chosen = matching_tags(
-        release, {name: tags(url) for name, url in PACKAGES.items()}
-    )
-    if chosen is None:
-        raise SystemExit(f"{release}: not all packages support this release")
+    the packages, and check the result on a small file. Phase "fetch" stops
+    after the downloads and phase "build" continues from there, for a cluster
+    whose compute nodes have no network: the login node fetches, a job builds."""
     project = project_path(release)
-    project.mkdir(parents=True, exist_ok=True)
-    set_writable(project, True)
     toolchain = f"leanprover/lean4:{release}"
-    (project / "lean-toolchain").write_text(toolchain + "\n")
-    (project / "lakefile.lean").write_text(
-        LAKEFILE.format(
-            requires="\n\n".join(
-                requirement(name, tag) for name, tag in chosen.items()
+    probe = project / "Probe.lean"
+    if phase == "build":
+        requirements = (project / "lakefile.lean").read_text()
+        chosen = dict(re.findall(r'require (\S+) from git\s+"[^"]*" @ "([^"]*)"', requirements))
+    else:
+        chosen = matching_tags(
+            release, {name: tags(url) for name, url in PACKAGES.items()}
+        )
+        if chosen is None:
+            raise SystemExit(f"{release}: not all packages support this release")
+        project.mkdir(parents=True, exist_ok=True)
+        set_writable(project, True)
+        (project / "lean-toolchain").write_text(toolchain + "\n")
+        (project / "lakefile.lean").write_text(
+            LAKEFILE.format(
+                requires="\n\n".join(
+                    requirement(name, tag) for name, tag in chosen.items()
+                )
             )
         )
-    )
-    (project / "Project.lean").write_text("import Mathlib\n")
-    probe = project / "Probe.lean"
-    probe.write_text(PROBE)
+        (project / "Project.lean").write_text("import Mathlib\n")
+        probe.write_text(PROBE)
 
     # Mathlib's update hook would fetch its cache before the toolchain check.
     environment = {
@@ -206,13 +216,16 @@ def install(release: str, run=subprocess.run) -> None:
         print("$", " ".join(command), flush=True)
         run(list(command), cwd=project, env=environment, check=True)
 
-    step("elan", "toolchain", "install", toolchain)
-    step("lake", "update")
-    # A package may have moved the project to its own toolchain.
-    found = (project / "lean-toolchain").read_text().strip()
-    if found != toolchain:
-        raise SystemExit(f"lake update moved {release} to {found}")
-    step("lake", "exe", "cache", "get")
+    if phase != "build":
+        step("elan", "toolchain", "install", toolchain)
+        step("lake", "update")
+        # A package may have moved the project to its own toolchain.
+        found = (project / "lean-toolchain").read_text().strip()
+        if found != toolchain:
+            raise SystemExit(f"lake update moved {release} to {found}")
+        step("lake", "exe", "cache", "get")
+    if phase == "fetch":
+        return
     # The cache may lack artifacts that a later `lake setup-file` requires
     # (the `.ir` files of Lean 4.35); building now completes them here
     # rather than under a run.
@@ -273,9 +286,11 @@ def harness_config(source: Path, release: str) -> Path:
 
 
 if __name__ == "__main__":
-    release_name = sys.argv[1]
+    release_name, phase = sys.argv[1], (sys.argv[2:] or ["all"])[0]
     try:
-        install(release_name)
+        install(release_name, phase=phase)
     except (Exception, SystemExit):
-        shutil.rmtree(project_path(release_name), ignore_errors=True)
+        # A failed build keeps the downloads for another attempt.
+        if phase != "build":
+            shutil.rmtree(project_path(release_name), ignore_errors=True)
         raise

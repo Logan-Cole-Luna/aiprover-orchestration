@@ -52,3 +52,29 @@ class InstallTest(TemporaryDirectoryTest):
             releases.set_writable(project, True)
         self.assertEqual(text.count('@ "v4.35.0"'), 3)
         self.assertTrue((workspace / ".lake" / "packages").is_symlink())
+
+    def test_a_fetch_and_a_later_build_make_one_installation(self):
+        steps = []
+
+        def run(command, cwd, env, check):
+            steps.append(command[:2])
+            if command[:2] == ["lake", "update"]:
+                (Path(cwd) / "lake-manifest.json").write_text("{}")
+            (Path(cwd) / ".lake" / "packages" / "mathlib" / ".lake").mkdir(
+                parents=True, exist_ok=True
+            )
+
+        # The build needs no network: it asks for no tags, and runs no download.
+        with (
+            mock.patch.object(releases, "RELEASES_DIR", self.directory),
+            mock.patch.object(releases, "tags", side_effect=TAGS.values()),
+        ):
+            releases.install("v4.35.0", run, phase="fetch")
+            self.assertFalse(releases.is_installed("v4.35.0"))
+            self.assertNotIn(["lake", "build"], steps)
+            steps.clear()
+            releases.install("v4.35.0", run, phase="build")
+            self.assertTrue(releases.is_installed("v4.35.0"))
+            self.assertEqual(steps[0], ["lake", "build"])
+            for download in (["elan", "toolchain"], ["lake", "update"], ["lake", "exe"]):
+                self.assertNotIn(download, steps)

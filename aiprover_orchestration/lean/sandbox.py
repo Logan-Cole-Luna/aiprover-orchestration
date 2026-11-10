@@ -26,6 +26,9 @@ which the toolchain's runtime uses.
 import ctypes
 import os
 import resource
+import shutil
+import struct
+import subprocess
 import sys
 from pathlib import Path
 
@@ -62,6 +65,69 @@ SYSTEM_EXECUTE = (
 )
 DEVICES = "/dev"
 ELAN_HOME = Path(os.environ.get("ELAN_HOME") or Path.home() / ".elan")
+
+
+def elf_interpreter(path: str) -> str:
+    """The program interpreter (PT_INTERP) of the 64-bit ELF `path`, or ''."""
+    try:
+        with open(path, "rb") as elf:
+            header = elf.read(64)
+            if header[:5] != b"\x7fELF\x02":
+                return ""
+            order = "<" if header[5] == 1 else ">"
+            (phoff,) = struct.unpack_from(order + "Q", header, 32)
+            phentsize, phnum = struct.unpack_from(order + "HH", header, 54)
+            for index in range(phnum):
+                elf.seek(phoff + index * phentsize)
+                kind, _, offset, _, _, size = struct.unpack(
+                    order + "IIQQQQ", elf.read(40)
+                )
+                if kind == 3:  # PT_INTERP
+                    elf.seek(offset)
+                    return elf.read(size).rstrip(b"\0").decode()
+    except (OSError, struct.error, UnicodeDecodeError):
+        pass
+    return ""
+
+
+def host_git() -> tuple[str, list[str], list[str]]:
+    """Where the caller's git lies when it is not the system's /usr/bin/git:
+    its directory, the trees it reads and the files it executes.
+
+    A software prefix outside /usr (the CVMFS Gentoo tree of the Alliance
+    clusters) has git, its helpers, libraries and ELF loader of its own;
+    without them Lake cannot read a package's remote, takes its URL for
+    changed and deletes the package to clone it again."""
+    if os.access("/usr/bin/git", os.X_OK):
+        return "", [], []
+    found = shutil.which("git")
+    if not found:
+        return "", [], []
+    git = os.path.realpath(found)
+    execute = [git]
+    try:
+        helpers = subprocess.run(
+            [git, "--exec-path"], capture_output=True, text=True, timeout=10
+        ).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        helpers = ""
+    if helpers:
+        execute.append(os.path.realpath(helpers))
+    read = [prefix(git)]
+    interpreter = elf_interpreter(git)
+    if interpreter:
+        interpreter = os.path.realpath(interpreter)
+        execute.append(interpreter)
+        # The prefix holding the loader holds the libraries it maps.
+        read.append(prefix(interpreter))
+    return os.path.dirname(found), sorted(set(read)), execute
+
+
+def prefix(path: str) -> str:
+    """The software prefix of `path` in `<prefix>/[usr/]{bin,lib,...}/file`:
+    its libraries, configuration (etc/) and loader cache lie beneath it."""
+    parent = os.path.dirname(os.path.dirname(path))
+    return os.path.dirname(parent) if os.path.basename(parent) == "usr" else parent
 # Module trees of the caller (a package library), passed on and readable.
 LEAN_PATH = os.environ.get("LEAN_PATH", "")
 
@@ -236,7 +302,7 @@ def seatbelt_arguments(
     return [SANDBOX_EXEC, "-p", "\n".join(profile), *parameters]
 
 
-def minimal_environment(home: str) -> dict[str, str]:
+def minimal_environment(home: str, git_dir: str = "") -> dict[str, str]:
     """The environment of the command: tool paths and nothing else."""
     # Lake reads the remote of each package with git, which refuses a
     # repository of another owner: the shared packages of a per-user server.
@@ -251,7 +317,7 @@ def minimal_environment(home: str) -> dict[str, str]:
         for field, value in (("KEY", "safe.directory"), ("VALUE", package))
     }
     return {
-        "PATH": f"{ELAN_HOME / 'bin'}:/usr/bin:/bin",
+        "PATH": f"{ELAN_HOME / 'bin'}:/usr/bin:/bin" + (f":{git_dir}" if git_dir else ""),
         "ELAN_HOME": str(ELAN_HOME),
         "HOME": home,
         "TMPDIR": home,
@@ -285,6 +351,7 @@ def main(arguments: list[str]) -> None:
         resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds))
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
     elan_home = os.path.realpath(ELAN_HOME)
+    git_dir = ""
     if sys.platform == "darwin":
         if not os.access(SANDBOX_EXEC, os.X_OK):
             sys.exit(f"sandbox.py: {SANDBOX_EXEC} not found; refusing to run")
@@ -300,13 +367,14 @@ def main(arguments: list[str]) -> None:
         abi = abi_version()
         if abi < 4:
             sys.exit(f"sandbox.py: Landlock ABI {abi} < 4; refusing to run")
+        git_dir, git_read, git_execute = host_git()
         restrict(
-            read=[*SYSTEM_READ, *read, *filter(None, LEAN_PATH.split(":"))],
+            read=[*SYSTEM_READ, *git_read, *read, *filter(None, LEAN_PATH.split(":"))],
             write=write,
-            execute=[*SYSTEM_EXECUTE, elan_home, *execute],
+            execute=[*SYSTEM_EXECUTE, *git_execute, elan_home, *execute],
             abi=abi,
         )
-    os.execvpe(command[0], command, minimal_environment(write[0]))
+    os.execvpe(command[0], command, minimal_environment(write[0], git_dir))
 
 
 if __name__ == "__main__":

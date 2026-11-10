@@ -101,7 +101,8 @@ def session_environment(project: dict, folder: Path) -> dict[str, str]:
         **papers,
         "PATH": ":".join([*map(str, bins), os.environ.get("PATH", "")]),
         "SESSION_PYTHON": sys.executable,
-        "SESSION_PREFIX": sys.prefix,
+        # A virtualenv's standard library lies under its base prefix.
+        "SESSION_PREFIX": ":".join(dict.fromkeys((sys.prefix, sys.base_prefix))),
         "SESSION_SANDBOX": str(SANDBOX),
         "SESSION_READ": ":".join(map(str, trees)),
         "SESSION_WRITE": str(folder),

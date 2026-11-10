@@ -51,6 +51,13 @@ def token_usage(reported: dict) -> dict:
     }
 
 
+# Share of the context above which earlier tool results are dropped, and how
+# many of the latest results stay.
+COMPACT_SHARE = 0.6
+KEPT_TOOL_REPLIES = 4
+ELIDED_REPLY = "(The result of this earlier call was removed to save context.)"
+
+
 class OpenAICompatibleAgent(Agent):
     """Model behind an OpenAI-compatible `/chat/completions` endpoint.
 
@@ -60,7 +67,9 @@ class OpenAICompatibleAgent(Agent):
     `timeout` (of a whole call), `extra_body` (merged into the request, for
     server-specific parameters), `hosted` (billed by a provider), `tools`,
     `source_dir`, `max_turns`, and `max_budget_usd`, which a hosted model's
-    tokens are held to at `TOKENS_PER_USD`.
+    tokens are held to at `TOKENS_PER_USD`. With `max_context`, the context
+    length of the model, the results of earlier tool calls are replaced by a
+    note once a prompt exceeds `COMPACT_SHARE` of it.
     """
 
     backend = "openai_compatible"
@@ -81,6 +90,7 @@ class OpenAICompatibleAgent(Agent):
         max_output_tokens: int = 0,
         max_budget_usd: float = LEAN_TOOLS_BUDGET_USD,
         max_turns: int = 0,
+        max_context: int = 0,
         **options,
     ):
         max_tokens = max_output_tokens or max_tokens
@@ -108,6 +118,7 @@ class OpenAICompatibleAgent(Agent):
         self.hosted = hosted
         self.tools = tools
         self.source_dir = source_dir
+        self.max_context = max_context
         self.max_turns = max_turns or round(max_budget_usd * TURNS_PER_USD)
         self.max_call_tokens = (
             max_budget_usd * TOKENS_PER_USD if hosted else math.inf
@@ -188,6 +199,9 @@ class OpenAICompatibleAgent(Agent):
             # The whole message stays in the history: some providers require
             # its reasoning back in the next request.
             messages.append({k: v for k, v in message.items() if v is not None})
+            prompt_tokens = int((payload.get("usage") or {}).get("prompt_tokens") or 0)
+            if self.max_context and prompt_tokens > self.max_context * COMPACT_SHARE:
+                self._elide(messages)
             for call in calls:
                 text = self._tool_reply(session, call)
                 if text == TURN_LIMIT:
@@ -199,6 +213,13 @@ class OpenAICompatibleAgent(Agent):
                 messages.append(
                     {"role": "tool", "tool_call_id": call["id"], "content": text}
                 )
+
+    @staticmethod
+    def _elide(messages: list) -> None:
+        """Replace all but the latest tool results by a note."""
+        replies = [m for m in messages if m["role"] == "tool"]
+        for reply in replies[:-KEPT_TOOL_REPLIES]:
+            reply["content"] = ELIDED_REPLY
 
     @staticmethod
     def _tool_reply(session: Session, call: dict) -> str:

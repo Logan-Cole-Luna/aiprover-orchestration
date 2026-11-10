@@ -1,6 +1,7 @@
 """The Lean sandbox (lean/sandbox.py, Landlock on Linux and Seatbelt on
 macOS): Lean elaborates in the project, and writes outside it and other
-executables are refused."""
+executables are refused, and git (which Lake runs on each package) works
+wherever the host installs it."""
 
 import subprocess
 import tempfile
@@ -48,6 +49,20 @@ class SandboxTest(TemporaryDirectoryTest):
     def test_other_executables_are_refused(self):
         result = run(["/bin/sh", "-c", "true"], self.directory)
         self.assertGreater(result.returncode, 0, result.stderr)
+
+    def test_git_reads_the_remote_of_a_package(self):
+        # Lake takes a remote it cannot read for a changed URL and deletes the
+        # package to clone it again; git outside /usr (the CVMFS tree of the
+        # Alliance clusters) must run too.
+        package = self.directory / ".lake" / "packages" / "p"
+        package.mkdir(parents=True)
+        url = "https://example.com/p"
+        for git in (["init", "-q"], ["remote", "add", "origin", url]):
+            subprocess.run(["git", "-C", str(package), *git], check=True)
+        result = run(["git", "-C", str(package), "remote", "get-url", "origin"], self.directory)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(result.stdout.strip(), url)
+
 
 if __name__ == "__main__":
     unittest.main()
