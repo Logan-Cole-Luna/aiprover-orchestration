@@ -67,7 +67,7 @@ create a key for this: a dedicated `~/.ssh/aiprover_ed25519`, installed on
 the SSH host through the open connection and restricted there to port
 forwarding to the model server (no shell; with a handoff file, reading that
 file only). A host that requires a one-time code even with a key (an
-`AuthenticationMethods` chain, as on TACC hosts) cannot reconnect
+`AuthenticationMethods` chain, as on hosts with multi-factor login) cannot reconnect
 unattended; the key is then removed from it again, and the offer is not
 repeated for that host.
 

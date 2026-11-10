@@ -8,7 +8,7 @@ is required, submissions are queued without approval, and every visitor
 sees and may cancel every run.
 
 Two pages share the API: the user page `/user` (where `/` leads) offers the
-DGX and the open and OpenAI math problems, and lists the runs submitted from
+persistent model server and the open and OpenAI math problems, and lists the runs submitted from
 it; the development page `/dev` offers every GPU group, model and dataset and
 lists every run (`PAGES`; API calls name the page with `?page=dev`, and a call
 that names none is the user page's).
@@ -425,7 +425,7 @@ class Page:
 
 
 # A per-user server offers the groups any account can reach.
-PERSONAL_GROUPS = ("dgx", "cpu")
+PERSONAL_GROUPS = (model_servers.PERSISTENT_GROUP, "cpu")
 ALL_GROUPS = tuple(
     sorted(
         model_servers.GPU_GROUPS,
@@ -438,11 +438,11 @@ PAGES = {
         user_servers=True,
     ),
     "user": Page(
-        PERSONAL_GROUPS if PER_USER else ("dgx",),
-        versions=("dgx",),
+        PERSONAL_GROUPS if PER_USER else (model_servers.PERSISTENT_GROUP,),
+        versions=(model_servers.PERSISTENT_GROUP,),
         datasets=("open_problems.jsonl", "openai_math.jsonl"),
         defaults={
-            "subagent": {"provider": "aiprover", "model": "dgx", "effort": ""}
+            "subagent": {"provider": "aiprover", "model": model_servers.PERSISTENT_GROUP, "effort": ""}
         },
         own_runs=True,
         claude=PER_USER,
@@ -527,12 +527,7 @@ def health(
             "endpoint_up": endpoint_up,
             "endpoint": endpoint_message,
             "server_jobs": server_jobs,
-            "vista_jobs": (
-                None
-                if server_jobs is None
-                else {job["id"]: job["state"] for job in server_jobs}
-            ),
-            "vista": worker.vista_messages.get(name, "not checked"),
+            "status": worker.server_messages.get(name, "not checked"),
             "persistent": not group.job_name,
             "pool": proxy_pool(group),
             "borrows": list(group.borrows),
@@ -555,15 +550,10 @@ def health(
             groups[name]["endpoint"] += f"; served by {', '.join(lenders)}"
     main = groups[model_servers.DEFAULT_GROUP]
     return {
+        "cluster": bool(model_servers.CLUSTER_HOST),
         "control_master": control_master_running(),
         "endpoint_up": main["endpoint_up"],
         "endpoint": main["endpoint"],
-        "vista_jobs": {
-            job_id: state
-            for group in groups.values()
-            for job_id, state in (group["vista_jobs"] or {}).items()
-        },
-        "vista": worker.vista_message,
         "groups": {
             name: group
             for name, group in groups.items()
@@ -722,8 +712,8 @@ def check_group(name: str, selection: dict) -> None:
             "including the subagent, must use Claude or a hosted model",
         )
     if not group.job_name and models.checkpoint_of(selection) is not None:
-        # A persistent server serves its own version; a Vista checkpoint
-        # needs a group with Vista server jobs.
+        # A persistent server serves its own version; a checkpoint needs a
+        # group with server jobs.
         raise HTTPException(
             400,
             f"group {name!r} serves AIProver "

@@ -13,7 +13,6 @@
 #   --api-key KEY        bearer token of the model server (direct connection)
 #   --timeout SEC        wall clock of one AIProver session (default 5400)
 #   --max-turns N        turn budget of one AIProver session (default 200)
-#   Shortcuts for this project's servers: --endpoint dgx, --endpoint vista.
 #   --lean-project PATH  use an existing Lean project (default: aiprover/lean_project)
 #   --harness PATH       use the AIProver harness checkout at PATH instead of the AIProver/
 #                        submodule (linked as aiprover/harness; the central AIProver repository
@@ -38,12 +37,9 @@ set -eu
 
 NIX_FEATURES="nix-command flakes"
 MIN_FREE_GB=15
-DGX_URL="http://cic-dgx-01.tacc.cloud:8040"
-ORCHESTRATION_VM="129.114.35.157"
 # Local ports: the SSH tunnel's end and the reasoning proxy the harness talks to.
 TUNNEL_PORT=18555
 PROXY_PORT=18575
-VISTA_HANDOFF="/scratch/11757/loganluna/servers/aiprover_server.txt"
 
 YES=no
 DRY=no
@@ -72,7 +68,7 @@ die() {
   exit 1
 }
 
-usage() { sed -n '2,36p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,/^[^#]/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; }
 
 # ask QUESTION DEFAULT(y|n): yes or no from the terminal; --yes answers y.
 ask() {
@@ -203,20 +199,6 @@ write_config() {
   socket=""
   timeout=5400
   turns=200
-  # This project's servers, as shortcuts for the generic options.
-  case "$ENDPOINT" in
-  dgx)
-    ENDPOINT="$DGX_URL"
-    reachable "$ENDPOINT" || VIA="${VIA:-$ORCHESTRATION_VM}"
-    timeout=10800
-    turns=100
-    ;;
-  vista)
-    ENDPOINT=""
-    VIA="${VIA:-vista.tacc.utexas.edu}"
-    HANDOFF="${HANDOFF:-$VISTA_HANDOFF}"
-    ;;
-  esac
   timeout="${TIMEOUT:-$timeout}"
   turns="${TURNS:-$turns}"
   case "$ENDPOINT" in

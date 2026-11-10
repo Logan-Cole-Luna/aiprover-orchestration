@@ -1,323 +1,173 @@
 # AIProver orchestration
 
-Tools for mathematicians to direct AI agents at their problems in Lean 4. An
-orchestrator formalizes a problem, has the formalization audited blind,
-decomposes the proof into lemmas and proves them with Claude and the AIProver
-model; a theorem library records what is formalized and proved; a query
-server exposes both over HTTP. All verification is local and sandboxed (Lean
-v4.23.0, Mathlib v4.23.0, `autoImplicit false`).
+This repository provides an orchestration that produces verified Lean 4
+proofs of mathematical theorems. Given a theorem, with or without a proof, an
+orchestrating model formalizes the statement, decomposes the proof into
+lemmas, and assigns the lemmas to the AIProver model, intervening only when a
+lemma resists repeated attempts. The output is a Lean proof together with a
+LaTeX report and an informal proof.
 
-| Section | Contents |
-| --- | --- |
-| [1. Running locally](#1-running-locally) | Setup with Nix, Claude on a subscription, the query server and single runs |
-| [2. Running as a Claude Code skill](#2-running-as-a-claude-code-skill) | The `aiprover-orchestrator` skill, with the session's agent as orchestrator |
-| [3. Using a running server](#3-using-a-running-server) | Submitting problems to the orchestration VM over SSH, without setup |
-| [4. Layout](#4-layout) | Repository structure and components |
-| [5. Pipeline](#5-pipeline) | The stages of a run |
-| [6. Results](#6-results) | Problems proved, with cost |
-| [7. Configuration](#7-configuration) | Model backends, GPU groups, server pages |
-| [8. Future work](#8-future-work) | Planned extensions |
+The formal statement is translated back into mathematics without access to
+the source, compared with the source by a judge, and tested by Lean for
+vacuous hypotheses and counterexamples; consequently, a proof is accepted
+only for a statement that matches the source. Lean checks every step in a
+sandbox, and the finished proof contains no `sorry` and uses only the
+standard axioms, after which an independent reviewer referees it against the
+source. The hosted model plans the proof and resolves difficult lemmas,
+whereas routine proving runs on the AIProver model on the user's own
+hardware, which keeps the cost per theorem low. Libraries and projects carry
+proved results into later runs, and every run is recorded as a trace from
+which it resumes after an interruption and can be replayed step by step.
+[The orchestration](docs/guide/orchestration.md) describes the design in
+detail. The web server and the command line run the same pipeline, on Lean
+v4.23.0 and Mathlib v4.23.0.
 
-![Trace viewer of a completed run](docs/figures/trace_332.png)
+| Section | Contents | Guide |
+| --- | --- | --- |
+| [1. Setup](#1-setup) | Installation, model server, search, services | [setup](docs/guide/setup.md) |
+| [2. Web server](#2-web-server) | Runs, blueprints, projects on the page | [web server](docs/guide/web_server.md) |
+| [3. Command line](#3-command-line) | The same runs and projects without the server | [command line](docs/guide/command_line.md) |
+| [4. Claude Code skill](#4-claude-code-skill) | The session's agent as orchestrator | [plugin](orchestration_plugin/README.md) |
+| [5. Layout](#5-layout) | Repository structure | |
+| [6. Configuration](#6-configuration) | Backends, deployment settings, limits | [configuration](docs/guide/configuration.md) |
 
-*Figure 1. Trace of the completed run on OpenAIMath 332.*
+![Orchestration overview](docs/figures/orchestration_overview.png)
 
-## 1. Running locally
+*Figure 1. One run: formalize and plan (A), prove the lemmas with AIProver,
+escalating stuck ones to the orchestrator (B), then assemble, review, and
+report (C). Proved results extend a shared library.*
 
-This is how the orchestration VM runs: a query server queues problems and
-runs each as an orchestrator process; Claude runs on a Claude subscription
-and AIProver on a model server. Linux, WSL2 or macOS, about 15 GB of disk.
+## 1. Setup
 
-**Setup (Nix, once per machine).** `./setup` installs Nix if needed (after
-confirmation; sudo once, to create `/nix`), builds the tools and AIProver
-virtualenvs into `aiprover/nix/`, builds the Lean project and connects the
-model server (`--dry-run` prints the steps):
+Linux, WSL2, or macOS, with about 15 GB of disk. `./setup` installs Nix if
+needed, builds the tools and the Lean project, and connects the AIProver
+model server ([setup guide](docs/guide/setup.md)):
 
 ```bash
 git clone --recurse-submodules https://github.com/Logan-Cole-Luna/aiprover-orchestration aiprover_orchestration
 cd aiprover_orchestration
-./setup --endpoint http://<host>:<port>   # the AIProver model server; none: Claude only
-nix develop                               # a shell with the tools on PATH
+
+./setup --endpoint http://<host>:<port> --search   # connect an AIProver model server; download the arXiv index
+./setup --endpoint none                            # no model server: hosted models in every role
+./setup --endpoint http://<node>:<port> --via HOST # a server reachable only through an SSH host
+./setup --endpoint http://<host>:<port> --no-lean  # change the server only
+claude                                             # once, then /login: hosted roles use this subscription
+scripts/systemd/install aiprover_query_server aiprover_paper_search   # run the web server and paper search as services
 ```
 
-**Within the central repository.** The orchestration is a submodule of
-[AIProver](https://github.com/Logan-Cole-Luna/AIProver), which pins it together
-with the harness and sets up both (`nix run .#setup-orchestration`). There,
-`./setup --harness PATH` uses the harness checkout at `PATH` in place of the
-`AIProver/` submodule; the choice is kept as the link `aiprover/harness`, and
-`$AIPROVER_HARNESS` overrides it for one process. `--no-plugin` leaves the
-plugin installation to the central repository's marketplace.
-
-**Claude on a subscription.** Install [Claude Code](https://claude.com/claude-code),
-run `claude` once and log in with `/login` using a Pro or Max account.
-With `ANTHROPIC_API_KEY` unset, every Claude role runs through the logged-in
-`claude` CLI and its subscription (`CLAUDE_AUTH=subscription` forces this).
-Check the login and the models:
-
-```bash
-aiprover/nix/tools/bin/python3 -m aiprover_orchestration.agents.claude_cli --probe claude-opus-5-5
-```
-
-When the subscription's usage limit is reached, the call waits for the reset
-and retries; the run continues.
-
-**Query server.** Start it and open http://127.0.0.1:8443/dev (Ctrl+C
-stops it; choose another `--port` when 8443 is in use):
-
-```bash
-aiprover/nix/tools/bin/python3 -m uvicorn aiprover_orchestration.server.app:app --host 127.0.0.1 --port 8443 --workers 1
-```
-
-To keep it running, install the systemd user unit in `scripts/systemd/`;
-`systemctl --user restart aiprover_query_server` loads a code change, and
-runs in progress continue.
-
-**Single runs and tools**, from the repository root:
-
-```bash
-# One orchestration run, and its resumption
-aiprover/nix/tools/bin/python3 -m aiprover_orchestration.orchestrator.run \
-    --config configs/orchestrator/claude.json \
-    --dataset data/openai_math.jsonl \
-    --problem-uuid OpenAIMath_164_HindmanDistinctExpressions
-aiprover/nix/tools/bin/python3 -m aiprover_orchestration.orchestrator.run --run-id <run_id> --resume
-
-# Theorem library
-aiprover/nix/tools/bin/python3 -m aiprover_orchestration.library verify NAME FILE [--disprove]
-
-# Trace pages of a run
-aiprover/nix/tools/bin/python3 -m aiprover_orchestration.orchestrator.trace_view results/<run_id>/trace.json
-
-# Tests (about 2 min; those that need Lean are skipped without it)
-aiprover/nix/tools/bin/python3 -m unittest discover -s tests -t .
-```
-
-The commands use the interpreter that `./setup` builds,
-`aiprover/nix/tools/bin/python3`; within `nix develop`, `python3` is the same
-interpreter. Another Python, such as conda's, lacks the packages
-(`ModuleNotFoundError: No module named 'anthropic'`). Without Nix, the requirements
-are elan with Lean v4.23.0, the Mathlib project linked by
-`orchestration_workspace/`, Python 3.12 with `fastapi`, `uvicorn`,
-`aiohttp`, `pygments`, `anthropic` and `psutil`, and `pdflatex`.
-
-## 2. Running as a Claude Code skill
-
-The `aiprover-orchestrator` skill runs the orchestration inside Claude Code, with
-the session's agent as orchestrator. Lean runs on the user's machine; lemmas are
-proved by AIProver jobs on a model server, or by Claude subagents without
-one. The same `./setup` also installs the plugin:
-
-```bash
-./setup --endpoint none                          # Claude only
-./setup --endpoint http://<host>:<port>          # AIProver model server
-```
-
-| Model server | Option |
+| Option | Effect |
 | --- | --- |
-| none | `--endpoint none` |
-| reachable from this device | `--endpoint URL [--api-key KEY]` |
-| reachable through an SSH host | `--endpoint URL --via HOST [--user USER]` |
-| a cluster job that writes `node=<n> port=<p>` to a file | `--via HOST --handoff FILE` |
+| `--endpoint URL\|none` | The AIProver model server, or none |
+| `--via HOST`, `--handoff FILE` | Reach the server through an SSH host; follow a cluster job's node and port in a file there |
+| `--search` | Download the arXiv index for `paper-search` (1.6 GB) |
+| `--no-lean` | Skip the Lean build and the plugin installation |
+| `--dry-run` | Print the steps and change nothing |
 
-The harness reaches the server through a local reasoning proxy, directly or
-over an SSH tunnel. `orchestration_plugin/setup.sh` has the steps `connect`,
-`endpoint`, `stop`, `doctor`, `claude` (reinstall the plugin) and `lean`;
-see [orchestration_plugin/README.md](orchestration_plugin/README.md).
+The AIProver model is served with vLLM
+(`AIProver/AIProver_plugin/serve/serve_aiprover.sh <checkpoint>`); its FP8
+weights, about 112 GB and not in this repository, need well over 112 GB of
+GPU memory.
 
-Restart Claude Code, open the repository and ask, for example:
-
-```
-/aiprover-orchestration:aiprover-orchestrator Run OpenAIMath_011_TotientFibersFromSmoothShiftedPrimes from data/openai_math.jsonl
-```
-
-or paste `<informal_theorem>…</informal_theorem>` and
-`<informal_proof>…</informal_proof>`. A run takes hours; its record is
-written to `results/<slug>_skill_<date>/`.
-
-## 3. Using a running server
-
-A query server on a host (section 1) can be used without any setup. Its
-runs use the submitting user's own login to a hosted service; therefore each
-user runs a server of their own on the host, under their own account. With an
-account on the host, one command from the user's own machine starts the server
-and forwards its page:
+## 2. Web server
 
 ```bash
-ssh -t -L PORT:127.0.0.1:PORT <user>@<host> \
-    /home/loganluna/workspace/aiprover_orchestration/scripts/user/aiprover-server serve
+aiprover/nix/tools/bin/python3 -m uvicorn aiprover_orchestration.server.app:app --port 8443
 ```
 
-`PORT` is fixed per account (20000 + 2 × (uid mod 5000)); on the host,
-`aiprover-server ssh` prints the complete command. Then open
-`http://localhost:PORT/user`; Ctrl+C closes the connection, while the server and
-its runs continue (`aiprover-server stop` ends the server).
+Open http://127.0.0.1:8443/dev ([web server guide](docs/guide/web_server.md)). The page submits an informal statement and
+proof, a Lean statement, or a dataset problem; chooses a model per role and
+whether to formalize the given proof or prove the theorem; and sets the
+orchestrator's settings. Runs show their progress, blueprint (Figure 2),
+replay (Figure 3), Lean files, and reports, and can be resumed. The Guide tab
+explains the page to readers new to Lean.
 
-The first run that selects a hosted service prompts for its sign-in on the page,
-which links to the service's sign-in site and, where the service requires it,
-accepts the code that the site shows. The page also accepts an API key. A code
-or key entered there passes through the user's own server to the service's
-program, and the login stays under the user's account on the host. Subscription
-limits assume individual use, which long runs exhaust quickly.
+![Blueprint of a proved run](aiprover_orchestration/server/static/guide/white/blueprint.png)
 
-A server keeps its state in `users/<account>` of the checkout, which its first
-command creates and the host's owner can read. It runs at most 6 AIProver
-sessions (`AIPROVER_MAX_PARALLEL`) and 2 runs (`QUERY_SERVER_MAX_RUNS`) at once.
-State in `~/.local/share/aiprover_orchestration` moves there on the next
-command, and the private copy remains as a backup. The host's owner prepares the
-folder once, from the checkout:
+*Figure 2. Blueprint of a proved run: its lemmas as a dependency graph, with
+the statement, proof idea, and Lean statement of the selected one.*
+
+![Replay of a run](aiprover_orchestration/server/static/guide/white/replay.png)
+
+*Figure 3. Replay of a run: every stage, job, and session, with its events.*
+
+A project proves the results of one subject as a chain on a shared library
+(Figure 4). Research sessions plan the chain and report open lemmas and
+claims, each result is then proved by its own run, and the results are
+finally written up as a paper.
+
+![Project overview](docs/figures/project_overview.png)
+
+*Figure 4. A project: plan and research, prove the chain, write the paper.*
+
+On a shared host, each user runs a server of their own:
+`ssh -t -L PORT:127.0.0.1:PORT <user>@<host> <checkout>/scripts/user/aiprover-server serve`
+(`aiprover-server ssh` prints the command), then opens
+`http://localhost:PORT/user`.
+
+## 3. Command line
+
+The command line runs the same pipeline as the page and writes the same
+records to `results/<run_id>/` ([command line guide](docs/guide/command_line.md)
+lists every option):
 
 ```bash
-mkdir -p users && chmod 1733 users
-setfacl -d -m u::rwx,u:$(id -un):rwx,g::---,o::---,m:rwx users
+PY=aiprover/nix/tools/bin/python3
+RUN="$PY -m aiprover_orchestration.orchestrator.run --config configs/orchestrator/standard.json"
+
+$RUN --statement statement.tex --proof proof.tex --run-id my_result   # formalize a given theorem and proof
+$RUN --statement statement.tex --mode prove --run-id my_result        # prove a theorem without a given proof
+$RUN --dataset data/openai_math.jsonl --problem-uuid <uuid>           # a problem from a dataset
+$PY -m aiprover_orchestration.orchestrator.run --run-id my_result --resume   # continue a stopped run
+$PY -m aiprover_orchestration.orchestrator.project run <name> --config configs/orchestrator/standard.json   # prove a project's results in order
 ```
 
-Concurrency is bounded per machine, across runs and users: hosted model calls,
-Lean processes, and AIProver sessions wait for slots whose number follows from
-the machine's memory and processors. `AIPROVER_MAX_HOSTED`, `AIPROVER_MAX_TOOL_CALLS`, `AIPROVER_MAX_LEAN`,
-`AIPROVER_MAX_SESSIONS`, and `AIPROVER_LEAN_MB` (for checks; builds use 8192 MB)
-replace the derived limits.
+| Flag | Effect |
+| --- | --- |
+| `--config FILE` | Models of each role: `standard.json` (the page's defaults) or `claude.json` (hosted models only) |
+| `--mode prove` | Withhold any given proof and prove the theorem |
+| `--library FILE --extend-library true` | Build on a library of earlier results, and add the proved result to it |
+| `--paper-search true` | Let the orchestrator search arXiv and read papers |
+| `--max-hosted-usd X` | Budget of hosted-model spending for the run |
 
-The page submits an informal statement and proof, or a problem of the open
-and OpenAI math datasets. Its Task switch chooses between formalizing the given
-proof and proving the theorem: a run in the second mode withholds any given
-proof, keeps a Lean statement exactly as given, and drafts its own proof before
-decomposing it. The page lists the proved OpenAI problems and the runs
-submitted from it with their Lean files, reports, and traces. Its Guide explains
-the page to readers new to Lean, and its theme also applies to the trace pages. The form offers each Lean version; one that is not
+## 4. Claude Code skill
 
-The Projects tab holds the results of one subject as a chain on a shared
-library. The Submit page offers one result or a project, which starts from a
-goal and optional source files. **Plan
-blueprint** proposes the chain, which stays editable until it starts, and each
-result opens in place with its run. **Blueprint** shows the results as a graph,
-each with the blueprint of its lemmas, and the card links the shared library
-and source files. **Research** has one Claude session answer
-a question and a second referee the answer; the report adds open lemmas and
-claims without a Lean proof, and the Resume dialog replans a run on it. A claim
-may be confirmed or rejected by a person, checked by Claude, or added as a result
-to prove in Lean. Review is optional, and only the last settles a claim.
+`./setup` also installs the `aiprover-orchestrator` skill, which runs the
+orchestration inside Claude Code with the session's agent as orchestrator.
+Open the repository and ask, for example,
+`/aiprover-orchestration:aiprover-orchestrator Run OpenAIMath_011_TotientFibersFromSmoothShiftedPrimes from data/openai_math.jsonl`
+([orchestration_plugin/README.md](orchestration_plugin/README.md)).
 
-A library is either one Lean file or a Lean package uploaded as a zip, which
-the server builds on the chosen Lean version and refuses on `sorry`, axioms,
-`native_decide`, or code that runs. Every file of a run on a package imports
-it, and agents read its statements, with proofs elided, through their tools;
-`python -m aiprover_orchestration.search.library_index libraries/<name>` adds
-it to the semantic search that provers query.
-installed can be downloaded there with its matching Mathlib, REPL, and CSLib
-(`aiprover_orchestration/lean/releases.py`). A cancelled or
-unproved run has a Resume button that continues it from its trace, and asks
-for a higher limit if the run reached its Claude limit (50 USD by default). A
-proved run without documents has a Generate documents button. With the setting
-"Require review of the proof plan before proving", a run stops after its sketch
-and presents the plan as a blueprint, in natural language and in Lean, with a
-dependency graph; the page signals the review, and the reviewer approves,
-approves with comments, requests a revision, or rejects the plan. Finished runs
-also produce the blueprint in leanblueprint format. Import
-run adds a run started elsewhere from a zip of its `results/<run_id>/` folder
-or of its export. A run takes an optional name, which becomes its id. The
-form's "Orchestrator settings" set a run's escalations, retries, attempts, and
-Claude budget, among others.
-
-## 4. Layout
+## 5. Layout
 
 ```mermaid
 flowchart LR
-    M[Mathematician] --> S[Query server<br/>server/]
+    M[Mathematician] --> S[Web server<br/>server/]
+    M --> CLI[Command line<br/>orchestrator/run.py]
     S --> O[Orchestrator<br/>orchestrator/]
-    S --> L[Theorem library<br/>library/]
-    O -->|orchestrator, faithfulness checker,<br/>reviewer, writer| C[Model APIs<br/>agents/]
+    CLI --> O
+    O -->|orchestrator, checker,<br/>reviewer, writer| C[Model APIs<br/>agents/]
     O -->|provers| A[AIProver harness<br/>AIProver/]
-    A --> V[AIProver model<br/>GPU model server]
+    A --> V[AIProver model<br/>vLLM server]
     O --> W[Lean workspace<br/>orchestration_workspace/]
-    L --> W
+    O --> P[Search<br/>search/]
 ```
 
-```
-├── aiprover_orchestration/     # Python package
-│   ├── lean/                   #   Lean checks, sandbox, module builds
-│   ├── agents/                 #   model backends and the routing pool
-│   ├── library/                #   theorem library: store, verifier, CLI, HTTP API
-│   ├── orchestrator/           #   formalize → audit → sketch → prove → assemble
-│   └── server/                 #   query server, job worker, reasoning proxy
-├── orchestration_plugin/       # Claude Code skill aiprover-orchestrator
-├── setup, flake.nix, nix/      # one-command setup (Nix)
-├── configs/                    # run, harness and server configurations
-├── orchestration_workspace/    # Lake project of library and run modules
-├── AIProver/                   # AIProver harness and prover (submodule; see --harness)
-├── data/                       # problem datasets (openai_math.jsonl in git)
-├── results/                    # run records (Lean, report, informalization)
-└── docs/                       # slides and figures
-```
+| Path                        | Contents                                                   |
+| --------------------------- | ---------------------------------------------------------- |
+| `aiprover_orchestration/` | agents, Lean checks, library, orchestrator, search, server |
+| `configs/`                | run, harness, and server configurations                    |
+| `scripts/`                | systemd units, per-user server, guide export               |
+| `orchestration_plugin/`   | the Claude Code skill                                      |
+| `AIProver/`               | AIProver harness and prover (submodule)                    |
+| `data/`, `results/`     | problem datasets; run records                              |
 
-## 5. Pipeline
+## 6. Configuration
 
-![Architecture and Lean-gated pipeline](docs/figures/pipeline.jpg)
-
-*Figure 2. Architecture and pipeline.*
-
-The orchestrator (Claude) formalizes the problem; Lean probes the statement for
-vacuity, triviality, and counterexamples; a blind faithfulness checker translates the Lean
-back to mathematics, and a judge panel compares it with the source, which can
-include a model other than the orchestrator's and a Lean comparison with an
-independent formalization; the orchestrator sketches the proof as lemmas, which AIProver jobs attempt in parallel; stuck
-lemmas return to the orchestrator to prove, split or restate; the verified
-solution is assembled, reviewed independently and written up in LaTeX. Lean
-gates every stage.
-
-## 6. Results
-
-| Problem | Status | Lemmas | Final review |
-| --- | --- | --- | --- |
-| OpenAIMath 332, metric Markov cotype of L1 | proved (2026-10-14) | 39 | faithful |
-| OpenAIMath 011, large totient fibers, conditional on (H) | proved (2026-10-11) | 20 | faithful |
-| OpenAIMath 164, Hindman FS+FP, Corollary 1.2 from Theorem 1.1 | proved (2026-10-15) | 15 | faithful |
-
-![Results: OpenAI problems verified in Lean](docs/figures/results.jpg)
-
-*Figure 3. OpenAI problems verified in Lean.*
-
-![Cost: Claude usage and prover compute](docs/figures/cost.jpg)
-
-*Figure 4. Claude cost and prover compute per problem.*
-
-Run records are in `results/<run_id>/`: Lean files, summary, report and
-informalization; traces and server metrics are kept out of the repository
-for size. Slides on these results:
-[docs/slides/aiprover_orchestration_openai_math.pptx](docs/slides/aiprover_orchestration_openai_math.pptx).
-
-## 7. Configuration
-
-Each role of a run config names a backend: `claude`, `codex`,
-`openai_compatible` (any server with that API, with Lean tools if `tools` is
-set), or `aiprover` (prover only). Any such backend can serve any chat role,
-including the orchestrator and its escalations; a provider's API is added on the
-page as a server of kind "Hosted model". Every backend reports tokens, and USD
-is reported where a price is known. A USD limit counts tokens without a price at
-100,000 per USD.
-Claude and Codex are not installed in advance: launching a run that selects one
-prompts for its sign-in, which installs the program. `claude` uses the subscription of the
-logged-in `claude` CLI, or the Anthropic API when `ANTHROPIC_API_KEY` is
-set (`CLAUDE_AUTH=subscription|api` overrides).
-
-A GPU group names the model server that runs a run's AIProver jobs. Group
-`cpu` needs none (every role on Claude, Codex, or a server added on the page). The other groups
-use the endpoint written by `./setup --endpoint <URL>`
-(`orchestration_plugin/aiprover.toml`) and its reasoning proxy
-(`orchestration_plugin/setup.sh endpoint` restarts the proxy after a
-reboot), or a harness configuration in `configs/aiprover/`. The GPUs and
-hourly rate of each server lie in `configs/orchestrator/gpu_hardware.json`;
-GPU time counts only the server's active time during a run's sessions.
-
-The server has two pages. `/user`, where `/` leads, offers one GPU group,
-the open and OpenAI math problems, the proved OpenAI problems, and the runs
-submitted from it. `/dev` offers every GPU group, model and dataset and
-lists every run; an API call without `?page=dev` is the user page's. The
-pages scope what is offered; they are not access control. Access is open;
-`QUERY_SERVER_AUTH=on` requires tokens (`configs/server/tokens.example.json`)
-and approval.
-
-## 8. Future work
-
-- Import of an existing Lean project (declaration graph, stubs, original
-  proofs as sketches).
-- Orchestrator runs that read and extend the theorem library.
+Each role of a run config (`configs/orchestrator/*.json`) names a backend:
+`claude`, `codex`, `openai_compatible` (any server with that API), or
+`aiprover` (prover only). A deployment's own settings, such as its model
+servers, a Slurm cluster, and hardware rates, lie in the untracked
+`configs/site.json` (`configs/site.example.json` lists them); without it, the
+page uses `standard.json` and the model server that `./setup` connects. The
+[configuration guide](docs/guide/configuration.md) covers both, and the limits
+and access settings.

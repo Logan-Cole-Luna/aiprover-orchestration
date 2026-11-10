@@ -1,6 +1,12 @@
 """The paper contract of a project (project.py)."""
 
+import json
+import tempfile
 import unittest
+from pathlib import Path
+from unittest import mock
+
+from aiprover_orchestration.orchestrator import project as project_file
 
 from aiprover_orchestration.orchestrator.project import PaperBuilder
 from aiprover_orchestration.orchestrator.project_tasks import absorb
@@ -70,3 +76,32 @@ class ReportAbsorptionTest(unittest.TestCase):
         project["members"][1]["proof"] = "edited by hand"
         absorb(project, '<theorem name="new"><statement>N</statement><proof>other</proof></theorem>', True)
         self.assertEqual(project["members"][1]["proof"], "edited by hand")
+        with self.subTest("a project runs from the command line, member by member"):
+            with tempfile.TemporaryDirectory() as folder, \
+                    mock.patch.object(project_file, "PROJECTS_DIR", Path(folder)), \
+                    mock.patch.object(project_file.subprocess, "run") as run:
+                config = Path(folder) / "config.json"
+                config.write_text(json.dumps({"agents": {"orchestrator": {"tools": True}}}))
+                project = {"name": "demo", "library": "demo.lean", "source": "/src",
+                           "settings": {"aiprover_attempts_per_lemma": 3},
+                           "tasks": [], "open": [], "reviews": [{"claim": "C"}],
+                           "members": [{"uuid": "done", "run": "r0"},
+                                       {"uuid": "row_1"},
+                                       {"uuid": "new", "statement": "S", "proof": "P"}]}
+                project_file.save(project)
+                project_file.launch(project, lambda body: project_file.run_member(
+                    body, project, config, Path("data.jsonl")))
+                commands = [call.args[0] for call in run.call_args_list]
+                self.assertEqual(len(commands), 2)
+                self.assertIn("--problem-uuid", commands[0])
+                self.assertIn("libraries/demo.lean", commands[0])
+                self.assertIn("--aiprover-attempts-per-lemma", commands[0])
+                self.assertIn("--statement", commands[1])
+                member = Path(folder) / "demo" / "members" / "new"
+                self.assertEqual((member / "proof.txt").read_text(), "P")
+                self.assertEqual(json.loads((member / "config.json").read_text())
+                                 ["agents"]["orchestrator"]["source_dir"], "/src")
+                self.assertEqual([m.get("run") for m in project_file.load("demo")["members"]],
+                                 ["r0", "demo_row_1", "demo_new"])
+                project_file.decide("demo", 0, "confirmed", "checked")
+                self.assertEqual(project_file.load("demo")["reviews"][0]["decision"], "confirmed")

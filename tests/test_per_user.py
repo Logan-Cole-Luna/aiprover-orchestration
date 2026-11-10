@@ -1,5 +1,5 @@
 """Per-user servers (scripts/user/aiprover-server): runtime state under
-AIPROVER_ORCHESTRATION_HOME, the DGX group of the user's own proxy, run
+AIPROVER_ORCHESTRATION_HOME, the persistent group of the user's own proxy, run
 processes of the own account only, run names and imports, and Claude roles
 on the user page only on a per-user server."""
 
@@ -12,9 +12,10 @@ from unittest import mock
 from aiprover_orchestration import paths
 from aiprover_orchestration.server import jobs
 from aiprover_orchestration.server.jobs import JobStore
+from aiprover_orchestration.server.model_servers import PERSISTENT_GROUP
 from tests.support import ServerProcessTest, job
 
-PROBLEM = {"statement": "theorem t : 1 = 1", "proof": "rfl", "gpu_group": "dgx"}
+PROBLEM = {"statement": "theorem t : 1 = 1", "proof": "rfl", "gpu_group": PERSISTENT_GROUP}
 
 
 class PerUserTest(ServerProcessTest):

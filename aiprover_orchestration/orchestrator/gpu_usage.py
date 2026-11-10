@@ -9,9 +9,9 @@ sessions, so the charges of overlapping runs sum to the server's active time.
 `refresh` writes two files in a run's directory: gpu_spans.json holds the
 evidence (open sessions and active spans), and gpu_usage.json holds the
 charged hours. A run that ends also charges again the runs it overlaps, and
-sessions outside any run take their share of the DGX, the only server they
-use. Hardware and prices lie in configs/orchestrator/gpu_hardware.json and
-are read on display, so a correction applies to every run at once. A
+sessions outside any run take their share of the persistent server, the only
+server they use. Hardware and prices lie in the `hardware` table of
+configs/site.json and are read on display, so a correction applies to every run at once. A
 server's list there may hold several entries; a run uses the latest one
 whose `since` date is not after the run's start. The table describes one
 model server, whereas the metrics of a pool of servers are read as one, so
@@ -28,12 +28,17 @@ import os
 import sys
 from pathlib import Path
 
-from ..paths import CONFIG_DIR, ROOT
-from ..server.model_servers import GpuGroup, group_of_prover, sharing_key
+from ..paths import ROOT, SITE_FILE
+from ..server.model_servers import (
+    GPU_GROUPS,
+    PERSISTENT_GROUP,
+    GpuGroup,
+    group_of_prover,
+    sharing_key,
+)
 from ..utils.files import read_json, read_jsonl, read_record, write_atomic
 from .trace import Trace
 
-HARDWARE = CONFIG_DIR / "orchestrator" / "gpu_hardware.json"
 RUNNING = "vllm:num_requests_running"
 FINISHED = "vllm:e2e_request_latency_seconds_count"
 # Consecutive samples further apart than this do not bound an active span.
@@ -45,7 +50,7 @@ USAGE_FILE = "gpu_usage.json"
 # The spans' evidence, which the usage record leaves out.
 EVIDENCE = ("sessions", "active", "jobs")
 # The server of sessions outside any run; job directories do not name it.
-UNTRACED_SERVER = "dgx"
+UNTRACED_SERVER = GPU_GROUPS[PERSISTENT_GROUP].hardware
 # Files of a session directory that its harness keeps writing.
 SESSION_OUTPUT = ("agent.log", ".hevo_ticks")
 
@@ -71,7 +76,7 @@ def server_of(trace: dict) -> str:
     if group and group.hardware:
         return group.hardware
     name = Path(prover.get("config") or "").stem
-    return next((key for key in read_json(HARDWARE) if key in name), name)
+    return next((key for key in hardware_table() if key in name), name)
 
 
 def sharing_of(trace: dict) -> str:
@@ -515,9 +520,14 @@ def refresh(result_dir: Path, trace: dict) -> None:
             charge(path, other, pool)
 
 
+def hardware_table() -> dict:
+    """GPUs and hourly price of each model server, by date (site.json)."""
+    return read_json(SITE_FILE).get("hardware", {})
+
+
 def hardware_of(server: str, started: str) -> dict:
     """The hardware table's entry for a server at a run's start date."""
-    entries = read_json(HARDWARE).get(server) or []
+    entries = hardware_table().get(server) or []
     dated = [entry for entry in entries if entry["since"] <= started]
     return max(dated, key=lambda entry: entry["since"], default={})
 

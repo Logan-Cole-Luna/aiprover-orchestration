@@ -9,7 +9,7 @@ which share its server. Runs of the same problem may overlap (each writes and
 builds its Lean modules under the workspace's build lock).
 
 The worker keeps each group's model server in step with demand: it submits a
-Vista server job for the group when an approved run of it is waiting and none
+server job on the cluster for the group when an approved run of it is waiting and none
 is queued or running, and cancels the server jobs it submitted for the group
 after IDLE_SECONDS without work there. A group may borrow the servers of
 other groups (`GpuGroup.borrows`): its runs use every server of the pool
@@ -44,6 +44,7 @@ from ..paths import (
     DATA_DIR,
     RESULTS_DIR,
     ROOT,
+    SITE,
     STATE_DIR,
     TEMP_DIR,
     locate,
@@ -60,7 +61,9 @@ DATABASE = STATE_DIR / "jobs.db"
 PROBLEM_DIR = STATE_DIR / "problems"
 # Every JSONL file in data/ is offered as a source of problems.
 DATASET = DATA_DIR / "val_JiatuBook_unlabelled.jsonl"
-CONFIG = CONFIG_DIR / "orchestrator" / "aiprover_vista_served.json"
+# The run configuration of the page, before the selected models: the site's,
+# else the generic one, whose prover uses the model server of ./setup.
+CONFIG = ROOT / SITE.get("served_config", "configs/orchestrator/standard.json")
 # Per-phase orchestrator settings applied to a run whose options set
 # `orchestrator_phases` (our own runs); other runs use the selected model as is.
 ORCHESTRATOR_PHASES = CONFIG_DIR / "orchestrator" / "orchestrator_phases.json"
@@ -136,8 +139,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     problem_group TEXT,                      -- group named at submission; NULL = by dataset
     imported    TEXT                         -- imported run: "resume" or "view"; else NULL
 );
--- Vista server jobs submitted by the worker (only these are cancelled when idle).
-CREATE TABLE IF NOT EXISTS vista_jobs (
+-- Server jobs submitted by the worker (only these are cancelled when idle).
+CREATE TABLE IF NOT EXISTS server_jobs (
     job_id      TEXT PRIMARY KEY,
     submitted   REAL NOT NULL,
     checkpoint  TEXT,                        -- checkpoint the job serves
@@ -159,6 +162,9 @@ MIGRATIONS = [
     "ALTER TABLE jobs ADD COLUMN problem_group TEXT",
     "ALTER TABLE vista_jobs ADD COLUMN gpu_group TEXT",
     "ALTER TABLE jobs ADD COLUMN page TEXT",
+    # The table of server jobs, under its earlier name.
+    "INSERT OR IGNORE INTO server_jobs SELECT job_id, submitted, checkpoint, gpu_group FROM vista_jobs",
+    "DROP TABLE vista_jobs",
 ]
 
 
@@ -308,7 +314,7 @@ def job_checkpoint(job: dict) -> str | None:
     return (
         models.checkpoint_of(selection)
         if selection
-        else model_servers.CHECKPOINTS["trained"]
+        else next(iter(model_servers.CHECKPOINTS.values()), None)
     )
 
 
@@ -424,27 +430,27 @@ class JobStore(SqliteStore):
         queued = [job["run_id"] for job in self.in_states("queued")]
         return queued.index(run_id) + 1 if run_id in queued else None
 
-    def vista_job_checkpoints(self, group: str) -> dict[str, str | None]:
+    def server_job_checkpoints(self, group: str) -> dict[str, str | None]:
         rows = self._execute(
-            "SELECT job_id, checkpoint FROM vista_jobs "
+            "SELECT job_id, checkpoint FROM server_jobs "
             "WHERE COALESCE(gpu_group, ?) = ?",
             (model_servers.DEFAULT_GROUP, group),
         )
         return {row["job_id"]: row["checkpoint"] for row in rows}
 
-    def add_vista_job(self, job_id: str, checkpoint: str, group: str) -> None:
+    def add_server_job(self, job_id: str, checkpoint: str, group: str) -> None:
         self._execute(
-            "INSERT OR IGNORE INTO vista_jobs (job_id, submitted, checkpoint, gpu_group) "
+            "INSERT OR IGNORE INTO server_jobs (job_id, submitted, checkpoint, gpu_group) "
             "VALUES (?, ?, ?, ?)",
             (job_id, time.time(), checkpoint, group),
         )
 
-    def remove_vista_job(self, job_id: str) -> None:
-        self._execute("DELETE FROM vista_jobs WHERE job_id = ?", (job_id,))
+    def remove_server_job(self, job_id: str) -> None:
+        self._execute("DELETE FROM server_jobs WHERE job_id = ?", (job_id,))
 
 
 class Worker(threading.Thread):
-    """Runs approved jobs and manages the Vista model servers. Each GPU group
+    """Runs approved jobs and manages the model server jobs. Each GPU group
     (model_servers.GPU_GROUPS) has its own model server and runs up to
     MAX_CONCURRENT_RUNS of its jobs at once."""
 
@@ -456,23 +462,13 @@ class Worker(threading.Thread):
         self.running: dict[str, subprocess.Popen | None] = {}
         # Per group: last server status, start of its idle period, and the
         # checkpoint its endpoint was last confirmed to serve.
-        self.vista_messages: dict[str, str] = {}
+        self.server_messages: dict[str, str] = {}
         self.idle_since: dict[str, float] = {}
         self.serving: dict[str, str] = {}
         self.maintained = 0.0  # last _maintain_servers pass
         self.successor_tried: dict[str, float] = {}  # per group
         # Run id -> the process rendering its trace pages.
         self.page_renders: dict[str, subprocess.Popen] = {}
-
-    @property
-    def vista_message(self) -> str:
-        return (
-            "; ".join(
-                f"{group}: {message}"
-                for group, message in self.vista_messages.items()
-            )
-            or "not checked"
-        )
 
     def run(self) -> None:
         for job in self.store.in_states("running", "cancelling"):
@@ -514,7 +510,7 @@ class Worker(threading.Thread):
                 # A persistent server's runs wait until it answers, rather
                 # than failing on it.
                 endpoint_up, message = endpoint_status(False, group)
-                self.vista_messages[name] = message
+                self.server_messages[name] = message
                 if not endpoint_up:
                     candidate = None
             if candidate is not None:
@@ -613,7 +609,7 @@ class Worker(threading.Thread):
                     stderr=subprocess.DEVNULL,
                 )
 
-    # Vista servers --------------------------------------------------------
+    # Server jobs --------------------------------------------------------
 
     def _serving(
         self, checkpoint: str, group: model_servers.GpuGroup, own: bool = True
@@ -626,25 +622,25 @@ class Worker(threading.Thread):
         if self.serving.get(group.name) == checkpoint:
             endpoint_up, message = endpoint_status(bring_up=True, group=group)
             if endpoint_up:
-                self.vista_messages[group.name] = message
+                self.server_messages[group.name] = message
                 return True
             self.serving.pop(group.name, None)
         jobs = model_servers.server_jobs(group)
         if jobs is None:
-            self.vista_messages[group.name] = (
-                "Vista unreachable: reopen the ControlMaster "
-                "(~/.ssh/vista.sock) with MFA"
+            self.server_messages[group.name] = (
+                "cluster unreachable: reopen the SSH ControlMaster "
+                f"({model_servers.CONTROL_SOCKET})"
             )
-            logger.warning(self.vista_messages[group.name])
+            logger.warning(self.server_messages[group.name])
             return False
-        checkpoints = self.store.vista_job_checkpoints(group.name)
+        checkpoints = self.store.server_job_checkpoints(group.name)
         for job_id in checkpoints:
             if job_id not in jobs:
-                self.store.remove_vista_job(job_id)
+                self.store.remove_server_job(job_id)
         # A job the server did not submit has no recorded checkpoint: the
         # default.
         serves = {
-            job_id: checkpoints.get(job_id) or model_servers.CHECKPOINTS["trained"]
+            job_id: checkpoints.get(job_id) or next(iter(model_servers.CHECKPOINTS.values()), None)
             for job_id in jobs
         }
         for job_id in [
@@ -653,7 +649,7 @@ class Worker(threading.Thread):
             if not own:
                 return False
             if job_id not in checkpoints:
-                self.vista_messages[group.name] = (
+                self.server_messages[group.name] = (
                     f"waiting for server job {job_id}, "
                     "which serves another checkpoint"
                 )
@@ -663,19 +659,19 @@ class Worker(threading.Thread):
                 f"for a run that needs {checkpoint}"
             )
             if model_servers.cancel_server(job_id):
-                self.store.remove_vista_job(job_id)
+                self.store.remove_server_job(job_id)
             del serves[job_id]
         if not serves:
             if not own:
                 return False
             job_id = model_servers.submit_server(checkpoint, group)
             if job_id:
-                self.store.add_vista_job(job_id, checkpoint, group.name)
-                self.vista_messages[group.name] = (
+                self.store.add_server_job(job_id, checkpoint, group.name)
+                self.server_messages[group.name] = (
                     f"submitted server job {job_id}"
                 )
             else:
-                self.vista_messages[group.name] = (
+                self.server_messages[group.name] = (
                     "server job submission failed (see server log)"
                 )
             return False
@@ -686,12 +682,12 @@ class Worker(threading.Thread):
             if own:
                 self._keep_successor(checkpoint, group, jobs, checkpoints)
             self.serving[group.name] = checkpoint
-            self.vista_messages[group.name] = message
+            self.server_messages[group.name] = message
             return True
         summary = ", ".join(
             f"{job_id} {state}" for job_id, state in jobs.items()
         )
-        self.vista_messages[group.name] = f"waiting for server job {summary}"
+        self.server_messages[group.name] = f"waiting for server job {summary}"
         return False
 
     def _tunnel_current(self, group: model_servers.GpuGroup, jobs: dict) -> bool:
@@ -715,7 +711,7 @@ class Worker(threading.Thread):
                     f"{group.name}: closing tunnel to ended job {current}"
                 )
                 tunnel_down(group)
-            self.vista_messages[group.name] = (
+            self.server_messages[group.name] = (
                 "handoff names no running server job; waiting for "
                 + (", ".join(f"{i} {s}" for i, s in jobs.items()) or "none")
             )
@@ -733,10 +729,10 @@ class Worker(threading.Thread):
         for job_id in running:
             if job_id != named[
                 "job"
-            ] and job_id in self.store.vista_job_checkpoints(group.name):
+            ] and job_id in self.store.server_job_checkpoints(group.name):
                 logger.info(f"{group.name}: cancelling superseded job {job_id}")
                 if model_servers.cancel_server(job_id):
-                    self.store.remove_vista_job(job_id)
+                    self.store.remove_server_job(job_id)
         return True
 
     def _keep_successor(
@@ -759,7 +755,7 @@ class Worker(threading.Thread):
         job_id = model_servers.submit_server(checkpoint, group)
         if job_id:
             logger.info(f"{group.name}: queued successor server job {job_id}")
-            self.store.add_vista_job(job_id, checkpoint, group.name)
+            self.store.add_server_job(job_id, checkpoint, group.name)
 
     def _pool_serving(self, checkpoint: str, group: model_servers.GpuGroup) -> bool:
         """True if a model server of the group's pool serves `checkpoint`;
@@ -790,7 +786,7 @@ class Worker(threading.Thread):
     def _release_idle_servers(self, group: model_servers.GpuGroup) -> None:
         """Cancel the server jobs this worker submitted for `group` after
         IDLE_SECONDS without queued or running jobs in the group."""
-        managed = list(self.store.vista_job_checkpoints(group.name))
+        managed = list(self.store.server_job_checkpoints(group.name))
         if not managed or not IDLE_SECONDS:
             self.idle_since.pop(group.name, None)
             return
@@ -803,9 +799,9 @@ class Worker(threading.Thread):
                 f"cancelling {job_id}"
             )
             if model_servers.cancel_server(job_id):
-                self.store.remove_vista_job(job_id)
+                self.store.remove_server_job(job_id)
         self.serving.pop(group.name, None)
-        self.vista_messages[group.name] = (
+        self.server_messages[group.name] = (
             "server jobs cancelled after idle period"
         )
         self.idle_since.pop(group.name, None)

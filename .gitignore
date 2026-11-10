@@ -62,11 +62,25 @@ __pycache__/
 CLAUDE.md
 docs/*
 !docs/figures/
-!docs/slides/
-!docs/logbook.md
 
 # Runtime state of per-user servers (scripts/user/aiprover-server).
 users/
 
 # Records of benchmark runs
 benchmark/runs/
+
+# Settings of one deployment (configs/site.example.json), and the files that
+# belong to a particular site: its cluster's harness configs, run configs,
+# scripts, and services.
+configs/site.json
+configs/aiprover/dgx.toml
+configs/aiprover/s3*.toml
+configs/aiprover/vista*.toml
+configs/orchestrator/aiprover_vista*.json
+configs/orchestrator/gpu_hardware.json
+scripts/vista/
+scripts/stampede3/
+scripts/systemd/aiprover_reasoning_proxy*.service
+scripts/systemd/aiprover_share_results.*
+# The guides of the README's sections.
+!docs/guide/

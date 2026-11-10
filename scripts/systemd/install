@@ -1,8 +1,8 @@
 #!/bin/sh
 # Install systemd user units of this directory for this checkout and account, then enable and
-# start them. The units are written for the orchestration VM; this rewrites their paths:
-# the checkout, the home directory, and the interpreter, which is the one ./setup builds
-# (aiprover/nix/venv_search for the search services, aiprover/nix/tools otherwise) unless
+# start them. The units name the checkout as @ROOT@, the home directory as @HOME@, and the
+# interpreter as @PYTHON@ (its directory @PYTHON_DIR@): the one ./setup builds
+# (aiprover/nix/venv_search for the search services, aiprover/nix/tools otherwise), unless
 # AIPROVER_PYTHON names another.
 #
 #   scripts/systemd/install aiprover_query_server aiprover_paper_search ...
@@ -19,10 +19,8 @@ for unit in "$@"; do
     *) python=$root/aiprover/nix/tools/bin/python3 ;;
   esac
   python=${AIPROVER_PYTHON:-$python}
-  sed -e "s|/home/loganluna/workspace/aiprover_orchestration|$root|g" \
-      -e "s|/home/loganluna/lean_env/bin/python3|$python|g" \
-      -e "s|/home/loganluna/lean_env/bin|$(dirname "$python")|g" \
-      -e "s|/home/loganluna|$HOME|g" \
+  sed -e "s|@ROOT@|$root|g" -e "s|@PYTHON@|$python|g" \
+      -e "s|@PYTHON_DIR@|$(dirname "$python")|g" -e "s|@HOME@|$HOME|g" \
       "$source" > "$units/$unit.service"
   echo "installed $units/$unit.service ($python)"
 done

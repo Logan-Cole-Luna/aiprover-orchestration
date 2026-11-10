@@ -14,8 +14,9 @@ prover's `lean_leanfinder` tool searches the project's own library
    names absent from the informalized corpus).
 2. `build_index.py documents`: joins them with the informal names and
    descriptions of the LeanSearch v2 corpus (Mathlib v4.28.0-rc1).
-3. `embed.py`: document embeddings (Qwen3-Embedding-0.6B), on a GPU node
-   (`scripts/vista/embed_mathlib_vista.sbatch`).
+3. `embed.py`: document embeddings (Qwen3-Embedding-0.6B), on a GPU:
+   `python -m aiprover_orchestration.search.embed <model> documents.jsonl
+   embeddings.npy`.
 4. `server.py`: the search service (`aiprover_mathlib_index` unit).
 
 Related published work (tags defined in docs/lit_review/lit_review.md §6):

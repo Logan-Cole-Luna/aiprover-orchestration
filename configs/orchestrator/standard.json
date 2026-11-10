@@ -1,34 +1,49 @@
 {
   "agents": {
     "orchestrator": {
+      "timeout": 2400,
+      "max_output_tokens": 128000,
       "backend": "claude",
       "model": "claude-opus-5-5",
-      "timeout": 2400,
       "effort": "high",
-      "max_output_tokens": 128000
+      "tools": true,
+      "phases": {
+        "judge": {
+          "tools": false
+        },
+        "escalation": {
+          "backend": "claude",
+          "model": "claude-opus-5-5",
+          "effort": "high",
+          "tools": true
+        }
+      }
     },
     "checker": {
       "backend": "claude",
-      "model": "claude-sonnet-5-5"
+      "model": "claude-sonnet-5-5",
+      "tools": false
     },
     "reviewer": {
+      "timeout": 2400,
+      "max_output_tokens": 128000,
       "backend": "claude",
       "model": "claude-opus-5-5",
-      "timeout": 2400,
       "effort": "high",
-      "max_output_tokens": 128000
+      "tools": false
     },
     "writer": {
+      "timeout": 2400,
+      "max_output_tokens": 128000,
       "backend": "claude",
       "model": "claude-opus-5-5",
-      "timeout": 2400,
       "effort": "high",
-      "max_output_tokens": 128000
+      "tools": false
     },
     "prover": {
       "backend": "aiprover",
       "model": "aiprover",
-      "config": "configs/aiprover/vista_logged.toml",
+      "config": "orchestration_plugin/aiprover.toml",
       "timeout": 3600,
       "max_turns": 200
     }

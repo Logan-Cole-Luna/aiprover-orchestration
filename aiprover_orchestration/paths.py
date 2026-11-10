@@ -6,6 +6,7 @@ AIPROVER_ORCHESTRATION_HOME a per-user directory, so that a user's query
 server (scripts/user/aiprover-server) runs from a shared, read-only checkout.
 """
 
+import json
 import os
 from pathlib import Path
 
@@ -13,6 +14,12 @@ ROOT = Path(__file__).resolve().parents[1]
 HOME_DIR = Path(os.environ.get("AIPROVER_ORCHESTRATION_HOME") or ROOT).resolve()
 
 CONFIG_DIR = ROOT / "configs"
+# Settings of this deployment (configs/site.example.json): its model
+# servers, cluster, and hardware; AIPROVER_SITE names another file. Without
+# the file, the deployment is the model server that ./setup connects, and no
+# cluster.
+SITE_FILE = Path(os.environ.get("AIPROVER_SITE") or CONFIG_DIR / "site.json")
+SITE = json.loads(SITE_FILE.read_text()) if SITE_FILE.exists() else {}
 DATA_DIR = ROOT / "data"  # problem datasets (JSONL)
 
 # The repository's Lean and Mathlib release, and the release of this process:

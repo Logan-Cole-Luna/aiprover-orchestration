@@ -9,8 +9,9 @@ from fastapi.testclient import TestClient
 from aiprover_orchestration.orchestrator import project
 from aiprover_orchestration.server.app import app, store
 client = TestClient(app)
-dgx = {"provider": "aiprover", "model": "dgx"}
-new = {"title": "A: Test", "gpu_group": "dgx", "subagent": dgx}
+from aiprover_orchestration.server.model_servers import PERSISTENT_GROUP
+persistent = {"provider": "aiprover", "model": PERSISTENT_GROUP}
+new = {"title": "A: Test", "gpu_group": PERSISTENT_GROUP, "subagent": persistent}
 page = "?page=dev"
 replies = [client.post("/api/projects" + page, json=new).status_code,
            client.post("/api/projects" + page, json=new).status_code]

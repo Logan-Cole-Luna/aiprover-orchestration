@@ -57,7 +57,7 @@ criterion for every statement you write.
 
 ## Budgets
 
-Defaults of the served runs (`configs/orchestrator/aiprover_vista_served.json`),
+Defaults of the served runs (`configs/orchestrator/standard.json`),
 stated in the trace header. The user may change them.
 
 | Budget | Default |

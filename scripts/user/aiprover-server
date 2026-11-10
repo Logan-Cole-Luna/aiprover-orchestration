@@ -4,7 +4,7 @@
 #
 # From your own machine, one command starts the server and holds the tunnel
 # to its page (`aiprover-server ssh` prints it with your port):
-#   ssh -t -L PORT:127.0.0.1:PORT USER@VM /home/loganluna/workspace/aiprover_orchestration/scripts/user/aiprover-server serve
+#   ssh -t -L PORT:127.0.0.1:PORT USER@HOST <checkout>/scripts/user/aiprover-server serve
 #
 #   scripts/user/aiprover-server serve     as start, then wait until the connection closes (the server keeps running)
 #   scripts/user/aiprover-server [start]   sign in if needed; start the server and its reasoning proxy
@@ -20,8 +20,12 @@
 # Environment:
 #   AIPROVER_ORCHESTRATION_HOME  runtime state (default users/<account> of the checkout, created
 #                                on the first command)
-#   AIPROVER_MAX_PARALLEL        this server's AIProver rollouts on the DGX (default 6 of 48)
-#   AIPROVER_PYTHON              interpreter (default the owner's lean_env)
+#   AIPROVER_MAX_PARALLEL        this server's AIProver sessions on the persistent model server (default 6)
+#   AIPROVER_PYTHON              interpreter (default the site's `python`, else the one ./setup builds)
+#
+# The site (configs/site.json, `persistent`) names the model server of every user's server:
+# `upstream` and `model`, the harness `config` it starts from, the `sessions` it serves to all
+# users at once, and the `host_address` that the printed command connects to.
 #
 # TEMPORARY: other accounts read this checkout and its toolchain from the owner's home,
 # opened for development (docs/server.md, "Per-user server"). The access is closed once a
@@ -47,14 +51,26 @@ if [ "$HOME_DIR" = "$ROOT/users/$(id -un)" ] && [ -d "$PRIVATE_HOME/state" ] \
     MOVE_PRIVATE=yes
   fi
 fi
-PYTHON=${AIPROVER_PYTHON:-$OWNER_HOME/lean_env/bin/python3}
+# A value of configs/site.json by its dotted key; empty when absent.
+site() {
+  python3 -c 'import json, os, sys
+value = json.load(open(sys.argv[1])) if os.path.exists(sys.argv[1]) else {}
+for key in sys.argv[2].split("."):
+    value = value.get(key, "") if isinstance(value, dict) else ""
+print(value)' "${AIPROVER_SITE:-$ROOT/configs/site.json}" "$1"
+}
+PYTHON=${AIPROVER_PYTHON:-$(site python)}
+PYTHON=${PYTHON:-$ROOT/aiprover/nix/tools/bin/python3}
 MAX_PARALLEL=${AIPROVER_MAX_PARALLEL:-6}
 ELAN_HOME=$OWNER_HOME/.elan
-DGX_URL="http://cic-dgx-01.tacc.cloud:8040"
-DGX_MODEL="aip-leanstral"
-# Sessions the DGX serves, shared by all users of the machine.
-DGX_SESSIONS=48
-VM_ADDRESS="129.114.35.157"
+UPSTREAM=$(site persistent.upstream)
+MODEL=$(site persistent.model)
+HARNESS_CONFIG=$ROOT/$(site persistent.config)
+[ -f "$HARNESS_CONFIG" ] || HARNESS_CONFIG=$ROOT/orchestration_plugin/aiprover.toml
+# Sessions the model server serves, shared by all users of the machine.
+SESSIONS=${AIPROVER_MAX_SESSIONS:-$(site persistent.sessions)}
+HOST_ADDRESS=$(site host_address)
+HOST_ADDRESS=${HOST_ADDRESS:-$(hostname -f)}
 STATE=$HOME_DIR/state
 PIDS=$STATE/pids
 PORT_BASE=$((20000 + 2 * ($(id -u) % 5000)))
@@ -117,7 +133,7 @@ find_services() {
 }
 
 # Runtime state: a Lake project on the shared Mathlib packages, an empty
-# library folder, and the DGX harness configuration of this server's proxy.
+# library folder, and the harness configuration of this server's proxy.
 prepare() {
   [ -d "$HOME_DIR" ] || { mkdir -p "$HOME_DIR" && chmod 700 "$HOME_DIR"; }
   mkdir -p "$PIDS" "$HOME_DIR/bin" "$HOME_DIR/results" "$HOME_DIR/logs" \
@@ -135,7 +151,7 @@ prepare() {
     -e "s|^work_root = .*|work_root = \"$HOME_DIR/aiprover/work\"|" \
     -e "s|^api_base = .*|api_base = \"http://127.0.0.1:$PROXY_PORT/v1\"|" \
     -e "s|^max_parallel = .*|max_parallel = $MAX_PARALLEL|" \
-    "$ROOT/configs/aiprover/dgx.toml" >"$STATE/aiprover_dgx.toml"
+    "$HARNESS_CONFIG" >"$STATE/aiprover_persistent.toml"
 }
 
 # A process started before the last change of its code is restarted, so a
@@ -171,7 +187,7 @@ launch() {
 
 tunnel() {
   say "On your own machine (starts the server and holds the tunnel):"
-  say "  ssh -t -L $SERVER_PORT:127.0.0.1:$SERVER_PORT $(id -un)@$VM_ADDRESS $ROOT/scripts/user/aiprover-server serve"
+  say "  ssh -t -L $SERVER_PORT:127.0.0.1:$SERVER_PORT $(id -un)@$HOST_ADDRESS $ROOT/scripts/user/aiprover-server serve"
   say "then open http://localhost:$SERVER_PORT/user"
 }
 
@@ -182,11 +198,12 @@ start() {
   find_services
   check_ports
   prepare
+  [ -n "$UPSTREAM" ] || die "configs/site.json names no persistent.upstream, the model server of per-user servers"
+  [ -z "$SESSIONS" ] || export AIPROVER_MAX_SESSIONS="$SESSIONS"
   export AIPROVER_ORCHESTRATION_HOME="$HOME_DIR" \
-    AIPROVER_DGX_CONFIG="$STATE/aiprover_dgx.toml" \
-    AIPROVER_DGX_PROXY_PORT="$PROXY_PORT" \
+    AIPROVER_PERSISTENT_CONFIG="$STATE/aiprover_persistent.toml" \
+    AIPROVER_PERSISTENT_PROXY_PORT="$PROXY_PORT" \
     AIPROVER_MAX_PARALLEL="$MAX_PARALLEL" \
-    AIPROVER_MAX_SESSIONS="${AIPROVER_MAX_SESSIONS:-$DGX_SESSIONS}" \
     CLAUDE_AUTH=subscription \
     QUERY_SERVER_PER_USER=on \
     QUERY_SERVER_AUTH=off \
@@ -194,7 +211,7 @@ start() {
     PYTHONPATH="$ROOT"
   cd "$ROOT"
   launch proxy "$PYTHON" -m aiprover_orchestration.server.reasoning_proxy \
-    --listen "$PROXY_PORT" --upstream "$DGX_URL" --model "$DGX_MODEL" --max-reply-tokens 16384
+    --listen "$PROXY_PORT" --upstream "$UPSTREAM" --model "$MODEL" --max-reply-tokens 16384
   launch server "$PYTHON" -m uvicorn aiprover_orchestration.server.app:app \
     --host 127.0.0.1 --port "$SERVER_PORT" --workers 1
   for _ in $(seq 60); do

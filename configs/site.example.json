@@ -1,0 +1,56 @@
+{
+  "_comment": [
+    "Settings of one deployment. Copy to configs/site.json (untracked) and keep the keys you need;",
+    "without the file, the deployment is the model server that ./setup connects and no cluster.",
+    "served_config: run configuration of the web page before the chosen models.",
+    "default_group: GPU group the page selects first.",
+    "host_address, python: per-user servers' printed ssh command and interpreter.",
+    "persistent: the always-on model server. name is its GPU group and AIProver version; config,",
+    "  proxy_port: its harness config and reasoning proxy; upstream, model, sessions: what per-user",
+    "  servers' proxies forward to and the sessions it serves to all users; timeout, session_slots:",
+    "  per-run session limits; hardware: key in `hardware`.",
+    "cluster: a Slurm cluster reached over an SSH ControlMaster. submit is called with checkpoint,",
+    "  partition, nodes and wall time, with HANDOFF and SBATCH_JOB_NAME exported, and prints",
+    "  'Submitted batch job N'; the job writes 'node=<n> port=<p> job=<id>' to HANDOFF.",
+    "groups: GPU groups whose server jobs run on the cluster.",
+    "hardware: GPUs and hourly price of each server, from a date, for the reported GPU cost."
+  ],
+  "served_config": "configs/orchestrator/standard.json",
+  "default_group": "local",
+  "host_address": "server.example.org",
+  "python": "",
+  "persistent": {
+    "name": "local",
+    "label": "AIProver (persistent server)",
+    "upstream": "http://gpu-host.example.org:8041",
+    "model": "aiprover-model",
+    "sessions": 24,
+    "timeout": 0,
+    "session_slots": 0,
+    "hardware": "local"
+  },
+  "cluster": {
+    "host": "login.cluster.example.org",
+    "control_socket": "~/.ssh/cluster.sock",
+    "submit": "cd $HOME/aiprover_serve && ./submit_server.sh",
+    "partition": "gpu",
+    "nodes": 1,
+    "wall_time": "12:00:00",
+    "tunnel_config": "configs/aiprover/cluster.toml",
+    "checkpoints": {"trained": "/path/on/cluster/aiprover_model"}
+  },
+  "groups": {
+    "cluster": {
+      "job_name": "aiprover_server",
+      "handoff": "$HOME/servers/aiprover_server.txt",
+      "tunnel_config": "configs/aiprover/cluster.toml",
+      "prover_config": "configs/aiprover/cluster_logged.toml",
+      "proxy_port": 18565,
+      "hardware": "cluster"
+    }
+  },
+  "hardware": {
+    "local": [{"since": "2026-01-01", "gpu": "NVIDIA A100 80GB", "gpus": 2, "usd_per_gpu_hour": 2.0}],
+    "cluster": [{"since": "2026-01-01", "gpu": "NVIDIA H100", "gpus": 2, "usd_per_gpu_hour": 4.0}]
+  }
+}

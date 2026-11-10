@@ -3,6 +3,7 @@ writing its documents, and deciding on its proof plan."""
 
 import json
 
+from aiprover_orchestration.server.model_servers import PERSISTENT_GROUP
 from tests.support import ServerProcessTest, job
 
 # Adds a run (argument: its fields), writes its summary and costs, makes the
@@ -53,9 +54,9 @@ class ResumptionTest(RequestTest):
         self.assertEqual(reply["options"], body)
 
     def test_new_choices_reach_the_run(self):
-        body = {"gpu_group": "dgx", "findings": "a bound is known"}
+        body = {"gpu_group": PERSISTENT_GROUP, "findings": "a bound is known"}
         reply = self.post("cancelled", "failed", "resume", body)
-        self.assertEqual(reply["run"]["gpu_group"], "dgx")
+        self.assertEqual(reply["run"]["gpu_group"], PERSISTENT_GROUP)
         self.assertEqual(
             reply["options"],
             {"sketch_feedback": "a bound is known", "plan_revision": 1},

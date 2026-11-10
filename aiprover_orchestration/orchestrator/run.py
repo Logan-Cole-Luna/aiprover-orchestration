@@ -113,12 +113,34 @@ def terminate(signum: int, _frame) -> None:
     sys.exit(143)
 
 
+def given_problem(args: argparse.Namespace) -> dict:
+    """The problem of --statement, --proof, and --formal-statement, in the row
+    format of a page submission."""
+    read = lambda path: path.read_text().strip() if path else ""
+    name = args.run_id or time.strftime("%Y%m%d_%H%M%S")
+    formal = read(args.formal_statement)
+    return {
+        "uuid": f"user_{name}",
+        "source_name": "user",
+        "domain": "user",
+        "informal_statement": read(args.statement),
+        "informal_proof": read(args.proof) or "(No informal proof is given.)",
+        **({"formal_statement": formal} if formal else {}),
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
         "--problem-uuid", default="JiatuBook_BoundedArithmetic_000004"
     )
     parser.add_argument("--dataset", type=Path, default=DATASET)
+    # A problem given as files instead of a dataset row, as the page submits it.
+    parser.add_argument("--statement", type=Path, help="informal statement (file)")
+    parser.add_argument("--proof", type=Path, help="informal proof (file)")
+    parser.add_argument(
+        "--formal-statement", type=Path, help="Lean statement (file; mode prove)"
+    )
     parser.add_argument(
         "--config",
         type=Path,
@@ -208,11 +230,12 @@ def main() -> None:
             settings[option.name] = value
     config = Config(**settings)
 
-    row = (
-        trace["problem"]
-        if trace is not None and "informal_proof" in trace["problem"]
-        else load_problem(args.dataset, args.problem_uuid)
-    )
+    if trace is not None and "informal_proof" in trace["problem"]:
+        row = trace["problem"]
+    elif args.statement or args.formal_statement:
+        row = given_problem(args)
+    else:
+        row = load_problem(args.dataset, args.problem_uuid)
     run_id = (
         args.run_id
         or f"{time.strftime('%Y%m%d_%H%M%S')}_{row['uuid'].rsplit('_', 1)[-1]}"

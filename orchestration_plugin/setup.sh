@@ -156,7 +156,7 @@ PYEOF
 # user. The key is dedicated (~/.ssh/aiprover_ed25519, no passphrase, needed unattended) and
 # restricted on the host: forwarding to the model server only, no shell (with a handoff file,
 # reading that file only). A host that demands a one-time code even with a key (an
-# AuthenticationMethods chain, as at TACC) gains nothing: the key is removed from it again and
+# AuthenticationMethods chain, as on hosts with multi-factor login) gains nothing: the key is removed from it again and
 # the offer is not repeated for that host.
 KEY="$HOME/.ssh/aiprover_ed25519"
 offer_key() {

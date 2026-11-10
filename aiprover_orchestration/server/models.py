@@ -8,7 +8,7 @@ judges. They default to on for the orchestrator of a service and to off
 otherwise, since a chat server may not support tool calls.
 For Claude and Codex, `model` is a model id and `effort` a reasoning level the
 model accepts (empty = the model default). For AIProver, `model` is a version, whose
-checkpoint the Vista model server must serve, and `effort` is empty: the
+checkpoint a server job must serve (or the persistent server's version), and `effort` is empty: the
 reasoning of the model is not configurable.
 
 Roles (pipeline name in parentheses): the orchestrator (orchestrator) formalizes,
@@ -26,7 +26,10 @@ from pathlib import Path
 from ..utils.vocabulary import modernize
 from .model_servers import (
     CHECKPOINTS,
+    DEFAULT_GROUP,
     GPU_GROUPS,
+    PERSISTENT,
+    PERSISTENT_GROUP,
     custom_harness_config,
     custom_servers,
     key_file,
@@ -46,10 +49,10 @@ CODEX_MODELS = {
 }
 # Services with a sign-in, each with its models.
 SERVICE_MODELS = {"claude": CLAUDE_MODELS, "codex": CODEX_MODELS}
-AIPROVER_VERSIONS = {
-    "trained": "AIProver trained (FP8, Vista)",
-    "base": "AIProver base (bf16, Vista)",
-    "dgx": "AIProver on cic-dgx-01 (persistent)",
+# The checkpoints that the cluster's server jobs serve, and the persistent
+# server's version, named after its group.
+AIPROVER_VERSIONS = {name: f"AIProver {name} (server job)" for name in CHECKPOINTS} | {
+    PERSISTENT_GROUP: PERSISTENT.get("label", "AIProver (persistent server)")
 }
 
 DEFAULT_SELECTION = {
@@ -75,7 +78,7 @@ DEFAULT_SELECTION = {
         "model": "claude-opus-5-5",
         "effort": "high",
     },
-    "subagent": {"provider": "aiprover", "model": "trained", "effort": ""},
+    "subagent": {"provider": "aiprover", "model": next(iter(CHECKPOINTS), PERSISTENT_GROUP), "effort": ""},
 }
 ROLES = {
     "orchestrator": "orchestrator",
@@ -98,9 +101,9 @@ ROLE_DESCRIPTIONS = {
     "escalation": "Answers escalations: proves, splits, restates or retries stuck lemmas",
 }
 
-# Chat roles reach AIProver through the reasoning proxy, as the
-# prover's harness does (configs/aiprover/vista_logged.toml).
-AIPROVER_ENDPOINT = "http://127.0.0.1:18565/v1"
+# Chat roles reach AIProver through the reasoning proxy of the default
+# group, as the prover's harness does.
+AIPROVER_ENDPOINT = GPU_GROUPS[DEFAULT_GROUP].endpoint
 AIPROVER_SERVED_MODEL = "aiprover"
 CHAT_REPLY_TOKENS = 24576
 # Hosted-model calls per run: the served config limits them for a hosted
@@ -214,25 +217,21 @@ def checkpoint_names(selection: dict) -> set[str]:
     }
 
 
-# AIProver versions served by a persistent server, each behind its own
-# reasoning proxy and harness configuration; runs that use only these need no
-# Vista server job.
-PERSISTENT_VERSIONS = {"dgx"}
-VERSION_ENDPOINTS = {"dgx": GPU_GROUPS["dgx"].endpoint}
-HARNESS_CONFIGS = {"dgx": GPU_GROUPS["dgx"].prover_config}
-# Session time limits (seconds) of versions slower than the Vista servers; the
-# DGX completes a median 11 turns per hour against 76 on Vista.
-PROVER_TIMEOUTS = {"dgx": 10800}
-# Sessions per run on the DGX. Its generation rate saturates near 60 tokens/s
-# from about 16 running requests, and subagents raise requests to about 1.5
-# per session; therefore 12 sessions keep the server near saturation while
-# each session generates about twice as fast as at 32.
-DGX_SLOTS = min(32, int(os.environ.get("AIPROVER_MAX_PARALLEL") or 12))
-VERSION_SETTINGS = {"dgx": {"aiprover_session_slots": DGX_SLOTS}}
+# The AIProver version of the persistent server, behind its own reasoning
+# proxy and harness configuration; runs that use only it need no server job.
+PERSISTENT_VERSIONS = {PERSISTENT_GROUP}
+VERSION_ENDPOINTS = {PERSISTENT_GROUP: GPU_GROUPS[PERSISTENT_GROUP].endpoint}
+HARNESS_CONFIGS = {PERSISTENT_GROUP: GPU_GROUPS[PERSISTENT_GROUP].prover_config}
+# The persistent server's session time limit (s) and sessions per run, where
+# the site sets them for a server slower or faster than the served config
+# assumes; a per-user server's AIPROVER_MAX_PARALLEL bounds the sessions.
+PROVER_TIMEOUTS = {PERSISTENT_GROUP: PERSISTENT.get("timeout", 0)}
+SESSION_SLOTS = int(os.environ.get("AIPROVER_MAX_PARALLEL") or PERSISTENT.get("session_slots", 0))
+VERSION_SETTINGS = {PERSISTENT_GROUP: {"aiprover_session_slots": SESSION_SLOTS} if SESSION_SLOTS else {}}
 
 
 def checkpoint_of(selection: dict) -> str | None:
-    """Path of the checkpoint the run needs a Vista server job to serve, if any."""
+    """Path of the checkpoint the run needs a server job to serve, if any."""
     names = checkpoint_names(selection) - PERSISTENT_VERSIONS
     return CHECKPOINTS[next(iter(names))] if names else None
 
@@ -296,7 +295,7 @@ def build_config(base_config: Path, selection: dict) -> dict:
             agents["prover"] = {
                 **agents["prover"],
                 "config": custom_harness_config(name, custom_servers()[name]),
-                "timeout": PROVER_TIMEOUTS["dgx"],
+                "timeout": PROVER_TIMEOUTS[PERSISTENT_GROUP] or agents["prover"].get("timeout"),
             }
             continue
         if role == "subagent" and choice["provider"] == "aiprover":
@@ -306,9 +305,8 @@ def build_config(base_config: Path, selection: dict) -> dict:
                 agents["prover"] = {
                     **agents["prover"],
                     "config": HARNESS_CONFIGS[choice["model"]],
-                    "timeout": PROVER_TIMEOUTS.get(
-                        choice["model"], agents["prover"].get("timeout")
-                    ),
+                    "timeout": PROVER_TIMEOUTS.get(choice["model"])
+                    or agents["prover"].get("timeout"),
                 }
             continue
         spec = chat_spec(role, choice, spec)

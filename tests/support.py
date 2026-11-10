@@ -210,7 +210,9 @@ class ServerProcessTest(TemporaryDirectoryTest):
         env = {
             key: value
             for key, value in os.environ.items()
-            if not key.startswith(("AIPROVER_", "QUERY_SERVER_"))
+            # The site is the test's own, so that both sides see its groups.
+            if key == "AIPROVER_SITE"
+            or not key.startswith(("AIPROVER_", "QUERY_SERVER_"))
         }
         env |= {"AIPROVER_ORCHESTRATION_HOME": str(self.directory)}
         env |= environment

@@ -285,7 +285,7 @@ figcaption { font-size: .9rem; line-height: 1.45; color: var(--caption); margin-
         <div id="run-home"><div id="run-list"></div></div>
         <details style="margin-top:24px">
           <summary>Model servers</summary>
-          <div id="vista" style="overflow-x:auto"></div>
+          <div id="servers" style="overflow-x:auto"></div>
         </details>
       </div>
       <div class="side">
@@ -367,7 +367,7 @@ figcaption { font-size: .9rem; line-height: 1.45; color: var(--caption); margin-
           <div class="models" id="models"></div>
           <small class="models-note" id="models-note">Roles that use AIProver must use the same version.</small>
           <label for="gpu-group">GPU group</label>
-          <select id="gpu-group" style="max-width:240px"><option value="main">main</option></select>
+          <select id="gpu-group" style="max-width:240px"></select>
           <button type="button" class="plain" data-add-server>Model servers</button>
           <small class="models-note" id="gpu-note">Each group has its own model server; runs of a group share it. Group <code>cpu</code> has none: use it when every role runs on Claude, Codex, or your own server.</small>
           <label for="lean-release">Lean version</label>
@@ -511,7 +511,7 @@ figcaption { font-size: .9rem; line-height: 1.45; color: var(--caption); margin-
 </dialog>
 <script>
 const $ = id => document.getElementById(id);
-// The user page (/user) offers the DGX, the open and OpenAI math problems and
+// The user page (/user) offers the persistent model server, the open and OpenAI math problems and
 // the runs submitted from it; the development page (/dev) offers everything.
 // Every API call names the page.
 const PAGE = location.pathname.replace(/\/+$/, "") === "/dev" ? "dev" : "user";
@@ -563,9 +563,9 @@ async function start() {
   if (!catalog) {
     try {
       catalog = await api("/api/models" + PAGE_QUERY); buildPickers(); buildSettings();
-      $("gpu-group").innerHTML = (catalog.gpu_groups || ["main"]).map(g =>
+      $("gpu-group").innerHTML = (catalog.gpu_groups || []).map(g =>
         `<option value="${escapeHtml(g)}">${escapeHtml(g)}</option>`).join("");
-      $("gpu-group").value = catalog.default_gpu_group || "main";
+      $("gpu-group").value = catalog.default_gpu_group || catalog.gpu_groups?.[0] || "";
       renderRuns(); refreshReleases();
     }
     catch (e) { $("models-note").innerHTML = `<span class="error">Model choices unavailable: ${escapeHtml(e.message)}</span>`; }
@@ -783,12 +783,12 @@ function persistentRow(name, group, status) {
 // Rows of one GPU group: a row per server job, or one row saying why none
 // is listed; the group cell carries the worker's last status.
 function serverRows(name, group) {
-  const status = group.vista && group.vista !== "not checked" ? group.vista : "";
+  const status = group.status && group.status !== "not checked" ? group.status : "";
   const jobs = group.server_jobs;
   const groupCell = (span) => `<td class="group" rowspan="${span}">${escapeHtml(name)}</td>`;
   if (group.persistent) return persistentRow(name, group, status);
   if (!jobs || !jobs.length) {
-    const text = jobs ? "no server job" : "Vista unreachable";
+    const text = jobs ? "no server job" : "cluster unreachable";
     return `<tr>${groupCell(1)}<td colspan="5" class="note">${text}</td>`
       + `<td class="note">${escapeHtml(status)}</td></tr>`;
   }
@@ -817,11 +817,11 @@ async function refreshHealth() {
     const h = await api("/api/health" + PAGE_QUERY);
     const groups = Object.entries(h.groups || {main: h});
     const up = ok => [ok ? "up" : "down", ok ? "good" : "bad"];
-    $("health").innerHTML = (PAGE === "dev" ? healthRow("Vista connection", ...up(h.control_master)) : "")
+    $("health").innerHTML = (PAGE === "dev" && h.cluster ? healthRow("Cluster connection", ...up(h.control_master)) : "")
       + groups.map(([name, g]) => healthRow(`${name} model server`, ...up(g.endpoint_up))).join("")
       + healthRow("Awaiting approval", h.awaiting_approval) + healthRow("Queued", h.queued)
       + healthRow("Running", h.running);
-    $("vista").innerHTML = `<table class="servers"><thead><tr>
+    $("servers").innerHTML = `<table class="servers"><thead><tr>
         <th>GPU group</th><th>Server</th><th>State</th><th>Start</th>
         <th>Elapsed / limit</th><th>Nodes</th><th>Note</th></tr></thead>
         <tbody>${groups.map(([name, g]) => serverRows(name, g)).join("")}</tbody>

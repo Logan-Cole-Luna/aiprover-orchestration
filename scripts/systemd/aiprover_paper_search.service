@@ -1,19 +1,15 @@
 # Semantic search over arXiv math abstracts, and the text of papers, for the
-# `paper-search` command (aiprover_orchestration/search/papers.py). Build the
-# index first (search/arxiv_index.py: model, harvest, build).
-# Install:
-#   cp scripts/systemd/aiprover_paper_search.service ~/.config/systemd/user/
-#   systemctl --user daemon-reload
-#   systemctl --user enable --now aiprover_paper_search
+# `paper-search` command (aiprover_orchestration/search/papers.py). Build or
+# download the index first; install with scripts/systemd/install.
 [Unit]
 Description=AIProver arXiv paper search
 After=network-online.target
 
 [Service]
-WorkingDirectory=/home/loganluna/workspace/aiprover_orchestration
+WorkingDirectory=@ROOT@
 # pdftotext converts papers without an HTML version.
-Environment=PATH=/home/loganluna/workspace/aiprover_orchestration/aiprover/nix/tools/bin:/home/loganluna/.local/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=/home/loganluna/lean_env/bin/python3 -m aiprover_orchestration.search.papers --index data/arxiv_index --port 18571 --threads 4
+Environment=PATH=@ROOT@/aiprover/nix/tools/bin:@HOME@/.local/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=@PYTHON@ -m aiprover_orchestration.search.papers --index data/arxiv_index --port 18571 --threads 4
 Restart=always
 RestartSec=10
 
