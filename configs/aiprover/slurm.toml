@@ -1,0 +1,42 @@
+# AIProver harness configuration for runs that execute as Slurm jobs
+# (server/slurm.py). Each run job starts a reasoning proxy on a free local port
+# and points api_base at it, so the address below is a placeholder. Paths expand
+# environment variables (scripts/slurm/env.sh sets them) and ~.
+
+[endpoint]
+mode = "direct"
+api_base = "http://127.0.0.1:18575/v1"
+api_key = "EMPTY"
+# The model name the server job serves (SERVED_NAME of scripts/slurm/serve.sbatch).
+model = "aiprover"
+# Unused in direct mode; present because the CLI reads every endpoint key.
+ssh_host = ""
+ssh_user = ""
+ssh_port = 22
+remote_host = "127.0.0.1"
+remote_port = 18575
+server_handoff = ""
+control_socket = ""
+ssh_options = []
+local_port = 18575
+
+[runtime]
+work_root = "$AIPROVER_ORCHESTRATION_ROOT/aiprover/work"
+# Concurrent rollouts of one run job; each holds a Lean server of 1.5 to 5 GB.
+max_parallel = 8
+# The context of the server job (MAX_MODEL_LEN) bounds the turns of a session.
+timeout_sec = 5400
+max_turns = 100
+
+[paths]
+lean_project = "$AIPROVER_LEAN_PROJECT"
+elan_home = "~/.elan"
+vibe_venv = "$AIPROVER_ORCHESTRATION_ROOT/aiprover/venv_vibe"
+mcp_venv = "$AIPROVER_ORCHESTRATION_ROOT/aiprover/venv_mcp"
+rg_dir = "$AIPROVER_ORCHESTRATION_ROOT/aiprover/bin"
+
+[helpers]
+backend = "auto"
+claude_model = ""
+codex_sandbox = "read-only"
+timeout_sec = 900

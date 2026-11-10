@@ -73,6 +73,7 @@ benchmark/runs/
 # belong to a particular site: its cluster's harness configs, run configs,
 # scripts, and services.
 configs/site.json
+configs/site.env
 configs/aiprover/dgx.toml
 configs/aiprover/s3*.toml
 configs/aiprover/vista*.toml

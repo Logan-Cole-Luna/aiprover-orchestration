@@ -28,7 +28,7 @@ import os
 import sys
 from pathlib import Path
 
-from ..paths import ROOT, SITE_FILE
+from ..paths import ROOT, SITE
 from ..server.model_servers import (
     GPU_GROUPS,
     PERSISTENT_GROUP,
@@ -522,7 +522,7 @@ def refresh(result_dir: Path, trace: dict) -> None:
 
 def hardware_table() -> dict:
     """GPUs and hourly price of each model server, by date (site.json)."""
-    return read_json(SITE_FILE).get("hardware", {})
+    return SITE.get("hardware", {})
 
 
 def hardware_of(server: str, started: str) -> dict:

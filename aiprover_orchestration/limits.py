@@ -46,13 +46,42 @@ LEAN_CHECK_TIMEOUT_MS = 1000 * (
 SLOT_POLL_SECONDS = (0.5, 2.0)
 
 
+def _cgroup_bytes() -> float | None:
+    """The memory limit of this process's cgroup (v2 or v1); None if none."""
+    for path in ("/sys/fs/cgroup/memory.max", "/sys/fs/cgroup/memory/memory.limit_in_bytes"):
+        try:
+            value = Path(path).read_text().strip()
+        except OSError:
+            continue
+        if value.isdigit() and int(value) < 2**60:
+            return float(value)
+    return None
+
+
 def memory_gib() -> float:
-    return os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 2**30
+    """Memory this process may use: the machine's, or less inside a batch
+    job (its cgroup limit, or Slurm's SLURM_MEM_PER_NODE in MiB), whose node
+    is shared with other jobs."""
+    limits = [os.sysconf("SC_PAGE_SIZE") * os.sysconf("SC_PHYS_PAGES") / 2**30]
+    cgroup = _cgroup_bytes()
+    if cgroup:
+        limits.append(cgroup / 2**30)
+    if (os.environ.get("SLURM_MEM_PER_NODE") or "").isdigit():
+        limits.append(int(os.environ["SLURM_MEM_PER_NODE"]) / 1024)
+    return min(limits)
+
+
+def cpu_count() -> int:
+    """Processors this process may use (its affinity: a batch job's share)."""
+    try:
+        return len(os.sched_getaffinity(0)) or 1
+    except (AttributeError, OSError):
+        return os.cpu_count() or 1
 
 
 def _lean_processes() -> float:
     by_memory = memory_gib() * LEAN_MEMORY_SHARE / LEAN_GIB
-    return min(os.cpu_count() or 1, by_memory)
+    return min(cpu_count(), by_memory)
 
 
 def _setting(variable: str, derived: float) -> int:

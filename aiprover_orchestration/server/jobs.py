@@ -21,6 +21,11 @@ of the queue, to resume on the next server job of its group.
 Runs are started in their own session, so a server restart does not end
 them; on start, the worker adopts a run whose process is still alive and
 resumes (`--resume`) one whose process is gone.
+
+With AIPROVER_RUN_EXECUTOR=slurm (server/slurm.py), each run is a Slurm job
+instead of a subprocess, followed by its job id (column `slurm_job`); a run
+whose job ends at its wall time or with its node is resumed like one that
+lost its model server.
 """
 
 import json
@@ -54,7 +59,7 @@ from ..orchestrator import libraries
 from ..orchestrator.config import current_names
 from ..utils.sqlite import SqliteStore
 from ..utils.vocabulary import modernize
-from . import accounts, model_servers, models
+from . import accounts, model_servers, models, slurm
 from .model_servers import run_command
 
 DATABASE = STATE_DIR / "jobs.db"
@@ -137,7 +142,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     hidden      INTEGER NOT NULL DEFAULT 0,  -- 1: left out of the page's run list
     page        TEXT,                        -- page submitting (app.PAGES); NULL = dev
     problem_group TEXT,                      -- group named at submission; NULL = by dataset
-    imported    TEXT                         -- imported run: "resume" or "view"; else NULL
+    imported    TEXT,                        -- imported run: "resume" or "view"; else NULL
+    slurm_job   TEXT                         -- Slurm job of the run (slurm executor); else NULL
 );
 -- Server jobs submitted by the worker (only these are cancelled when idle).
 CREATE TABLE IF NOT EXISTS server_jobs (
@@ -165,6 +171,7 @@ MIGRATIONS = [
     # The table of server jobs, under its earlier name.
     "INSERT OR IGNORE INTO server_jobs SELECT job_id, submitted, checkpoint, gpu_group FROM vista_jobs",
     "DROP TABLE vista_jobs",
+    "ALTER TABLE jobs ADD COLUMN slurm_job TEXT",
 ]
 
 
@@ -187,6 +194,8 @@ def endpoint_status(
     """Probe the group's AIProver endpoint; with `bring_up`, open its tunnel
     first. Served runs reach the model through the reasoning proxy, so it is
     required as well."""
+    if model_servers.LOCAL_CLUSTER:
+        return local_endpoint_status(group)
     action = "up" if bring_up else "status"
     code, output = run_command(
         [str(AIPROVER_CLI), "tunnel", action],
@@ -200,6 +209,19 @@ def endpoint_status(
             f"reasoning proxy not answering on 127.0.0.1:{group.proxy_port}",
         )
     return code == 0, message
+
+
+def local_endpoint_status(group: model_servers.GpuGroup) -> tuple[bool, str]:
+    """A server job on this cluster: up if its handoff names a running job
+    whose server answers. Runs reach it from their own jobs (server/slurm.py),
+    so there is no tunnel or proxy here."""
+    named = model_servers.handoff(group)
+    jobs = model_servers.server_jobs(group) or {}
+    if not named or jobs.get(named["job"]) != "RUNNING":
+        return False, "no running server job named by " + group.handoff
+    if not model_servers.server_answers(named["node"], named["port"]):
+        return False, f"server job {named['job']} on {named['node']} is loading"
+    return True, f"server job {named['job']} at {named['node']}:{named['port']}"
 
 
 def tunnel_job(group: model_servers.GpuGroup) -> str | None:
@@ -539,7 +561,7 @@ class Worker(threading.Thread):
             ):
                 continue
             # A run still shutting down would share its trace with a resume.
-            if run_process_alive(job["run_id"]):
+            if run_process_alive(job["run_id"]) or self._job_active(job):
                 continue
             checkpoint = job_checkpoint(job)
             if checkpoint is None:
@@ -572,13 +594,25 @@ class Worker(threading.Thread):
         dependency = self.store.get(after) if after else None
         return dependency is not None and dependency["state"] != "finished"
 
+    def _job_active(self, job: dict, states: dict | None = None) -> bool:
+        """True while the run's Slurm job is queued or running; an unknown
+        state (squeue failed) counts as active."""
+        if not job.get("slurm_job"):
+            return False
+        states = slurm.job_states() if states is None else states
+        return states is None or job["slurm_job"] in states
+
     def _reap(self) -> None:
-        """Finish the runs whose process has exited."""
+        """Finish the runs whose process, or Slurm job, has ended."""
+        states = slurm.job_states() if slurm.enabled() and self.running else None
         for run_id, process in list(self.running.items()):
+            job = self.store.get(run_id)
             if process is not None:
                 done = process.poll() is not None
+            elif job.get("slurm_job"):
+                done = not self._job_active(job, states)
             else:
-                done = not process_alive(self.store.get(run_id)["pid"], run_id)
+                done = not process_alive(job["pid"], run_id)
             if done:
                 del self.running[run_id]
                 self._finish(self.store.get(run_id))
@@ -700,6 +734,15 @@ class Worker(threading.Thread):
             job_id for job_id, state in jobs.items() if state == "RUNNING"
         ]
         named = model_servers.handoff(group)
+        if model_servers.LOCAL_CLUSTER:
+            # No tunnel: runs read the handoff themselves.
+            if named is None or named["job"] not in running:
+                self.vista_messages[group.name] = (
+                    "handoff names no running server job; waiting for "
+                    + (", ".join(f"{i} {s}" for i, s in jobs.items()) or "none")
+                )
+                return False
+            return True
         current = tunnel_job(group)
         # An unreadable handoff (a failed remote read) leaves a tunnel to a
         # running job in place.
@@ -746,6 +789,11 @@ class Worker(threading.Thread):
         group's server is replaced without a wait in the Slurm queue; at
         most one submission per group every SUCCESSOR_RETRY_SECONDS."""
         if any(state == "PENDING" for state in jobs.values()):
+            return
+        # Runs read the handoff only when they start, so a successor would hold
+        # a second GPU node beside the first; a run that loses its server
+        # resumes on the next one.
+        if model_servers.LOCAL_CLUSTER:
             return
         if time.time() - self.successor_tried.get(group.name, 0.0) < (
             SUCCESSOR_RETRY_SECONDS
@@ -810,7 +858,12 @@ class Worker(threading.Thread):
 
     def _recover(self, job: dict) -> None:
         """Finish a job left running by a previous server process."""
-        if process_alive(job["pid"], job["run_id"]):
+        if self._job_active(job):
+            logger.info(
+                f"adopting running job {job['run_id']} (Slurm job {job['slurm_job']})"
+            )
+            self.running[job["run_id"]] = None
+        elif process_alive(job["pid"], job["run_id"]):
             logger.info(
                 f"adopting running job {job['run_id']} (pid {job['pid']})"
             )
@@ -819,7 +872,7 @@ class Worker(threading.Thread):
             self._finish(job)
         else:
             logger.info(f"requeueing interrupted job {job['run_id']}")
-            self.store.update(job["run_id"], state="queued", pid=None)
+            self.store.update(job["run_id"], state="queued", pid=None, slurm_job=None)
 
     @staticmethod
     def _completed_while_away(job: dict) -> bool:
@@ -926,6 +979,8 @@ class Worker(threading.Thread):
         ):
             logger.info(f"{run_id} left the queue before it started")
             return False
+        if slurm.enabled():
+            return self._submit(run_id, arguments, environment, output_path, group)
         try:
             with open(output_path, "a") as output:
                 process = subprocess.Popen(
@@ -956,13 +1011,48 @@ class Worker(threading.Thread):
         )
         return True
 
+    def _submit(
+        self,
+        run_id: str,
+        arguments: list[str],
+        environment: dict,
+        output_path: Path,
+        group: model_servers.GpuGroup,
+    ) -> bool:
+        """Start a run as a Slurm job (server/slurm.py), which finds the model
+        server of the group from the job's node."""
+        try:
+            job_id = slurm.submit_run(
+                run_id,
+                arguments,
+                {"PYTHONPATH": str(ROOT), **accounts.environment(), **environment},
+                output_path,
+                group.name,
+            )
+        except RuntimeError as error:
+            logger.error(f"{run_id}: {error}")
+            self.store.transition(run_id, "running", state="queued")
+            time.sleep(BACKEND_RETRY_SECONDS)
+            return False
+        self.running[run_id] = None
+        self.store.update(run_id, slurm_job=job_id)
+        if self.store.get(run_id)["state"] == "cancelling":
+            slurm.cancel(job_id)
+        logger.info(
+            f"started {run_id} (Slurm job {job_id}, {group.name}); "
+            f"{len(self.running)} runs in progress"
+        )
+        return True
+
     def _finish(self, job: dict) -> None:
         run_id = job["run_id"]
         summary = read_summary(run_id)
-        if (
-            job["state"] != "cancelling"
-            and summary.get("error_kind") == "infrastructure"
-        ):
+        infrastructure = summary.get("error_kind") == "infrastructure" or (
+            bool(job.get("slurm_job"))
+            and summary.get("error_kind") in (None, "interrupted")
+            and slurm.infrastructure_end(run_id, job["slurm_job"])
+        )
+        if job["state"] != "cancelling" and infrastructure:
             progress = progress_count(run_id)
             stalled = job["stalled"] + 1 if progress <= job["progress"] else 0
             if stalled < MAX_STALLED_RESUMPTIONS:
@@ -975,6 +1065,7 @@ class Worker(threading.Thread):
                     run_id,
                     state="queued",
                     pid=None,
+                    slurm_job=None,
                     progress=progress,
                     stalled=stalled,
                     resumptions=job["resumptions"] + 1,
@@ -993,7 +1084,7 @@ class Worker(threading.Thread):
         if status == PLAN_REVIEW:
             state = PLAN_REVIEW
         self.store.update(
-            run_id, state=state, status=status, pid=None, ended=time.time()
+            run_id, state=state, status=status, pid=None, slurm_job=None, ended=time.time()
         )
         logger.info(f"{run_id}: {state} ({status})")
 
@@ -1041,6 +1132,10 @@ class Worker(threading.Thread):
         # SIGTERM to the orchestrator only: it unwinds, cancels its AIProver
         # jobs and records the interruption in the trace. A run whose pid is
         # not yet recorded is signalled by the worker that starts it.
+        slurm_job = self.store.get(run_id).get("slurm_job")
+        if slurm_job:
+            slurm.cancel(slurm_job)
+            return True
         pid = self.store.get(run_id)["pid"]
         if pid:
             try:

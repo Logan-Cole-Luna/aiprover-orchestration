@@ -8,6 +8,10 @@ name, a handoff file on the cluster, an SSH tunnel to a local port, and a
 reasoning proxy in front of it. The query server submits a group's server job
 when an approved run of the group needs the model and none is queued or
 running, and cancels the jobs it submitted once no run needs them.
+
+A cluster without a host is the machine itself (`cluster` in configs/site.json):
+its commands run here, without SSH or tunnel, and its runs execute as Slurm jobs
+that reach the model server from their own nodes (server/slurm.py).
 """
 
 import json
@@ -37,6 +41,7 @@ DEVICE_ENDPOINT = ROOT / "orchestration_plugin" / "endpoint.toml"
 # exported), the job settings, and the checkpoints a run may select by name.
 CLUSTER = SITE.get("cluster", {})
 CLUSTER_HOST = CLUSTER.get("host", "")
+LOCAL_CLUSTER = bool(CLUSTER) and not CLUSTER_HOST
 CONTROL_SOCKET = Path(CLUSTER.get("control_socket", "~/.ssh/cluster.sock")).expanduser()
 SUBMIT = CLUSTER.get("submit", "")
 PARTITION = CLUSTER.get("partition", "")
@@ -69,6 +74,11 @@ class GpuGroup:
     borrows: tuple[str, ...] = ()
     # Key of the group's server in the site's `hardware` table.
     hardware: str = ""
+    # Version of `cluster.checkpoints` that the group's server job serves.
+    checkpoint: str = ""
+    # Environment of the server job (scripts/slurm/serve.sbatch): the served
+    # model's name, context length, and parsers.
+    server_env: tuple[tuple[str, str], ...] = ()
 
     @property
     def serverless(self) -> bool:
@@ -198,11 +208,13 @@ def site_group(name: str, spec: dict) -> GpuGroup:
         name,
         spec["job_name"],
         spec["handoff"],
-        ROOT / spec["tunnel_config"],
-        spec["prover_config"],
-        spec["proxy_port"],
+        ROOT / spec["tunnel_config"] if spec.get("tunnel_config") else None,
+        spec.get("prover_config", ""),
+        spec.get("proxy_port", 0),
         tuple(spec.get("borrows", ())),
         spec.get("hardware", ""),
+        spec.get("checkpoint", ""),
+        tuple(spec.get("server_env", {}).items()),
     )
 
 
@@ -281,7 +293,10 @@ def control_master_running() -> bool:
 
 
 def remote(command: str, timeout: float = 60) -> tuple[int, str]:
-    """Run `command` in a login shell on the cluster through the ControlMaster."""
+    """Run `command` in a login shell on the cluster, through the ControlMaster
+    unless the cluster is this machine."""
+    if LOCAL_CLUSTER:
+        return run_command(["bash", "-lc", command], timeout)
     return run_command(
         [
             "ssh",
@@ -382,9 +397,11 @@ def submit_server(
 ) -> str | None:
     """Submit a model server job of `group` for `checkpoint`; return its id,
     or None on failure. The job writes the group's handoff file (HANDOFF,
-    exported to the job) and carries its name (SBATCH_JOB_NAME)."""
+    exported to the job, with the group's `server_env`) and carries its name
+    (SBATCH_JOB_NAME)."""
+    exports = "".join(f"export {key}={shlex.quote(value)}; " for key, value in group.server_env)
     code, output = remote(
-        f"export HANDOFF={group.handoff} SBATCH_JOB_NAME={group.job_name}; "
+        f"export HANDOFF={group.handoff} SBATCH_JOB_NAME={group.job_name}; {exports}"
         f"{SUBMIT} {checkpoint} {partition} {NODES} {wall_time}",
         timeout=120,
     )

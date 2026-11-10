@@ -16,10 +16,38 @@ HOME_DIR = Path(os.environ.get("AIPROVER_ORCHESTRATION_HOME") or ROOT).resolve()
 CONFIG_DIR = ROOT / "configs"
 # Settings of this deployment (configs/site.example.json): its model
 # servers, cluster, and hardware; AIPROVER_SITE names another file. Without
-# the file, the deployment is the model server that ./setup connects, and no
-# cluster.
+# the file, the deployment is a Slurm cluster serving AIPROVER_MODEL if that is
+# set (docs/guide/slurm.md), else the model server that ./setup connects.
 SITE_FILE = Path(os.environ.get("AIPROVER_SITE") or CONFIG_DIR / "site.json")
-SITE = json.loads(SITE_FILE.read_text()) if SITE_FILE.exists() else {}
+
+
+def slurm_site(model: str) -> dict:
+    """The site of a Slurm cluster that is this machine and serves the model
+    directory `model` with one server group (scripts/slurm/serve.sbatch)."""
+    harness = "configs/aiprover/slurm.toml"
+    return {
+        "default_group": "slurm",
+        "cluster": {
+            "submit": "scripts/slurm/serve.sbatch",
+            "tunnel_config": harness,
+            "wall_time": "24:00:00",
+            "checkpoints": {"trained": model},
+        },
+        "groups": {"slurm": {
+            "job_name": "aiprover_server",
+            "handoff": str(HOME_DIR / "state" / "model_server.txt"),
+            "tunnel_config": harness,
+            "prover_config": harness,
+            "proxy_port": 18575,
+            "checkpoint": "trained",
+        }},
+    }
+
+
+if SITE_FILE.exists():
+    SITE = json.loads(SITE_FILE.read_text())
+else:
+    SITE = slurm_site(os.environ["AIPROVER_MODEL"]) if os.environ.get("AIPROVER_MODEL") else {}
 DATA_DIR = ROOT / "data"  # problem datasets (JSONL)
 
 # The repository's Lean and Mathlib release, and the release of this process:
@@ -46,11 +74,15 @@ def own_workspace(home: Path, release: str) -> Path:
     return own
 
 
-WORKSPACE = (  # Lake project of all modules
-    HOME_DIR / "orchestration_workspace"
-    if LEAN_RELEASE == DEFAULT_LEAN_RELEASE
-    else own_workspace(HOME_DIR, LEAN_RELEASE)
-)
+def workspace_of(release: str) -> Path:
+    """The Lake project of all modules on Lean `release`."""
+    if release == DEFAULT_LEAN_RELEASE:
+        return HOME_DIR / "orchestration_workspace"
+    return own_workspace(HOME_DIR, release)
+
+
+# A run job on a cluster names a workspace on node-local disk (server/slurm.py).
+WORKSPACE = Path(os.environ.get("AIPROVER_WORKSPACE") or workspace_of(LEAN_RELEASE))
 # A package library (orchestrator/libraries.py) is the workspace of the runs
 # built on it, and Lean finds its modules through LEAN_PATH, which `lake env`
 # extends and lean/sandbox.py passes on, readable only.

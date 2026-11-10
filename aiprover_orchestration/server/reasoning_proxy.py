@@ -531,7 +531,8 @@ async def gather_metrics(app: web.Application) -> str:
     """The Prometheus metrics of all healthy upstreams, concatenated; a
     reader that sums over label sets obtains the pool's totals."""
     texts = []
-    for url in app["upstreams"].healthy:
+    # A copy: a health check may change the set while a request awaits.
+    for url in list(app["upstreams"].healthy):
         try:
             async with app["client"].get(
                 url + "/metrics", timeout=ClientTimeout(total=10)

@@ -171,3 +171,5 @@ servers, a Slurm cluster, and hardware rates, lie in the untracked
 page uses `standard.json` and the model server that `./setup` connects. The
 [configuration guide](docs/guide/configuration.md) covers both, and the limits
 and access settings.
+A Slurm cluster that is the machine itself, where model servers and runs are
+jobs, is described in the [Slurm guide](docs/guide/slurm.md).

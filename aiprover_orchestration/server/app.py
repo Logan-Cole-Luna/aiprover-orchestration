@@ -426,6 +426,11 @@ class Page:
 
 # A per-user server offers the groups any account can reach.
 PERSONAL_GROUPS = (model_servers.PERSISTENT_GROUP, "cpu")
+if model_servers.LOCAL_CLUSTER:
+    PERSONAL_GROUPS += tuple(
+        name for name in model_servers.SITE.get("groups", {})
+        if not model_servers.GPU_GROUPS[name].serverless
+    )
 ALL_GROUPS = tuple(
     sorted(
         model_servers.GPU_GROUPS,
@@ -1030,6 +1035,7 @@ def library_options(body: Submission, run_id: str) -> dict:
 @app.get("/api/libraries")
 def list_libraries(user: str = Depends(current_user)) -> list[dict]:
     """Libraries in libraries/: single files and packages."""
+    LIBRARY_DIR.mkdir(exist_ok=True)
     return [
         libraries.listing(path)
         for path in sorted(LIBRARY_DIR.iterdir())
