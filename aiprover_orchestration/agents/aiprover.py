@@ -286,7 +286,11 @@ class AIProverAgent(Agent):
         )
         with open(self.config_path, "rb") as config_file:
             harness = tomllib.load(config_file)
-        self.work_root = Path(harness["runtime"]["work_root"]).expanduser()
+        # Expanded as the plugin expands it, so that "$VAR/..." names the
+        # directory where the sessions are.
+        self.work_root = Path(
+            os.path.expandvars(harness["runtime"]["work_root"])
+        ).expanduser()
         # The model server's Prometheus metrics and, behind a reasoning
         # proxy, its pool of servers, beside its OpenAI API.
         api_base = harness["endpoint"]["api_base"].rstrip("/")

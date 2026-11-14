@@ -229,7 +229,7 @@ def tunnel_job(group: model_servers.GpuGroup) -> str | None:
     in <work_root>/tunnel.json); None if no tunnel is recorded."""
     with open(group.tunnel_config, "rb") as config_file:
         work_root = tomllib.load(config_file)["runtime"]["work_root"]
-    state = Path(work_root).expanduser() / "tunnel.json"
+    state = Path(os.path.expandvars(work_root)).expanduser() / "tunnel.json"
     try:
         source = json.loads(state.read_text()).get("source", "")
     except (OSError, ValueError):
