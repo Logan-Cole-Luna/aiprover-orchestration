@@ -753,8 +753,9 @@ def submit(body: Submission, user: str = Depends(current_user)) -> dict:
     if not claude_allowed(page, selection):
         raise HTTPException(
             400,
-            "Claude roles run on your own Claude login: start your own server "
-            "with scripts/user/aiprover-server (docs/server.md)",
+            "hosted roles run on the login of the account that runs the "
+            "server: start a server of your own with scripts/user/aiprover-server "
+            "(docs/guide/web_server.md, \"A shared host\")",
         )
     try:
         run_settings = settings.validate(body.settings)
@@ -1757,16 +1758,13 @@ def task_user(request: Request) -> str:
 
 
 def project_lean(project: dict) -> dict[str, str]:
-    """The Lean of a project's tasks: its runs' release, and its library as
-    their workspace if the library is a package."""
+    """The Lean of a project's tasks: its runs' release and the variables of
+    its library (libraries.environment)."""
     environment = {}
     release = (project.get("selection") or {}).get("lean_release")
     if release and release != DEFAULT_LEAN_RELEASE:
         environment["AIPROVER_LEAN_RELEASE"] = release
-    library = f"libraries/{project.get('library', '')}"
-    if project.get("library") and libraries.is_package(library):
-        environment["AIPROVER_LIBRARY_PACKAGE"] = str(libraries.resolve(library))
-    return environment
+    return environment | project_file.library_environment(project.get("library", ""))
 
 
 @app.post("/api/projects/{name}/tasks", status_code=201)

@@ -57,8 +57,10 @@ for one.
 
 ## Hosted models
 
-Install [Claude Code](https://claude.com/claude-code), run `claude` once, and
-log in with `/login`; Codex logs in with `codex login`. With no API key in the
+The first call that needs [Claude Code](https://claude.com/claude-code) or
+Codex installs it for the account into `~/.local/bin`, unless it is already
+on the path; the web page then asks for the sign-in, and on the command line
+`claude` with `/login` or `codex login` signs in once. With no API key in the
 environment, each hosted role runs through the logged-in program and its
 subscription. A role that reaches a usage limit waits for the reset, and the
 run continues. Check the login:

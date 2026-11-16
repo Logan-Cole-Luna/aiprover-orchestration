@@ -62,7 +62,9 @@ all. The most used:
 | `--max-hosted-calls N`, `--max-hosted-usd X` | Hosted-model budget of the run (0: unlimited) |
 
 `AIPROVER_LEAN_RELEASE=<release>` runs on another Lean release, and
-`AIPROVER_LIBRARY_PACKAGE=<folder>` makes a package library the workspace.
+`AIPROVER_LIBRARY_PACKAGE=<folder>` makes a package library the workspace,
+and `AIPROVER_LEAN_IMPORT=Std` makes every file of the run import Std in place
+of Mathlib; the server sets it for a library that imports Std without Mathlib.
 
 ## Projects
 

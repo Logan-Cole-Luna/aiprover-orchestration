@@ -24,6 +24,7 @@ import shutil
 import subprocess
 
 from ..limits import LEAN_CHECK_TIMEOUT_MS
+from ..paths import LEAN_IMPORT
 from ..utils.processes import ProcessStopped, run_group
 from .base import STOPPING, Agent, Completion, Terminated
 from .common import (
@@ -61,18 +62,17 @@ LEAN_TOOL_PERMISSIONS = (
     "Edit(./**)",
     "Bash(lean-check:*)",
 )
-LEAN_TOOLS_NOTE = """
+LEAN_TOOLS_NOTE = f"""
 
 Tools. The working directory is a Lean 4 project with Mathlib (the versions of
-the run). Create and change files in it with the Write and Edit tools, and
-check a file with the shell command `lean-check <file>`, run on its own with
-a relative path; it is the only shell command permitted. Files may not use
-constructs that run code (`#eval`, `IO`, `unsafe`, `elab`, `run_cmd` and
-similar); `lean-check` rejects them. Mathlib's
+the run), and the run's files import {LEAN_IMPORT}. Create and change files in
+it with the Write and Edit tools, and check a file with the shell command
+`lean-check <file>`, run on its own with a relative path; it is the only shell
+command permitted. Files may not use constructs that run code (`#eval`, `IO`,
+`unsafe`, `elab`, `run_cmd` and similar); `lean-check` rejects them. Mathlib's
 sources are under `.lake/packages/mathlib/Mathlib`, for Grep and Read. Files
-outside the working directory are unavailable. Check the Lean you return
-before replying. Your final message is the reply, in the format the task
-requires."""
+outside the working directory are unavailable. Check the Lean you return before
+replying. Your final message is the reply, in the format the task requires."""
 # Result subtypes and error text of a call stopped at its spend, turn or
 # reply-length limit.
 LIMIT_SUBTYPES = ("error_max_budget_usd", "error_max_turns")

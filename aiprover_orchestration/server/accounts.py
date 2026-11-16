@@ -18,7 +18,6 @@ import os
 import pty
 import re
 import select
-import shutil
 import struct
 import subprocess
 import termios
@@ -27,22 +26,19 @@ import time
 from pathlib import Path
 
 from ..agents.claude_cli import get_account_status
+from ..utils.processes import installed
 from ..paths import STATE_DIR
 from .model_servers import run_command, write_private
 
-CODEX_VERSION = "0.166.0"
 SERVICES = {
     "claude": {
         "label": "Claude",
         "command": ["claude", "auth", "login"],
-        "install": "curl -fsSL https://claude.ai/install.sh | bash",
         "url": rb"https://\S+/oauth/authorize\?\S+",
     },
     "codex": {
         "label": "Codex",
         "command": ["codex", "login", "--device-auth"],
-        "install": "npm install -g --prefix ~/.local "
-        f"@openai/codex@{CODEX_VERSION}",
         "url": rb"https://auth\.openai\.com/\S+",
         "code": rb"\b[A-Z0-9]{4}-[A-Z0-9]{4,}\b",
     },
@@ -50,15 +46,10 @@ SERVICES = {
 CLAUDE_KEY = STATE_DIR / "accounts" / "anthropic.key"
 COLOR = re.compile(rb"\x1b\[[0-9;]*m")
 STATUS_SECONDS = 300
-INSTALL_SECONDS = 600
 START_SECONDS = 30
 FINISH_SECONDS = 60
 # Wide enough that a program does not wrap an address.
 WINDOW = struct.pack("HHHH", 50, 4000, 0, 0)
-
-# Both installers place their program here; a program already on the path
-# keeps its place.
-os.environ["PATH"] = f"{os.environ['PATH']}:{Path.home() / '.local' / 'bin'}"
 
 lock = threading.Lock()
 session: tuple[subprocess.Popen, int] | None = None
@@ -72,18 +63,7 @@ class AccountError(Exception):
 def ensure_installed(service: str) -> None:
     """Install a service's program if this account does not have it."""
     info = SERVICES[service]
-    if shutil.which(info["command"][0]):
-        return
-    try:
-        subprocess.run(
-            info["install"],
-            shell=True,
-            capture_output=True,
-            timeout=INSTALL_SECONDS,
-        )
-    except subprocess.TimeoutExpired:
-        pass
-    if not shutil.which(info["command"][0]):
+    if not installed(info["command"][0]):
         raise AccountError(f"{info['label']} could not be installed")
 
 

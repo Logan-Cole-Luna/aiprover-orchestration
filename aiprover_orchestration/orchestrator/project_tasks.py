@@ -20,6 +20,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from ..agents.base import TOKENS_PER_USD, TURNS_PER_USD, billed_tokens
@@ -27,8 +28,10 @@ from ..agents.codex_cli import DEFAULT_CODEX_MODEL, parse_events, token_usage
 from ..agents.codex_cli import command as codex_command
 from ..agents.common import (
     LEAN_CHECK_BIN,
+    MAX_RETRIES,
     PAPER_SEARCH_BIN,
     PAPER_SEARCH_NOTE,
+    failed_call,
     make_lean_project,
 )
 from ..agents.session_tools import TURN_LIMIT
@@ -148,26 +151,37 @@ def session(
         if codex
         else claude_command(project, limit)
     )
-    try:
-        reply = run_group(
-            command,
-            cwd=folder,
-            timeout=SESSION_SECONDS,
-            stdin=prompt
-            + REPORT_NOTE
-            + (CODEX_NOTE if codex else "")
-            + (PAPER_SEARCH_NOTE if project.get("paper_search") else ""),
-            env=session_environment(project, folder),
-        )
-        payload = {} if codex else json.loads(reply.stdout)
-    except (subprocess.TimeoutExpired, json.JSONDecodeError):
-        spent.append(limit)
-        raise
-    spent.append(
-        billed_tokens(token_usage(parse_events(reply.stdout)[1])) / TOKENS_PER_USD
-        if codex
-        else payload.get("total_cost_usd", 0.0)
-    )
+    # A session refused on the account's usage limit starts again once the
+    # limit resets, as a run's calls do (agents/pool.py). Every attempt's
+    # cost counts.
+    cost = 0.0
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            reply = run_group(
+                command,
+                cwd=folder,
+                timeout=SESSION_SECONDS,
+                stdin=prompt
+                + REPORT_NOTE
+                + (CODEX_NOTE if codex else "")
+                + (PAPER_SEARCH_NOTE if project.get("paper_search") else ""),
+                env=session_environment(project, folder),
+            )
+            payload = {} if codex else json.loads(reply.stdout)
+        except (subprocess.TimeoutExpired, json.JSONDecodeError):
+            spent.append(cost + limit)
+            raise
+        if codex:
+            _, tokens, error = parse_events(reply.stdout)
+            cost += billed_tokens(token_usage(tokens)) / TOKENS_PER_USD
+        else:
+            error = str(payload.get("result") or "") if payload.get("is_error") else None
+            cost += payload.get("total_cost_usd", 0.0)
+        wait = failed_call(error, {}).retry_after_s if error else None
+        if wait is None or attempt == MAX_RETRIES:
+            break
+        time.sleep(wait)
+    spent.append(cost)
     report = folder / "report.md"
     # The session's last message, kept for diagnosis; one long enough to be a
     # report stands in for a report the session did not write to its file.
@@ -222,6 +236,9 @@ def no_report(subtype: str, reply, limit: float, cost: float) -> str:
             f"before writing its report. {again}"
         )
     errors = [line for line in reply.stderr.splitlines() if "ERROR" in line]
+    failure = parse_events(reply.stdout)[2]
+    if failure:
+        errors.append(failure)
     detail = f" Last errors: {' '.join(errors[-2:])[-400:]}" if errors else ""
     return (
         "Ended without writing its report (report.md); its last message is in"

@@ -59,7 +59,10 @@ server builds on the chosen Lean release and refuses on `sorry`, axioms,
 `native_decide`, or code that runs. Every file of a run on a package imports
 it, and agents read its statements, with proofs elided, through their tools;
 `python -m aiprover_orchestration.search.library_index libraries/<name>`
-adds it to the semantic search that provers query.
+adds it to the semantic search that provers query. The files of a run import
+Mathlib, except on a file library that imports Std without Mathlib, in which
+case they import Std, and every proof of the run then compiles without
+Mathlib.
 
 ## arXiv search
 

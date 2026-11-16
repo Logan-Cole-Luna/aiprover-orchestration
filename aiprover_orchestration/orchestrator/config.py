@@ -3,17 +3,23 @@
 import re
 from dataclasses import dataclass, field
 
-from ..paths import DEFAULT_LEAN_RELEASE, LEAN_RELEASE, LIBRARY_PACKAGE, WORKSPACE
+from ..paths import (
+    DEFAULT_LEAN_RELEASE,
+    LEAN_IMPORT,
+    LEAN_RELEASE,
+    LIBRARY_PACKAGE,
+    WORKSPACE,
+)
 from ..utils.vocabulary import modernize
 
-# Every file of a run imports Mathlib and the root modules of its package
+# Every file of a run imports LEAN_IMPORT and the root modules of its package
 # library, if it has one.
 LIBRARY_IMPORTS = "".join(
     f"import {root.stem}\n"
     for root in sorted(WORKSPACE.glob("*.lean"))
     if LIBRARY_PACKAGE and root.stem != "lakefile"
 )
-FILE_HEADER = f"import Mathlib\n{LIBRARY_IMPORTS}set_option autoImplicit false\n\n"
+FILE_HEADER = f"import {LEAN_IMPORT}\n{LIBRARY_IMPORTS}set_option autoImplicit false\n\n"
 MAIN_NAME = "solution"
 
 

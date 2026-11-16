@@ -23,7 +23,7 @@ class PerUserTest(ServerProcessTest):
     def test_user_page_takes_claude_roles_only_on_a_per_user_server(self):
         status, body = self.submit(PROBLEM)
         self.assertEqual(status, 400)
-        self.assertIn("own Claude login", body["detail"])
+        self.assertIn("server of your own", body["detail"])
         status, body = self.submit(PROBLEM, QUERY_SERVER_PER_USER="on")
         self.assertEqual(status, 201, body)
 

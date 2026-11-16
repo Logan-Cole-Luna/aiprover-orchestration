@@ -1,6 +1,8 @@
 """Commands run as a process group, ended as a whole."""
 
+import fcntl
 import os
+import shutil
 import signal
 import subprocess
 import threading
@@ -9,6 +11,33 @@ from pathlib import Path
 
 # Interval at which a running command looks at its stop event.
 STOP_POLL_SECONDS = 1
+# Programs of the hosted backends, installed for the account the first time a
+# command needs one, so that nobody installs a program they never use. Both
+# installers place their program in ~/.local/bin; a program already on the
+# path keeps its place.
+INSTALLERS = {
+    "claude": "curl -fsSL https://claude.ai/install.sh | bash",
+    "codex": "npm install -g --prefix ~/.local @openai/codex@0.166.0",
+}
+LOCAL_BIN = Path.home() / ".local" / "bin"
+if str(LOCAL_BIN) not in os.environ.get("PATH", "").split(":"):
+    os.environ["PATH"] = f"{os.environ.get('PATH', '')}:{LOCAL_BIN}"
+
+
+def installed(program: str) -> bool:
+    """Whether `program` is on the path, installing it first if this account
+    lacks it. Concurrent processes of the account install it once."""
+    if shutil.which(program) or program not in INSTALLERS:
+        return shutil.which(program) is not None
+    LOCAL_BIN.mkdir(parents=True, exist_ok=True)
+    with open(LOCAL_BIN.parent / ".aiprover_install.lock", "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        if not shutil.which(program):
+            try:
+                subprocess.run(INSTALLERS[program], shell=True, capture_output=True, timeout=600)
+            except subprocess.TimeoutExpired:
+                pass
+    return shutil.which(program) is not None
 
 
 class ProcessStopped(Exception):
@@ -46,6 +75,7 @@ def run_group(
     or ProcessStopped once the group is ended."""
     if stop is not None and stop.is_set():
         raise ProcessStopped
+    installed(command[0])
     deadline = time.monotonic() + timeout
     with subprocess.Popen(
         command,

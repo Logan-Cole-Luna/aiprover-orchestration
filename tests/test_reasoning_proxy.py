@@ -16,7 +16,8 @@ from aiprover_orchestration.server import reasoning_proxy
 class Upstream:
     """A client whose every request receives one streamed chunk."""
 
-    async def request(self, *_, **__):
+    async def request(self, *_, headers, **__):
+        self.headers = headers
         chunk = {
             "choices": [
                 {"delta": {"content": "Answer"}, "finish_reason": "length"}
@@ -41,7 +42,8 @@ async def closed(*_):
 class ClosedClientTest(unittest.IsolatedAsyncioTestCase):
     async def recorded_reply(self, directory: Path, closes_at: str):
         app = web.Application()
-        app["client"] = Upstream()
+        app["client"] = self.upstream = Upstream()
+        app["authorization"] = {"Authorization": "Bearer key"}
         app["upstreams"] = reasoning_proxy.Upstreams(["http://upstream"])
         app["in_flight"] = [0]
         app["model"] = ""
@@ -56,7 +58,11 @@ class ClosedClientTest(unittest.IsolatedAsyncioTestCase):
             ), mock.patch.object(
                 reasoning_proxy, "fit_context", fit
             ), mock.patch.object(web.StreamResponse, closes_at, closed):
-                await client.post("/v1/chat/completions", data=b"{}")
+                await client.post(
+                    "/v1/chat/completions",
+                    data=b"{}",
+                    headers={"Authorization": "Bearer EMPTY"},
+                )
         except ClientError:
             pass
         finally:
@@ -70,6 +76,9 @@ class ClosedClientTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(entry["content_chars"], len("Answer"))
         self.assertTrue(entry["truncated"])
         self.assertTrue(entry["client_closed"])
+        # The proxy's key replaces the client's authorization; the client
+        # session adds the key itself.
+        self.assertNotIn("Authorization", self.upstream.headers)
 
     async def test_close_before_the_reply_starts_is_handled(self):
         with tempfile.TemporaryDirectory() as directory:

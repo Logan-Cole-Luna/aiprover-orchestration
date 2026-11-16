@@ -15,6 +15,7 @@ with --resume.
 import argparse
 import json
 import logging
+import os
 import signal
 import sys
 import time
@@ -25,6 +26,7 @@ from ..agents import stop_run
 from ..paths import CONFIG_DIR, DATA_DIR, LOGS_DIR, RESULTS_DIR, TEMP_DIR
 from ..utils.files import write_atomic
 from ..utils.vocabulary import FORMER_NAMES
+from . import libraries
 from .config import LEAN_ENVIRONMENT, Config, current_names
 from .pipeline import Orchestration
 from .trace import Trace
@@ -33,6 +35,26 @@ from .trace import Trace
 # (`feature/SAM:JiatuBookFormalization/dataset/`).
 DATASET = DATA_DIR / "val_JiatuBook_unlabelled.jsonl"
 DEFAULT_CONFIG = CONFIG_DIR / "orchestrator" / "default.json"
+
+
+def library_of(args: argparse.Namespace) -> str:
+    """The library of the run the arguments start or continue: that of its
+    config, else that of its problem (pipeline.py)."""
+    if args.library is not None:
+        return args.library
+    source = args.fork_from or (args.run_id if args.resume else None)
+    trace = Trace.load(RESULTS_DIR / source / "trace.json") if source else None
+    if args.config is None and trace is not None:
+        settings = trace["config"]
+    else:
+        settings = json.loads((args.config or DEFAULT_CONFIG).read_text())
+    if settings.get("library"):
+        return settings["library"]
+    if trace is not None:
+        return trace["problem"].get("library", "")
+    if args.statement or args.formal_statement:
+        return ""
+    return load_problem(args.dataset, args.problem_uuid).get("library", "")
 
 
 def load_problem(dataset: Path, uuid: str) -> dict:
@@ -195,6 +217,13 @@ def main() -> None:
             "--" + former.replace("_", "-"), dest=name, type=int, default=None
         )
     args = parser.parse_args()
+    # A package library is the workspace of the run, and the paths module and
+    # the run's AIProver jobs read it from the environment, so the run starts
+    # again once with it set, as the web server starts its runs.
+    package = libraries.environment(library_of(args))
+    if any(os.environ.get(key) != value for key, value in package.items()):
+        os.execve(sys.executable, [sys.executable, "-m", __spec__.name, *sys.argv[1:]],
+                  os.environ | package)
 
     if args.fork_from:
         if not args.run_id:

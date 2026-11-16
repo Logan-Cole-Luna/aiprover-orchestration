@@ -430,8 +430,10 @@ async def forward(request: web.Request) -> web.StreamResponse:
                 body = json.dumps(payload).encode()
         except (json.JSONDecodeError, AttributeError):
             session = None
+    # With a key of its own, the proxy replaces the client's authorization.
+    dropped = HOP_HEADERS | {k.lower() for k in app["authorization"]}
     headers = {
-        k: v for k, v in request.headers.items() if k.lower() not in HOP_HEADERS
+        k: v for k, v in request.headers.items() if k.lower() not in dropped
     }
     client: ClientSession = app["client"]
     reply = None
@@ -627,7 +629,8 @@ async def monitor_upstreams(app: web.Application) -> None:
 async def start(app: web.Application) -> None:
     # Model turns can take many minutes; no total timeout.
     app["client"] = ClientSession(
-        timeout=ClientTimeout(total=None, sock_connect=30)
+        timeout=ClientTimeout(total=None, sock_connect=30),
+        headers=app["authorization"],
     )
     app["max_model_len"] = None
     await check_upstreams(app)
@@ -659,6 +662,12 @@ def main() -> None:
         default="",
         help="served model name to set in every request (default: unchanged)",
     )
+    parser.add_argument(
+        "--api-key-file",
+        default="",
+        help="file of the upstream servers' API key, sent as a bearer token "
+        "(default: the client's authorization is forwarded)",
+    )
     arguments = parser.parse_args()
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s"
@@ -672,6 +681,8 @@ def main() -> None:
     )
     app["max_reply_tokens"] = arguments.max_reply_tokens
     app["model"] = arguments.model
+    key = arguments.api_key_file and Path(arguments.api_key_file).read_text().strip()
+    app["authorization"] = {"Authorization": f"Bearer {key}"} if key else {}
     app["in_flight"] = [0]  # chat requests being forwarded
     app.on_startup.append(start)
     app.on_cleanup.append(stop)

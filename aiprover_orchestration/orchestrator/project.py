@@ -381,13 +381,10 @@ def run_member(body: dict, project: dict, config: Path, dataset: Path) -> dict:
 
 
 def library_environment(library: str) -> dict:
-    """The variable that makes a package library the runs' workspace."""
+    """The variables of the runs on a project's library."""
     from . import libraries
 
-    path = f"libraries/{library}"
-    if library and libraries.is_package(path):
-        return {"AIPROVER_LIBRARY_PACKAGE": str(libraries.resolve(path))}
-    return {}
+    return libraries.environment(f"libraries/{library}" if library else "")
 
 
 def start_task(name: str, kind: str, question: str) -> None:

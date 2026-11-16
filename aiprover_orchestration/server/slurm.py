@@ -575,8 +575,7 @@ def submit(args) -> None:
             waiting += servers
     # The run job starts with its servers and waits there for the models.
     dependency = f"after:{':'.join(waiting)}" if waiting else ""
-    if args.library and libraries.is_package(args.library):
-        environment["AIPROVER_LIBRARY_PACKAGE"] = str(libraries.resolve(args.library))
+    environment |= libraries.environment(args.library or "")
     if args.lean_release:
         release = releases.release_of(args.lean_release)
         if not releases.is_installed(release):

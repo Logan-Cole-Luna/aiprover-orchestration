@@ -929,10 +929,7 @@ class Worker(threading.Thread):
                 }
         environment = {"AIPROVER_CONFIG": str(group.tunnel_config)}
         library = options.get("library") or ""
-        if library and libraries.is_package(library):
-            environment["AIPROVER_LIBRARY_PACKAGE"] = str(
-                libraries.resolve(library)
-            )
+        environment |= libraries.environment(library)
         release = options.get("lean_release")
         if release:
             environment |= release_environment(

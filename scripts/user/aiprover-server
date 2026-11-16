@@ -24,8 +24,9 @@
 #   AIPROVER_PYTHON              interpreter (default the site's `python`, else the one ./setup builds)
 #
 # The site (configs/site.json, `persistent`) names the model server of every user's server:
-# `upstream` and `model`, the harness `config` it starts from, the `sessions` it serves to all
-# users at once, and the `host_address` that the printed command connects to.
+# `upstream` and `model`, the `api_key_file` of its key if it requires one (readable by every
+# user), the harness `config` it starts from, the `sessions` it serves to all users at once,
+# and the `host_address` that the printed command connects to.
 #
 # TEMPORARY: other accounts read this checkout and its toolchain from the owner's home,
 # opened for development (docs/server.md, "Per-user server"). The access is closed once a
@@ -65,6 +66,7 @@ MAX_PARALLEL=${AIPROVER_MAX_PARALLEL:-6}
 ELAN_HOME=$OWNER_HOME/.elan
 UPSTREAM=$(site persistent.upstream)
 MODEL=$(site persistent.model)
+KEY_FILE=$(site persistent.api_key_file)
 HARNESS_CONFIG=$ROOT/$(site persistent.config)
 [ -f "$HARNESS_CONFIG" ] || HARNESS_CONFIG=$ROOT/orchestration_plugin/aiprover.toml
 # Sessions the model server serves, shared by all users of the machine.
@@ -211,7 +213,8 @@ start() {
     PYTHONPATH="$ROOT"
   cd "$ROOT"
   launch proxy "$PYTHON" -m aiprover_orchestration.server.reasoning_proxy \
-    --listen "$PROXY_PORT" --upstream "$UPSTREAM" --model "$MODEL" --max-reply-tokens 16384
+    --listen "$PROXY_PORT" --upstream "$UPSTREAM" --model "$MODEL" --max-reply-tokens 16384 \
+    ${KEY_FILE:+--api-key-file "$KEY_FILE"}
   launch server "$PYTHON" -m uvicorn aiprover_orchestration.server.app:app \
     --host 127.0.0.1 --port "$SERVER_PORT" --workers 1
   for _ in $(seq 60); do

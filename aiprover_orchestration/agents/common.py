@@ -13,7 +13,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from ..orchestrator.trace import REFUSAL_MARKER
-from ..paths import ROOT, TEMP_DIR, WORKSPACE
+from ..paths import LEAN_IMPORT, ROOT, TEMP_DIR, WORKSPACE
 from .base import RETRYABLE_STATUS, Completion
 
 REQUEST_TIMEOUT_S = 900
@@ -68,14 +68,15 @@ SOURCE_NOTE = (
 )
 # Spend limit of one call with tools, in USD.
 LEAN_TOOLS_BUDGET_USD = 10.0
-TOOLS_NOTE = """
+TOOLS_NOTE = f"""
 
 Tools. The working directory is a Lean 4 project with Mathlib (the versions of
-the run). Use `read_file`, `list_files`, `grep`, `write_file`, and `edit_file`
-on its files, and check a file with `lean_check`, whose argument is a relative
-path. Files may not use constructs that run code (`#eval`, `IO`, `unsafe`,
-`elab`, `run_cmd` and similar); `lean_check` rejects them. Mathlib's sources are
-under `.lake/packages/mathlib/Mathlib`. Files outside the working directory are
+the run), and the run's files import {LEAN_IMPORT}. Use `read_file`,
+`list_files`, `grep`, `write_file`, and `edit_file` on its files, and check a
+file with `lean_check`, whose argument is a relative path. Files may not use
+constructs that run code (`#eval`, `IO`, `unsafe`, `elab`, `run_cmd` and
+similar); `lean_check` rejects them. Mathlib's sources are under
+`.lake/packages/mathlib/Mathlib`. Files outside the working directory are
 unavailable. Check the Lean you return before replying. Your final message is
 the reply, in the format the task requires."""
 

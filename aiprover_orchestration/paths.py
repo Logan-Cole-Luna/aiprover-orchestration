@@ -87,6 +87,9 @@ WORKSPACE = Path(os.environ.get("AIPROVER_WORKSPACE") or workspace_of(LEAN_RELEA
 # built on it, and Lean finds its modules through LEAN_PATH, which `lake env`
 # extends and lean/sandbox.py passes on, readable only.
 LIBRARY_PACKAGE = os.environ.get("AIPROVER_LIBRARY_PACKAGE", "")
+# The module every file of a run imports: Mathlib, or Std for a library
+# written without Mathlib (orchestrator/libraries.py).
+LEAN_IMPORT = os.environ.get("AIPROVER_LEAN_IMPORT") or "Mathlib"
 if LIBRARY_PACKAGE:
     WORKSPACE = Path(LIBRARY_PACKAGE)
     os.environ["LEAN_PATH"] = str(WORKSPACE / ".lake" / "build" / "lib" / "lean")

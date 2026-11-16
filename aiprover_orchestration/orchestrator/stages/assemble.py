@@ -19,6 +19,7 @@ revised when no lemma is responsible.
 from ...agents.base import AgentCallError
 from ...lean import checker
 from ...lean.layout import module_name, module_path
+from ...paths import LEAN_IMPORT
 from ..config import MAIN_NAME
 from ..structures import Formalization, Sketch, refers_to
 
@@ -141,7 +142,7 @@ class AssembleStage:
         sol_module = module_name("solution", self.slug)
         check_module = module_name("check", self.slug)
         files = {
-            def_module: f"import Mathlib\n\n{form.definitions}\n",
+            def_module: f"import {LEAN_IMPORT}\n\n{form.definitions}\n",
             thm_module: (
                 f"import {def_module}\n\n{form.preamble}\n\n"
                 f"{form.statement}\n"

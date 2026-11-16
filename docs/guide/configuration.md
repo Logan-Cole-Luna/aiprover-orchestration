@@ -28,7 +28,7 @@ model server that `./setup` connects (GPU group `local`) and group `cpu`
 | --- | --- |
 | `served_config` | Run config of the web page, before the chosen models |
 | `default_group` | GPU group the page selects first |
-| `persistent` | The always-on model server: its group `name`, harness `config` and `proxy_port`, `label`, the `upstream`, `model`, and `sessions` that per-user servers share, per-run `timeout` and `session_slots`, and its `hardware` key |
+| `persistent` | The always-on model server: its group `name`, harness `config` and `proxy_port`, `label`, the `upstream`, `model`, `api_key_file` (the file of the server's key, if it requires one), and `sessions` that per-user servers share, per-run `timeout` and `session_slots`, and its `hardware` key |
 | `cluster` | A Slurm cluster reached over an SSH ControlMaster: `host`, `control_socket`, the `submit` command, `partition`, `nodes`, `wall_time`, the `tunnel_config`, and the `checkpoints` a run may select |
 | `groups` | GPU groups whose server jobs run on the cluster: `job_name`, `handoff`, `tunnel_config`, `prover_config`, `proxy_port`, `borrows`, `hardware` |
 | `hardware` | GPUs and hourly price of each server from a date, for the reported GPU cost |

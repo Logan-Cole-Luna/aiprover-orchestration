@@ -1,9 +1,16 @@
-"""Sign-in to Claude and Codex from the page (server/accounts.py), and the
+"""Sign-in to Claude and Codex from the page (server/accounts.py), the
+installation of their programs on first use (utils/processes.py), and the
 Codex agent's reading of its events (agents/codex_cli.py)."""
 
 import json
+import os
 import stat
+import tempfile
 import unittest
+from pathlib import Path
+from unittest import mock
+
+from aiprover_orchestration.utils import processes
 
 from aiprover_orchestration.agents.codex_cli import parse_events
 from tests.support import ServerProcessTest
@@ -89,6 +96,17 @@ class CodexEventTest(unittest.TestCase):
             {"type": "turn.failed", "error": {"message": "limit"}}
         )
         self.assertEqual(parse_events(failed)[2], "limit")
+        with self.subTest("a missing program is installed on first use"), \
+                tempfile.TemporaryDirectory() as home:
+            local = Path(home) / ".local" / "bin"
+            program = local / "absent-program"
+            installer = f"printf '#!/bin/sh\\n' > {program} && chmod +x {program}"
+            with mock.patch.object(processes, "LOCAL_BIN", local), \
+                    mock.patch.dict(processes.INSTALLERS, {"absent-program": installer}), \
+                    mock.patch.dict(os.environ, {"PATH": f"/usr/bin:/bin:{local}"}):
+                self.assertTrue(processes.installed("absent-program"))
+                self.assertTrue(program.exists())
+                self.assertTrue(processes.installed("absent-program"))
 
 
 if __name__ == "__main__":

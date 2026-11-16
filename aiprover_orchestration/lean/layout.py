@@ -12,7 +12,7 @@ target.
 import re
 from pathlib import Path
 
-from ..paths import WORKSPACE
+from ..paths import LEAN_IMPORT, WORKSPACE
 from .text import imports
 
 MODULE_PREFIXES = {
@@ -35,9 +35,9 @@ def module_path(module: str, workspace: Path = WORKSPACE) -> Path:
 
 
 def with_header(lean_text: str) -> str:
-    """`lean_text` with `import Mathlib` added when it imports nothing."""
+    """`lean_text` with the run's import added when it imports nothing."""
     text = lean_text.strip() + "\n"
-    return text if imports(text) else "import Mathlib\n\n" + text
+    return text if imports(text) else f"import {LEAN_IMPORT}\n\n" + text
 
 
 def check_module(

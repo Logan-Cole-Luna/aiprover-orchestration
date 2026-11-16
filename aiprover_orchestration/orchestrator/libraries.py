@@ -52,6 +52,7 @@ from ..lean.text import (
     declaration_names,
     declarations,
     drop_imports,
+    imports,
     statements_only,
 )
 from ..paths import (
@@ -77,6 +78,22 @@ OUTSIDE = (".lake", VIEWS, "Definitions", "Theorems", "Solutions")
 def resolve(path: str) -> Path:
     return locate(path)
 
+MATHLIB_TOKEN = re.compile(r"(?<=[≤<])(?=[msi])")
+
+
+def environment(path: str) -> dict:
+    """The variables of a run on library `path`. A package library is the
+    workspace of the run, and a file library that imports Std without
+    Mathlib makes Std the import of every file of the run."""
+    if not path or not resolve(path).exists():
+        return {}
+    if is_package(path):
+        return {"AIPROVER_LIBRARY_PACKAGE": str(resolve(path))}
+    roots = import_roots(resolve(path).read_text())
+    if "Std" in roots and "Mathlib" not in roots:
+        return {"AIPROVER_LEAN_IMPORT": "Std"}
+    return {}
+
 
 def load(path: str) -> str:
     """The library's Lean text, without `import` lines. A package is imported
@@ -84,7 +101,15 @@ def load(path: str) -> str:
     an agent reads it."""
     if is_package(path):
         return package_note(path)
-    return drop_imports(resolve(path).read_text()).strip()
+    text = resolve(path).read_text()
+    body = drop_imports(text)
+    # Mathlib declares the global tokens ≤m, <m, ≤s, ≤i and <i, so a library
+    # written without it, read under `import Mathlib`, takes `n≤m` for one.
+    return (body if "Mathlib" in import_roots(text) else MATHLIB_TOKEN.sub(" ", body)).strip()
+
+
+def import_roots(lean_text: str) -> set[str]:
+    return {module.split(".")[0] for module in imports(lean_text)}
 
 
 def package_note(path: str) -> str:

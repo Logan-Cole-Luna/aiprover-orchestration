@@ -17,7 +17,7 @@ import re
 from pathlib import Path
 
 from ... import roles
-from ...paths import LEAN_RELEASE
+from ...paths import LEAN_IMPORT, LEAN_RELEASE
 
 PROMPT_DIR = Path(__file__).parent
 LEAN_ENVIRONMENT_MARKER = "{lean_environment}"
@@ -47,6 +47,7 @@ LEAN_ENV_NOTE = (
     (PROMPT_DIR / "system" / "lean_environment.md")
     .read_text()
     .replace("{lean_release}", LEAN_RELEASE)
+    .replace("{lean_import}", LEAN_IMPORT)
 )
 
 ORCHESTRATOR_SYSTEM = system_prompt("orchestrator")
