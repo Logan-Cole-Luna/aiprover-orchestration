@@ -111,6 +111,12 @@ SETTINGS = {
     "aiprover_relevant_context": Setting(
         "AIProver", "Give a job only the lemmas relevant to it"
     ),
+    "max_stall_hours": Setting(
+        "Hosted-model budget",
+        "Hours without a newly proved lemma, from the first prover job, before the run stops (0: never)",
+        0,
+        48,
+    ),
     "max_hosted_calls": Setting(
         "Hosted-model budget", "Hosted-model calls per run (0: unlimited)", 0, 1000
     ),

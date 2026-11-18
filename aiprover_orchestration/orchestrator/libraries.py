@@ -36,6 +36,7 @@ import io
 import re
 import shutil
 import sys
+import uuid
 import zipfile
 from pathlib import PurePosixPath
 from pathlib import Path
@@ -78,7 +79,14 @@ OUTSIDE = (".lake", VIEWS, "Definitions", "Theorems", "Solutions")
 def resolve(path: str) -> Path:
     return locate(path)
 
+
+# Mathlib declares the global tokens ≤m, <m, ≤s, ≤i and <i, which a library
+# read under `import Mathlib` would otherwise take `n≤m` or `k <size` for. A
+# library written without Mathlib has none of them; one written with it
+# spaces them (`M ≤m N`) or puts them in a section (`(≤m)`), so only one glued
+# to a term, as in `n≤m` or `0<modulus`, is an inequality there.
 MATHLIB_TOKEN = re.compile(r"(?<=[≤<])(?=[msi])")
+GLUED_MATHLIB_TOKEN = re.compile(r"(?<=[^\s(][≤<])(?=[msi])")
 
 
 def environment(path: str) -> dict:
@@ -102,14 +110,42 @@ def load(path: str) -> str:
     if is_package(path):
         return package_note(path)
     text = resolve(path).read_text()
-    body = drop_imports(text)
-    # Mathlib declares the global tokens ≤m, <m, ≤s, ≤i and <i, so a library
-    # written without it, read under `import Mathlib`, takes `n≤m` for one.
-    return (body if "Mathlib" in import_roots(text) else MATHLIB_TOKEN.sub(" ", body)).strip()
+    roots = import_roots(text)
+    lean_import = "Std" if "Std" in roots and "Mathlib" not in roots else "Mathlib"
+    return separated(drop_imports(text), lean_import, "Mathlib" in roots).strip()
+
+
+def separated(text: str, lean_import: str, mathlib: bool = False) -> str:
+    """`text` as a run under `import {lean_import}` reads it: under Mathlib,
+    with a space where it would begin a Mathlib token, every such place in
+    text written without Mathlib and a glued one in text written with it."""
+    if lean_import != "Mathlib":
+        return text
+    return (GLUED_MATHLIB_TOKEN if mathlib else MATHLIB_TOKEN).sub(" ", text)
 
 
 def import_roots(lean_text: str) -> set[str]:
     return {module.split(".")[0] for module in imports(lean_text)}
+
+
+def check_file(path: str, lean_release: str, extra: str = "") -> str:
+    """Why the file library at `path`, followed by the definitions `extra`,
+    would fail the library check at the start of a run on `lean_release`, or
+    "" if it compiles cleanly: it is read as a run reads it, under the import
+    the run will use."""
+    lean_import = environment(path).get("AIPROVER_LEAN_IMPORT", "Mathlib")
+    body = "\n\n".join(part for part in (load(path), separated(extra, lean_import)) if part)
+    text = f"import {lean_import}\nset_option autoImplicit false\n\n{body}\n"
+    check_path = TEMP_DIR / "library_checks" / f"upload_{uuid.uuid4().hex}.lean"
+    check_path.parent.mkdir(parents=True, exist_ok=True)
+    checker = LeanChecker(release_workspace(lean_release), 1, 600)
+    try:
+        result = checker.check_text(text, check_path)
+    finally:
+        check_path.unlink(missing_ok=True)
+    if not result.ok:
+        return result.error_report()[:2000]
+    return "it contains sorry" if result.has_sorry_warning else ""
 
 
 def package_note(path: str) -> str:

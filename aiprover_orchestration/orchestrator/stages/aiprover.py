@@ -23,6 +23,7 @@ import logging
 import math
 import re
 import threading
+import time
 from collections import Counter
 from contextlib import contextmanager
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -292,6 +293,18 @@ class AIProverStage:
         while self._revise(phase, lemma):
             self._jobs(phase, lemma)
 
+    def _check_progress(self) -> None:
+        """Stop the run once no lemma has been proved for max_stall_hours."""
+        hours = self.config.max_stall_hours
+        if self.progress_at is None:
+            self.progress_at = time.time()
+        if hours and time.time() - self.progress_at > hours * 3600:
+            raise RuntimeError(
+                f"No lemma proved in {hours} hours: the provers are not "
+                "making progress on the remaining lemmas. Resume the run, "
+                "with findings or a higher max_stall_hours, to continue."
+            )
+
     def _jobs(self, phase: Phase, lemma: Lemma) -> None:
         """Jobs on `lemma` until it is proved or out of attempts. The
         escalation comes before the next job, so a lemma restored with enough
@@ -300,6 +313,7 @@ class AIProverStage:
             # At the limit no escalation is made, so that further jobs would
             # spend the statement's attempts without one.
             self.agents.check_spend_limit()
+            self._check_progress()
             self._maybe_escalation(phase, lemma)
             samples = not self._exhausted(lemma) and self._claim_sessions(
                 phase, lemma

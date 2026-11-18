@@ -49,6 +49,7 @@ all. The most used:
 | `--mode autoformalize\|prove` | Formalize the given proof (default), or withhold it and prove the theorem |
 | `--disproof true` | In prove mode, prove the negation if the theorem is judged false |
 | `--library FILE`, `--extend-library true` | Build on a library of verified results, and add a proved, reviewed result to it |
+| `--library-extra FILE` | Definitions that follow the library in the run's files, added to it with the result |
 | `--sketch-approval true` | Stop after the proof plan for review; on resume, `--sketch-approval false` approves (`--sketch-guidance TEXT` adds comments), and `--sketch-feedback TEXT --plan-revision N` asks for a revision |
 | `--write-reports true` | Write the report, informal proof, and blueprint (also on resume) |
 | `--paper-search true` | The orchestrator may search arXiv and read papers |

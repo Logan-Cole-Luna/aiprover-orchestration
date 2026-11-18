@@ -225,6 +225,11 @@ class Config:
     aiprover_escalation_after: int = 0
     # Escalations per run; 0 = unlimited. Conflict analyses count as well.
     max_escalations: int = 0
+    # Hours without a newly proved lemma after which the run stops, counted
+    # from its first prover job or resumption; 0 = never. Off until a paired
+    # experiment shows its value; two runs that reached their spending limit
+    # had proved nothing in their last 0.3 and 3.7 hours.
+    max_stall_hours: int = 0
     # Escalate a lemma once more when its statement has used its attempts,
     # rather than leaving it to the replan at the end of the phase; once per
     # statement, counted as an escalation.
@@ -293,6 +298,9 @@ class Config:
     # libraries.py); overrides the problem's `library` field. With
     # `extend_library`, a reviewed proof is appended to it.
     library: str = ""
+    # A Lean file of definitions that follow the library in the run's files;
+    # extending the library adds them together with the result.
+    library_extra: str = ""
     extend_library: bool = False
 
 

@@ -106,6 +106,9 @@ class Orchestration(
         self.row = row
         self.config = config
         self.run_id = run_id
+        # When this process started its first prover job or last recorded a
+        # proved lemma; None before its first job.
+        self.progress_at = None
         self.workspace = WORKSPACE
         self.temp_dir = TEMP_DIR / run_id
         self.log_dir = LOGS_DIR / run_id
@@ -277,6 +280,7 @@ class Orchestration(
         return result, ""
 
     def _record_proof(self, lemma: Lemma, worker, round: int = 0) -> None:
+        self.progress_at = time.time()
         self._decision(
             "lemma_proved",
             lemma=lemma.name,
@@ -333,16 +337,27 @@ class Orchestration(
         return prompts.CLAUSE_OUTPUT if self.config.cdcl else ""
 
     def _load_library(self) -> str:
-        """The library text the run started with. It is kept as library.lean
-        in the result directory: the library file may be extended by other
-        runs meanwhile, and a resumed run elsewhere may lack it."""
-        snapshot = self.result_dir / "library.lean"
+        """The library text the run started with, followed by its extra
+        definitions (config.library_extra), whose length is `extra_chars`.
+        Both are kept in the result directory: the library file may be
+        extended by other runs meanwhile, and a resumed run elsewhere may
+        lack them."""
+        base = self._snapshot("library.lean", self.library_path)
+        extra = self._snapshot("library_extra.lean", self.config.library_extra)
+        text = "\n\n".join(part for part in (base, extra) if part)
+        self.extra_chars = len(text) - len(base)
+        return text
+
+    def _snapshot(self, name: str, path: str) -> str:
+        """The text of the library file at `path` as its copy `name` in the
+        result directory holds it, made on the first call."""
+        snapshot = self.result_dir / name
         if not snapshot.exists():
-            if not self.library_path:
+            if not path:
                 return ""
-            library_file = libraries.resolve(self.library_path)
+            library_file = libraries.resolve(path)
             snapshot.write_text(
-                libraries.package_note(self.library_path)
+                libraries.package_note(path)
                 if library_file.is_dir()
                 else library_file.read_text()
             )
@@ -666,10 +681,11 @@ class Orchestration(
             )
 
     def _extend_library(self, form: Formalization, standalone: str) -> dict:
+        # The extra definitions are added with the result they serve.
         record = libraries.extend(
             self.library_path,
             standalone,
-            self._library_chars(),
+            self._library_chars() - self.extra_chars,
             form.theorem_name,
             f"{self.run_id} ({self.row['uuid']}), proved",
         )

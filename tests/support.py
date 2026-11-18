@@ -137,6 +137,7 @@ def orchestration(
     run.config = config or Config()
     run.row = {"informal_statement": "s", "informal_proof": "p"}
     run.run_id = "test"
+    run.progress_at = None
     run.temp_dir = run.result_dir = run.log_dir = directory
     run.workspace = WORKSPACE
     run.lean = LeanChecker(WORKSPACE, 3, 300, stop=STOPPING)
@@ -147,6 +148,7 @@ def orchestration(
     run._file_counter = 0
     run._counter_lock = threading.Lock()
     run.library = ""
+    run.extra_chars = 0
     run.phase_times = {}
     return run
 
