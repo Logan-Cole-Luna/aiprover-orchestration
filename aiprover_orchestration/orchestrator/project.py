@@ -27,9 +27,7 @@ Without the server, the same steps run from the command line:
     python -m aiprover_orchestration.orchestrator.project run NAME \
         --config CONFIG [--dataset DATA]           # prove the members, in order
     python -m aiprover_orchestration.orchestrator.project task NAME \
-        research|check|paper [QUESTION]            # one task of project_tasks.py
-    python -m aiprover_orchestration.orchestrator.project review NAME \
-        INDEX confirmed|rejected [NOTE]            # a person's decision on a claim
+        research|paper [QUESTION]                  # one task of project_tasks.py
 
 The paper is written from the members' informalizations, each already
 checked against its Lean proof: the writer composes one article, the
@@ -121,6 +119,7 @@ def launch(project: dict, submit) -> list[str]:
             "source_dir": project.get("source", ""),
             **({"gpu_group": project["gpu_group"]} if project.get("gpu_group") else {}),
             "library": project["library"],
+            "library_extra_text": member.get("library_extra", ""),
             "extend_library": True,
             "after": previous,
             "settings": project.get("settings", {}),
@@ -368,6 +367,9 @@ def run_member(body: dict, project: dict, config: Path, dataset: Path) -> dict:
     command = [sys.executable, "-m", "aiprover_orchestration.orchestrator.run",
                "--config", str(folder / "config.json"), "--run-id", run_id,
                "--library", f"libraries/{body['library']}", "--extend-library", "true"]  # fmt: skip
+    if body.get("library_extra_text"):
+        (folder / "library_extra.lean").write_text(body["library_extra_text"])
+        command += ["--library-extra", str(folder / "library_extra.lean")]
     for key, value in body.get("settings", {}).items():
         command += [f"--{key.replace('_', '-')}", str(value)]
     if "uuid" in body:
@@ -391,9 +393,11 @@ def start_task(name: str, kind: str, question: str) -> None:
     """Run one task of project_tasks.py in the foreground, as the page starts it."""
     from .project_tasks import task_dir
 
+    # This process waits for the task, so its id tells the server whether
+    # the task still runs.
     task = {"kind": kind, "question": question, "max_usd": 20, "blueprint": False,
             "id": time.strftime("%Y%m%d_%H%M%S"), "state": "running",
-            "started": time.time()}  # fmt: skip
+            "started": time.time(), "pid": os.getpid()}  # fmt: skip
 
     def append(project: dict) -> dict:
         if any(other.get("state") == "running" for other in project["tasks"]):
@@ -411,12 +415,13 @@ def start_task(name: str, kind: str, question: str) -> None:
     )  # fmt: skip
 
 
-def decide(name: str, index: int, decision: str, note: str) -> None:
-    def change(project: dict) -> None:
-        project["reviews"][index] |= {"decision": decision, "note": note,
-                                      "by": os.environ.get("USER", "")}  # fmt: skip
-
-    update(name, change)
+# Decisions on claims are archived, as on the server (server/app.py).
+# def decide(name: str, index: int, decision: str, note: str) -> None:
+#     def change(project: dict) -> None:
+#         project["reviews"][index] |= {"decision": decision, "note": note,
+#                                       "by": os.environ.get("USER", "")}  # fmt: skip
+#
+#     update(name, change)
 
 
 def main() -> None:
@@ -426,23 +431,23 @@ def main() -> None:
     run.add_argument("name")
     run.add_argument("--config", type=Path, required=True)
     run.add_argument("--dataset", type=Path, default=HOME_DIR / "data" / "openai_math.jsonl")
-    task = actions.add_parser("task", help="research, check a claim, or write the paper")
+    task = actions.add_parser("task", help="research or write the paper")
     task.add_argument("name")
-    task.add_argument("kind", choices=("research", "check", "paper"))
+    task.add_argument("kind", choices=("research", "paper"))
     task.add_argument("question", nargs="?", default="")
-    review = actions.add_parser("review", help="a person's decision on a claim")
-    review.add_argument("name")
-    review.add_argument("index", type=int)
-    review.add_argument("decision", choices=("confirmed", "rejected"))
-    review.add_argument("note", nargs="?", default="")
+    # review = actions.add_parser("review", help="a person's decision on a claim")
+    # review.add_argument("name")
+    # review.add_argument("index", type=int)
+    # review.add_argument("decision", choices=("confirmed", "rejected"))
+    # review.add_argument("note", nargs="?", default="")
     args = parser.parse_args()
     if args.action == "run":
         project = load(args.name)
         launch(project, lambda body: run_member(body, project, args.config, args.dataset))
     elif args.action == "task":
         start_task(args.name, args.kind, args.question)
-    else:
-        decide(args.name, args.index, args.decision, args.note)
+    # else:
+    #     decide(args.name, args.index, args.decision, args.note)
 
 
 if __name__ == "__main__":

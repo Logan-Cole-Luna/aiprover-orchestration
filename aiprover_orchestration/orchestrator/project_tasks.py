@@ -4,13 +4,11 @@ outlives the server.
 A research task is a session that writes a report and a second that
 referees it; asking for a blueprint is a research task whose question says so.
 The referee's report supplies the project's open lemmas, its claims to review,
-and its proposed blueprint. A check task has the service referee one claim,
-and a paper task writes the project's paper. Each task lies in
-data/projects/<name>/tasks/<id>/.
+and its proposed blueprint. A paper task writes the project's paper. Each task
+lies in data/projects/<name>/tasks/<id>/.
 
-Claims record a person's decision and the service's verdict apart, since a project
-may have no expert: neither is a proof, and the way to settle a claim without
-one is to add it as a theorem to prove.
+A claim is not a proof; the way to settle one is to add it as a theorem to
+prove. The check task, which had the service referee one claim, is archived.
 
     python -m aiprover_orchestration.orchestrator.project_tasks <name> <id>
 """
@@ -254,7 +252,11 @@ def context(project: dict) -> str:
         run = member.get("run", "not started")
         lines.append(f"- {member['uuid']} ({member['role']}, {run}) {statement}")
     lines += ["", "Open lemmas:"]
-    lines += [f"- {item['lemma']}: {item['reason']}" for item in project["open"]]
+    lines += [
+        f"- {item['lemma']}: {item['reason']}"
+        for item in project["open"]
+        if not item.get("retired")
+    ]
     return "\n".join(lines)
 
 
@@ -266,17 +268,77 @@ def paths(project: dict) -> dict[str, str]:
     }
 
 
-def absorb(project: dict, report: str, replace: bool = False) -> None:
-    """Add what a report found to the project, without repeating an entry."""
-    known = {item["lemma"] for item in project["open"]}
-    for lemma, reason in extract_named(report, "open").items():
-        if lemma not in known:
-            project["open"].append({"lemma": lemma, "reason": reason.strip()})
-    claims = {review["claim"] for review in project["reviews"]}
-    found = re.findall(r"<claim>\s*(.*?)\s*</claim>", report, flags=re.S)
-    project["reviews"] += [
-        {"claim": claim} for claim in dict.fromkeys(found) if claim not in claims
+# Why a referee retires a claim or an open statement.
+RETIRE_REASONS = ("refuted", "superseded", "proved")
+
+
+def number_claims(project: dict) -> None:
+    """Give each claim without one an id, C1, C2, ..., in order."""
+    taken = [int(r["id"][1:]) for r in project["reviews"] if r.get("id", "")[1:].isdigit()]
+    count = max(taken, default=0)
+    for review in project["reviews"]:
+        if not review.get("id"):
+            count += 1
+            review["id"] = f"C{count}"
+
+
+def ledger_items(project: dict) -> dict[str, dict]:
+    """The claims and open statements by id (a claim's id, an open
+    statement's name)."""
+    number_claims(project)
+    return {r["id"]: r for r in project["reviews"]} | {o["lemma"]: o for o in project["open"]}
+
+
+def ledger(project: dict) -> str:
+    """The claims and open statements a referee maintains: those not
+    retired, by id."""
+    items = ledger_items(project)
+    lines = [
+        f"- {key}: {item.get('claim') or item.get('reason', '')}"
+        for key, item in items.items()
+        if not item.get("retired")
     ]
+    return "\n".join(lines) or "(none)"
+
+
+def absorb(
+    project: dict, report: str, replace: bool = False, task_id: str = ""
+) -> None:
+    """Add what a report found to the project. Each open statement and claim
+    the report names, restates (`<same id>`) or leaves open again records
+    `task_id`, the last task that named it, and is active again; one it
+    retires (`<retire id reason>`) keeps the reason. Repeats are not added."""
+    tag = {"task": task_id} if task_id else {}
+    items = ledger_items(project)
+
+    def named(item: dict) -> None:
+        item.update(tag)
+        item.pop("retired", None)
+
+    for lemma, reason in extract_named(report, "open").items():
+        if lemma in items and "lemma" in items[lemma]:
+            named(items[lemma])
+        else:
+            project["open"].append({"lemma": lemma, "reason": reason.strip()} | tag)
+    claims = {review["claim"]: review for review in project["reviews"]}
+    found = re.findall(r"<claim>\s*(.*?)\s*</claim>", report, flags=re.S)
+    for claim in dict.fromkeys(found):
+        if claim in claims:
+            named(claims[claim])
+        else:
+            project["reviews"].append({"claim": claim} | tag)
+    number_claims(project)
+    for key in re.findall(r'<same\s+id="([^"]+)"\s*/?>', report):
+        if key in items:
+            named(items[key])
+    retired = re.findall(
+        rf'<retire\s+id="([^"]+)"\s+reason="({"|".join(RETIRE_REASONS)})"\s*>(.*?)</retire>',
+        report,
+        flags=re.S,
+    )
+    for key, reason, note in retired:
+        if key in items:
+            items[key]["retired"] = {"reason": reason, "note": note.strip(), "by": task_id}
     # With `replace`, the report's theorems replace the unstarted ones, so
     # that a revision may change or drop them; one listed again with its
     # statement unchanged keeps the proof and dependencies the report's
@@ -306,8 +368,31 @@ def absorb(project: dict, report: str, replace: bool = False) -> None:
         replace_unstarted(project, proposed)
 
 
+def continuation(project: dict, task: dict) -> str:
+    """Where the research task that `task` continues left off, if it names
+    one: its outcome, and its report to read first."""
+    earlier = next(
+        (other for other in project["tasks"] if other["id"] == task.get("after")),
+        None,
+    )
+    if earlier is None:
+        return ""
+    # A task whose process died is still recorded as running.
+    outcome = "finished" if earlier["state"] == "done" else "failed"
+    if earlier.get("error"):
+        outcome += f" ({earlier['error']})"
+    report = task_dir(project["name"], earlier["id"]) / "report.md"
+    where = (
+        f" Its report is `{report}`; read it before anything else."
+        if report.exists()
+        else " It wrote no report, so cite nothing from it."
+    )
+    return f"This task continues research task {earlier['id']}, which {outcome}.{where}\n\n"
+
+
 def research(project: dict, task: dict, folder: Path, spent: list):
-    filled = paths(project) | {"question": task["question"]}
+    question = continuation(project, task) + task["question"]
+    filled = paths(project) | {"question": question}
     draft = session(
         project,
         folder / "draft",
@@ -320,31 +405,31 @@ def research(project: dict, task: dict, folder: Path, spent: list):
     report = session(
         project,
         folder,
-        prompts.RESEARCH_CRITIC_TEMPLATE.format(**filled, draft=draft),
+        prompts.RESEARCH_CRITIC_TEMPLATE.format(**filled, draft=draft, ledger=ledger(project)),
         task["max_usd"] / 2,
         spent,
     )
     replace = task.get("blueprint", task.get("milestones", False))
-    return lambda current: absorb(current, report, replace)
+    return lambda current: absorb(current, report, replace, task["id"])
 
 
-def check(project: dict, task: dict, folder: Path, spent: list):
-    report = session(
-        project,
-        folder,
-        prompts.CLAIM_CHECK_TEMPLATE.format(
-            **paths(project), claim=task["question"]
-        ),
-        task["max_usd"],
-        spent,
-    )
-
-    def record(current: dict) -> None:
-        for review in current["reviews"]:
-            if review["claim"] == task["question"]:
-                review["claude"] = extract_tag(report, "verdict") or "unclear"
-
-    return record
+# def check(project: dict, task: dict, folder: Path, spent: list):
+#     report = session(
+#         project,
+#         folder,
+#         prompts.CLAIM_CHECK_TEMPLATE.format(
+#             **paths(project), claim=task["question"]
+#         ),
+#         task["max_usd"],
+#         spent,
+#     )
+#
+#     def record(current: dict) -> None:
+#         for review in current["reviews"]:
+#             if review["claim"] == task["question"]:
+#                 review["claude"] = extract_tag(report, "verdict") or "unclear"
+#
+#     return record
 
 
 def write_paper(project: dict, task: dict, folder: Path, spent: list):
@@ -354,7 +439,7 @@ def write_paper(project: dict, task: dict, folder: Path, spent: list):
         raise RuntimeError(f"the paper did not compile: {record['problems']}")
 
 
-KINDS = {"research": research, "check": check, "paper": write_paper}
+KINDS = {"research": research, "paper": write_paper}
 
 
 def finish(name: str, task_id: str, absorbed=None, **fields) -> None:

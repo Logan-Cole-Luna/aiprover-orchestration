@@ -1,5 +1,5 @@
 """Requests of the query server on a project: creating it, editing the plan
-of its results, launching it, and deciding on its claims."""
+of its results, and launching it."""
 
 from tests.support import ServerProcessTest
 
@@ -24,10 +24,11 @@ replies.append(client.post(path + "/launch" + page).json())
 replies.append(
     client.put(path + "/members" + page, json=[{"uuid": "two"}]).status_code
 )
-project.update("a_test", lambda p: p["reviews"].append({"claim": "C"}))
-decision = {"decision": "rejected", "note": "false"}
-replies.append(client.post(path + "/reviews/0" + page, json=decision).status_code)
-replies.append(client.post(path + "/reviews/1" + page, json=decision).status_code)
+# Decisions on claims are archived (server/app.py).
+# project.update("a_test", lambda p: p["reviews"].append({"claim": "C"}))
+# decision = {"decision": "rejected", "note": "false"}
+# replies.append(client.post(path + "/reviews/0" + page, json=decision).status_code)
+# replies.append(client.post(path + "/reviews/1" + page, json=decision).status_code)
 for title, library in (("B", "a_test.lean"), ("C", "missing")):
     shared = {**new, "title": title, "library": library}
     replies.append(client.post("/api/projects" + page, json=shared).status_code)
@@ -36,15 +37,15 @@ print(json.dumps([replies, store.get("one"), project.load("a_test")]))
 
 
 class ProjectRequestTest(ServerProcessTest):
-    def test_a_project_from_creation_to_review(self):
+    def test_a_project_from_creation_to_launch(self):
         replies, run, project = self.run_python(FLOW)
         self.assertEqual(replies, [
-            201, 400, 400, 404, 200, {"started": ["one"]}, 200, 200, 404,
+            201, 400, 400, 404, 200, {"started": ["one"]}, 200,
             201, 400,
         ])
         self.assertEqual(run["owner"], "guest")
         self.assertIn("libraries/a_test.lean", run["options"])
         names = [member["uuid"] for member in project["members"]]
         self.assertEqual(names, ["one", "two"])
-        self.assertEqual(project["reviews"][0]["decision"], "rejected")
-        self.assertEqual(project["reviews"][0]["by"], "guest")
+        # self.assertEqual(project["reviews"][0]["decision"], "rejected")
+        # self.assertEqual(project["reviews"][0]["by"], "guest")

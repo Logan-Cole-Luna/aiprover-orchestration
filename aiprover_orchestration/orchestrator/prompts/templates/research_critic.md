@@ -16,8 +16,16 @@ The current directory is a Lean 4 project with Mathlib, on the project's Lean ve
 {draft}
 </report>
 
+The project keeps one list of the claims without a Lean proof and the statements that remain open, each with an id (a claim's `C` number, an open statement's name):
+
+<ledger>
+{ledger}
+</ledger>
+
 Write the corrected report to `report.md` in the current directory. Remove what fails; keep every argument that survives, in full. End the file with these blocks, omitting those that do not apply:
 
-- `<claim>...</claim>`: one for each mathematical claim the project relies on that has no Lean proof and that a reader could verify, stated in full.
-- `<open name="lemma_name">...</open>`: one for each statement that remains unproved after this report, with the reason.
+- `<same id="C17"/>`: one for each claim or open statement of the list that the corrected report still relies on, instead of restating it.
+- `<retire id="C17" reason="refuted">...</retire>`: one for each claim or open statement of the list that this report shows false (`refuted`), replaces by a sharper one (`superseded`, naming it), or proves (`proved`), with the reason.
+- `<claim>...</claim>`: one for each new mathematical claim the project relies on that has no Lean proof and that a reader could verify, stated in full. A claim already in the list is cited by `<same>`, not restated.
+- `<open name="lemma_name">...</open>`: one for each statement that remains unproved after this report, with the reason; an open statement of the list keeps its name.
 - `<theorem name="short_identifier"><role>background or main</role><uses>the names of the earlier theorems it needs</uses><statement>...</statement><proof>...</proof></theorem>`: only if the question asks for a blueprint, in dependency order. Each statement must stand alone, with its definitions written out, and each proof must be complete. A background theorem is an established result the others build on; a main theorem is a contribution of the project. The list replaces the project's results that have not started, so it includes every one of them to keep, unchanged ones too.

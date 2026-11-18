@@ -54,10 +54,20 @@ class ReportAbsorptionTest(unittest.TestCase):
         project = {"open": [], "reviews": [], "members": []}
         absorb(project, report)
         absorb(project, report)
-        self.assertEqual(project["reviews"], [{"claim": "Every word is finite."}])
+        self.assertEqual(project["reviews"], [{"claim": "Every word is finite.", "id": "C1"}])
         self.assertEqual(
             project["open"], [{"lemma": "bound", "reason": "No proof is known."}]
         )
+        # A referee retires an item by id, and a later report restating it
+        # (<same>) makes it active again.
+        absorb(project, '<retire id="C1" reason="refuted">n=0 fails.</retire>'
+                        '<retire id="bound" reason="proved">Done.</retire>', task_id="t2")
+        self.assertEqual(project["reviews"][0]["retired"],
+                         {"reason": "refuted", "note": "n=0 fails.", "by": "t2"})
+        self.assertEqual(project["open"][0]["retired"]["reason"], "proved")
+        absorb(project, '<same id="C1"/>', task_id="t3")
+        self.assertNotIn("retired", project["reviews"][0])
+        self.assertEqual(project["reviews"][0]["task"], "t3")
         self.assertEqual(project["members"], [{
             "uuid": "base", "role": "background", "statement": "S", "proof": "P",
             "uses": ["a", "b"],
@@ -103,5 +113,6 @@ class ReportAbsorptionTest(unittest.TestCase):
                                  ["agents"]["orchestrator"]["source_dir"], "/src")
                 self.assertEqual([m.get("run") for m in project_file.load("demo")["members"]],
                                  ["r0", "demo_row_1", "demo_new"])
-                project_file.decide("demo", 0, "confirmed", "checked")
-                self.assertEqual(project_file.load("demo")["reviews"][0]["decision"], "confirmed")
+                # Decisions on claims are archived (orchestrator/project.py).
+                # project_file.decide("demo", 0, "confirmed", "checked")
+                # self.assertEqual(project_file.load("demo")["reviews"][0]["decision"], "confirmed")
