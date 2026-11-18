@@ -347,6 +347,16 @@ def main(arguments: list[str]) -> None:
             sys.exit(f"sandbox.py: unknown option {flag}")
     if not command or not write:
         sys.exit("sandbox.py: a command and a --write tree are required")
+    # A binary outside the system (a Nix build) has an ELF loader of its own,
+    # which the kernel executes with it, and a Nix build links its libraries
+    # from other store paths; the store holds only public build outputs.
+    execute += [loader for loader in map(elf_interpreter, execute) if loader]
+    if any(path.startswith("/nix/store/") for path in execute):
+        read.append("/nix/store")
+    # A command that is this script's own Python may be a wrapper (a Nix
+    # environment) that executes the interpreter running here.
+    if os.path.realpath(sys.executable) in execute and os.path.exists("/proc/self/exe"):
+        execute.append(os.path.realpath("/proc/self/exe"))
     if cpu_seconds:
         resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds))
     resource.setrlimit(resource.RLIMIT_CORE, (0, 0))

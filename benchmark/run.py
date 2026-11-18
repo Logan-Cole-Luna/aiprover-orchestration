@@ -29,6 +29,11 @@ ROOT = Path(__file__).resolve().parents[1]
 HERE = ROOT / "benchmark"
 CREDENTIALS = Path.home() / ".claude" / ".credentials.json"
 PACKAGES = (WORKSPACE / ".lake" / "packages").resolve()
+# The system interpreter, whose standard library lies under /usr, which the
+# confinement reads; and the paper search's client and service port.
+PYTHON = os.path.realpath("/usr/bin/python3")
+PAPER_SEARCH = ROOT / "aiprover_orchestration" / "search" / "paper_search.py"
+PAPER_PORT = 18571
 # The shell commands of a session with Lean; each part of a pipeline needs a
 # rule. The filters read a compiler's output.
 LEAN_COMMANDS = (
@@ -41,8 +46,7 @@ CONTINUATION = """
 ## Earlier work
 
 An earlier session on this problem was interrupted before it finished. Its
-Lean files are in the working directory. Read them first and continue from
-them.
+files are in the working directory. Read them first and continue from them.
 """
 
 
@@ -59,6 +63,7 @@ def problem_prompt(problem: str, condition: dict) -> str:
     return template.format(
         informal_statement=row["informal_statement"],
         informal_proof=row["informal_proof"],
+        formal_statement=row.get("formal_statement", ""),
     )
 
 
@@ -70,6 +75,8 @@ def claude_command(condition: dict, binary: str) -> list[str]:
             *LEAN_COMMANDS,
             *[f"{tool}(/{PACKAGES}/**)" for tool in ("Read", "Glob", "Grep")],
         ]
+    if condition.get("python"):
+        allowed.append("Bash(python3:*)")
     return [
         binary, "-p",
         "--model", condition["model"],
@@ -85,11 +92,18 @@ def claude_command(condition: dict, binary: str) -> list[str]:
     ]  # fmt: skip
 
 
-def prepare(run: Path, lean: bool) -> None:
-    """The session's directories, its one link to the caller's home, and,
-    with Lean, a Lake project on the workspace's packages."""
+def prepare(run: Path, lean: bool, source: str = "", papers: bool = False) -> None:
+    """The session's directories, its one link to the caller's home, with
+    Lean a Lake project on the workspace's packages, the problem's reference
+    material as work/source, and with the paper search its client as
+    work/tools/paper_search.py."""
     for name in ("work", "tmp", "home/.claude"):
         (run / name).mkdir(parents=True)
+    if source:
+        shutil.copytree(ROOT / source, run / "work" / "source")
+    if papers:
+        (run / "work/tools").mkdir()
+        shutil.copy(PAPER_SEARCH, run / "work/tools/paper_search.py")
     (run / "home/.claude/.credentials.json").symlink_to(CREDENTIALS)
     if lean:
         for name in LEAN_PROJECT_FILES:
@@ -106,6 +120,8 @@ def session(run: Path, prompt: str, condition: dict, binary: str) -> int:
         "--execute", binary,
         *(("--lean", "yes", "--read", str(PACKAGES))
           if condition.get("lean") else ()),
+        *(("--execute", PYTHON) if condition.get("python") else ()),
+        *(("--port", str(PAPER_PORT)) if condition.get("paper_search") else ()),
         "--", *claude_command(condition, binary),
     ]  # fmt: skip
     with open(run / "transcript.jsonl", "w") as out, open(
@@ -177,11 +193,21 @@ def main() -> None:
     ).resolve()  # fmt: skip
     if run.exists():
         sys.exit(f"{run} exists; a record is never overwritten")
-    prepare(run, condition.get("lean", False))
+    entry = read_json(HERE / "problems.json").get(options.problem, {})
+    prepare(
+        run,
+        condition.get("lean", False),
+        entry.get("source", ""),
+        condition.get("paper_search", False),
+    )
     if options.continue_from:
         previous = Path(options.continue_from).resolve()
-        for file in sorted((previous / "work").glob("*.lean")):
-            shutil.copy(file, run / "work" / file.name)
+        # Everything the session made, without the fresh copies of prepare.
+        for item in sorted((previous / "work").iterdir()):
+            if item.name in (".lake", "source", "tools", *LEAN_PROJECT_FILES):
+                continue
+            target = run / "work" / item.name
+            (shutil.copytree if item.is_dir() else shutil.copy)(item, target)
         prompt += CONTINUATION
         # The continuation inherits only what the earlier run left unspent.
         spent = read_json(previous / "result.json")

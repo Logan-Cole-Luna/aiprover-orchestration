@@ -66,7 +66,8 @@ class GapStage:
                     definitions=self._own_definitions(form),
                     library=self.library or "(none)",
                     statement=form.statement,
-                ),
+                )
+                + self._findings(),
                 phase="draft",
             )
             drafts = list(extract_named(reply, "approach").values())
@@ -189,7 +190,8 @@ class GapStage:
             standalone + "".join(f"\n#print axioms {name}" for name in routine) + "\n",
         )
         clean = all(
-            checker.nonstandard_axioms(result, name) == [] for name in routine
+            checker.nonstandard_axioms(result, name, self.accepted_axioms) == []
+            for name in routine
         )
         gaps = [lemma.statement for lemma in sketch.lemmas if is_gap(lemma)]
         verified = result.ok and clean and checks["statement_matches"]

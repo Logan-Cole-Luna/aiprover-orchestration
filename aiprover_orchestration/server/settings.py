@@ -99,6 +99,12 @@ SETTINGS = {
     "paper_search": Setting(
         "Proof search", "Orchestrator searches arXiv abstracts and reads papers"
     ),
+    "bv_decide": Setting(
+        "Proof search", "Proofs may use bv_decide, which trusts the compiler"
+    ),
+    "sat_search": Setting(
+        "Proof search", "Orchestrator explores finite spaces with a SAT solver"
+    ),
     "aiprover_offline": Setting(
         "AIProver", "Keep AIProver sessions off the internet"
     ),

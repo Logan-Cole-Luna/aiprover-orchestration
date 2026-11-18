@@ -115,10 +115,11 @@ class SketchStage:
         )
         if not result.ok:
             return text, [result.error_report()]
-        extra_axioms = nonstandard_axioms(result, refuted)
+        extra_axioms = nonstandard_axioms(result, refuted, self.accepted_axioms)
         if extra_axioms != []:
             return text, [
-                f"the refutation must depend on the standard axioms only; "
+                f"the refutation must depend on "
+                f"{', '.join(sorted(self.accepted_axioms))} only; "
                 f"it depends on {extra_axioms}"
             ]
         return text, []
@@ -163,7 +164,10 @@ class SketchStage:
                     {
                         axiom
                         for name in names
-                        for axiom in nonstandard_axioms(result, name) or []
+                        for axiom in nonstandard_axioms(
+                            result, name, self.accepted_axioms
+                        )
+                        or []
                     }
                 )
                 if result.ok and not extra_axioms:
@@ -435,6 +439,7 @@ class SketchStage:
                 lemmas=stub_listing(sketch.lemmas),
                 main_proof=sketch.main_proof,
                 previous=previous,
+                library=self.library or "(none)",
             ),
             phase=f"judge_sketch{repair}",
         )

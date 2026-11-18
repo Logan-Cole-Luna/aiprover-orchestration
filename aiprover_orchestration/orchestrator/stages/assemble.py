@@ -19,7 +19,7 @@ revised when no lemma is responsible.
 from ...agents.base import AgentCallError
 from ...lean import checker
 from ...lean.layout import module_name, module_path
-from ...paths import LEAN_IMPORT
+from ...paths import LEAN_IMPORT, LIBRARY_IMPORTS
 from ..config import MAIN_NAME
 from ..structures import Formalization, Sketch, refers_to
 
@@ -54,17 +54,27 @@ class AssembleStage:
         return result
 
     def assemble(self, form: Formalization, sketch: Sketch) -> tuple[str, dict]:
-        body = self._sketch_body(form, sketch, use_proofs=True)
+        return self.verify(form, self._sketch_body(form, sketch, use_proofs=True))
+
+    def verify(self, form: Formalization, body: str) -> tuple[str, dict]:
+        """The standalone file of `body`, the declarations that follow the
+        definitions and end with the theorem `solution`, and its checks."""
         standalone = self._standalone(form, body)
         result = self._assembly_check(
             "final", standalone + f"\n#print axioms {MAIN_NAME}\n"
         )
-        extra_axioms = checker.nonstandard_axioms(result, MAIN_NAME)
+        extra_axioms = checker.nonstandard_axioms(
+            result, MAIN_NAME, self.accepted_axioms
+        )
         checks = {
             "compiles": result.ok,
             "no_sorry": not result.has_sorry_warning,
             "standard_axioms_only": extra_axioms == [],
             "axioms": result.axioms.get(MAIN_NAME),
+            # The proof trusts the compiler through `bv_decide`.
+            "trusts_compiler": bool(
+                checker.COMPILER_AXIOMS & set(result.axioms.get(MAIN_NAME) or [])
+            ),
             "errors": result.errors,
         }
         checks.update(self._verify_modules(form, body))
@@ -86,7 +96,9 @@ class AssembleStage:
         )
         failing = {}
         for lemma in sketch.lemmas:
-            extra = checker.nonstandard_axioms(result, lemma.name)
+            extra = checker.nonstandard_axioms(
+                result, lemma.name, self.accepted_axioms
+            )
             if extra is None or extra:
                 failing[lemma.name] = extra
         problems = {}
@@ -103,8 +115,7 @@ class AssembleStage:
                 continue
             problems[lemma.name] = (
                 f"`{lemma.name}` depends on {', '.join(extra)}, and only "
-                f"{', '.join(sorted(checker.STANDARD_AXIOMS))} are allowed; "
-                f"tactics such as `bv_decide` and `native_decide` add them."
+                f"{', '.join(sorted(self.accepted_axioms))} are allowed."
                 if extra
                 else f"`{lemma.name}` does not compile in the assembled file."
             )
@@ -142,7 +153,8 @@ class AssembleStage:
         sol_module = module_name("solution", self.slug)
         check_module = module_name("check", self.slug)
         files = {
-            def_module: f"import {LEAN_IMPORT}\n\n{form.definitions}\n",
+            # A package library is imported by every file of the run.
+            def_module: f"import {LEAN_IMPORT}\n{LIBRARY_IMPORTS}\n{form.definitions}\n",
             thm_module: (
                 f"import {def_module}\n\n{form.preamble}\n\n"
                 f"{form.statement}\n"

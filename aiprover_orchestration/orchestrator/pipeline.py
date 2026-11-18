@@ -31,8 +31,11 @@ from ..agents import (
     raise_if_stopping,
     role_spec,
 )
+from ..cas import singular
 from ..lean.checker import (
+    COMPILER_AXIOMS,
     SORRY_PROBLEM,
+    STANDARD_AXIOMS,
     CheckResult,
     LeanChecker,
     sorry_after,
@@ -59,7 +62,7 @@ from .stages.escalation import EscalationStage
 from .stages.prove import ProveStage
 from .stages.review import ReviewStage
 from .stages.sketch import SketchStage
-from .structures import Formalization, Lemma
+from .structures import Formalization, Lemma, Sketch
 from .trace import Trace
 
 logger = logging.getLogger(__name__)
@@ -126,6 +129,10 @@ class Orchestration(
         self.reference: Formalization | None = None
         self.reference_attempted = False
         self.sketch_rejected = ""
+        # A run with SAT search accepts the axioms of `bv_decide`.
+        self.accepted_axioms = STANDARD_AXIOMS | (
+            COMPILER_AXIOMS if config.bv_decide else set()
+        )
         # The reviewer and the report writer default to fresh agents of the
         # orchestrator's model, without its tools.
         orchestrator = {
@@ -139,6 +146,15 @@ class Orchestration(
             # Read by `paper-search` and by the agents with tools.
             os.environ["PAPER_SEARCH_LOG"] = str(self.result_dir / "paper_search.jsonl")
             os.environ["PAPER_SEARCH_BEFORE"] = config.paper_search_before
+        if config.bv_decide:
+            # Read by the agents with tools, for the note on `bv_decide`.
+            os.environ["BV_DECIDE"] = "1"
+        if config.sat_search:
+            # Read by `sat-solve` and by the agents with tools.
+            os.environ["SAT_SEARCH_LOG"] = str(self.result_dir / "sat_search.jsonl")
+        if singular.executable():
+            # A site with Singular gives the agents with tools `singular`.
+            os.environ["SINGULAR_LOG"] = str(self.result_dir / "singular.jsonl")
         if config.aiprover_offline and prover.get("backend") == "aiprover":
             specs["prover"] = {**prover, "offline": True}
         agents = {
@@ -456,6 +472,10 @@ class Orchestration(
                 if form is None:
                     summary["status"] = "statement_does_not_compile"
                     return summary
+                # The statement is compiled afresh, so a resumed run adds the
+                # facts its vacuity check proved, which its lemmas may cite.
+                if state.setting_facts:
+                    form.add_setting_facts(state.setting_facts)
             elif state.faithful or audits_spent:
                 # A resumed run whose last verdict ended the audit budget
                 # ends as it would have: with its unfaithful formalization.
@@ -479,12 +499,31 @@ class Orchestration(
                 if facts:
                     form.add_setting_facts(facts)
             summary["formalization"] = asdict(form)
-            if prove:
+            # A complete proof from the investigation ends the run without
+            # the lemma pipeline; an investigation without an argument ends
+            # it with the report, which guides the next investigation.
+            found = None
+            if prove and self.config.investigation_usd:
+                with self._timed("sketch"):
+                    self.investigate(form)
+                    found = self.investigation_proof(form)
+                if found:
+                    standalone, checks = found
+                    summary["checks"] = checks
+                    (self.result_dir / f"{self.slug}_standalone.lean").write_text(
+                        standalone
+                    )
+                    sketch = Sketch([], "")
+                elif self.investigation_open():
+                    self._decision("investigation_open")
+                    summary["status"] = "investigation_open"
+                    return summary
+            if prove and not found:
                 with self._timed("sketch"):
                     self.row["informal_proof"] = self.draft_approaches(form)
             replans_used = state.replans_started
             assembly_rounds = state.assembly_rounds
-            if state.sketch is None:
+            if not found and state.sketch is None:
                 with self._timed("sketch"):
                     seed = self.result_dir / "sketch_seed.md"
                     sketch = self.sketch(
@@ -495,14 +534,15 @@ class Orchestration(
                         sketch = self.sketch(form)
                     if self.sketch_rejected and sketch is not first[0]:
                         sketch = self.restore_first_approach(*first)
-            else:
+            elif not found:
                 sketch = state.sketch
                 with self._timed("sketch"):
                     self.reuse_proofs(form, sketch, state.recheck)
                     if state.replan_pending:
                         sketch = self.replan(form, sketch, resumed=True)
             if (
-                self._revision_requested()
+                not found
+                and self._revision_requested()
                 and not self.config.sketch_approval
                 and not sketch.refutation
             ):
@@ -512,7 +552,7 @@ class Orchestration(
                 self._decision(
                     "plan_revised", revision=self.config.plan_revision
                 )
-            if self.config.sketch_approval and not sketch.refutation:
+            if self.config.sketch_approval and not sketch.refutation and not found:
                 with self._timed("sketch"):
                     sketch = self._revised_plan(form, sketch)
                     if not sketch.refutation:
@@ -520,7 +560,7 @@ class Orchestration(
                         self._decision("plan_review_requested")
                         summary["status"] = "plan_review"
                         return summary
-            while True:
+            while not found:
                 if sketch.refutation:
                     # Refuting the negation proves the statement.
                     negated = self.row.get("side") == "disprove"

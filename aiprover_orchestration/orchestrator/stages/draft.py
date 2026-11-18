@@ -15,8 +15,11 @@ Related published work (tags defined in docs/lit_review/lit_review.md §6):
 """
 
 import logging
+import os
 import re
+from dataclasses import replace
 
+from ...lean.checker import forbidden_problems
 from ...lean.text import drop_imports
 from .. import prompts
 from ..config import FILE_HEADER
@@ -36,6 +39,17 @@ DRAFT_NOTES = {
     "statement; a departure from the draft is no reason for UNFAITHFUL.",
 }
 WITHHELD_PROOF = "(The proof is to be found.)"
+# The investigation's report, as the draft receives it.
+FINDINGS = """
+
+An investigation of the problem with Python and Lean reported the following
+before this draft. Its claims are unverified unless it says that Lean checked
+them: check the argument it gives before using it, and avoid the directions it
+excludes unless the reason fails.
+
+<investigation>
+{}
+</investigation>"""
 NEGATED_STATEMENT = (
     "The run proves the negation of the statement below, which the "
     "orchestrator judged false.\n\n{}"
@@ -171,6 +185,100 @@ class DraftStage:
         logger.info(f"redrafted the informal proof (draft {number + 1})")
         return proof
 
+    def investigate(self, form: Formalization) -> str:
+        """The report of a sandboxed session that explores the problem before
+        the draft, with Python, `lean-check`, the orchestrator's
+        `source_dir`, and `sat-solve` when the run searches; kept as
+        investigation.md, so that a resumed run keeps it."""
+        path = self.result_dir / "investigation.md"
+        if path.exists():
+            return path.read_text()
+        # Imported here: project_tasks imports the server's project module.
+        from ..project_tasks import session
+
+        source = self.config.agents.get("orchestrator", {}).get("source_dir", "")
+        spent: list[float] = []
+        project = {"source": source} if source else {}
+        # The run's literature search reaches the investigation too.
+        if os.environ.get("PAPER_SEARCH_LOG"):
+            project["paper_search"] = True
+        # And `sat-solve`, when the run searches with it.
+        if os.environ.get("SAT_SEARCH_LOG"):
+            project["sat_search"] = True
+        refutable = self.row.get("side") != "disprove"
+        report = session(
+            project,
+            self.result_dir / "investigation",
+            prompts.INVESTIGATION_TEMPLATE.format(
+                informal_statement=self.row["informal_statement"],
+                definitions=self._own_definitions(form),
+                library=self.library or "(none)",
+                statement=form.statement,
+                source=source or "(none)",
+            )
+            + (
+                prompts.INVESTIGATION_REFUTATION.format(
+                    negation=f"theorem solution{negation(form.signature)}"
+                )
+                if refutable
+                else ""
+            ),
+            self.config.investigation_usd,
+            spent,
+        )
+        path.write_text(report)
+        self._decision("investigated", usd=round(sum(spent), 2), chars=len(report))
+        logger.info(f"investigation reported {len(report)} characters")
+        return report
+
+    def investigation_proof(self, form: Formalization) -> tuple[str, dict] | None:
+        """The standalone file and checks of the investigation's complete
+        proof (investigation/proof.lean), if it wrote one that passes the
+        final checks; the run then ends without the lemma pipeline."""
+        folder = self.result_dir / "investigation"
+        found = self._checked_proof(form, folder / "proof.lean", "proof")
+        if found or self.row.get("side") == "disprove":
+            return found
+        # A refutation: the run then proves the negation, as after
+        # `choose_side`.
+        negated = replace(form, signature=negation(form.signature))
+        found = self._checked_proof(negated, folder / "refutation.lean", "refutation")
+        if found:
+            form.signature = negated.signature
+            self.row["side"] = "disprove"
+            self.row["informal_statement"] = NEGATED_STATEMENT.format(
+                self.row["informal_statement"]
+            )
+        return found
+
+    def _checked_proof(
+        self, form: Formalization, path, kind: str
+    ) -> tuple[str, dict] | None:
+        """The standalone file and checks of the proof in `path` of `form`'s
+        statement, if it passes the final checks."""
+        if not path.exists():
+            return None
+        body = drop_imports(path.read_text()).strip()
+        problems = forbidden_problems(body)
+        checks = {"verified": False, "errors": problems}
+        if not problems:
+            standalone, checks = self.verify(form, body)
+        self._decision("investigation_proof", file=path.name, verified=checks["verified"])
+        logger.info(f"investigation {kind} verified: {checks['verified']}")
+        return (standalone, checks) if checks["verified"] else None
+
+    def investigation_open(self) -> bool:
+        """Whether the investigation reported no complete argument, on the
+        first line of its report."""
+        path = self.result_dir / "investigation.md"
+        first = path.read_text().strip().splitlines()[:1] if path.exists() else []
+        return bool(first) and re.match(r"\W*outcome\W*open", first[0], re.I) is not None
+
+    def _findings(self) -> str:
+        """The investigation's report for a draft prompt, if there is one."""
+        path = self.result_dir / "investigation.md"
+        return FINDINGS.format(path.read_text().strip()) if path.exists() else ""
+
     def draft_proof(self, form: Formalization) -> str:
         """The orchestrator's informal proof of the formalization, drafted once."""
         path = self.result_dir / "draft.md"
@@ -182,7 +290,8 @@ class DraftStage:
                 definitions=self._own_definitions(form),
                 library=self.library or "(none)",
                 statement=form.statement,
-            ),
+            )
+            + self._findings(),
             role="orchestrator",
             phase="draft",
             system_prompt=prompts.ORCHESTRATOR_SYSTEM,

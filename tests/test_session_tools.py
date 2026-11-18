@@ -24,6 +24,7 @@ from aiprover_orchestration.agents.pool import AgentPool
 from aiprover_orchestration.lean import tool_check
 from aiprover_orchestration.lean.sandbox import abi_version
 from aiprover_orchestration.orchestrator import libraries, project_tasks
+from aiprover_orchestration.sat import sat_solve
 from aiprover_orchestration.search import arxiv_index, paper_search, papers
 from aiprover_orchestration.server import models, settings
 
@@ -363,6 +364,61 @@ class SessionRestrictionsTest(unittest.TestCase):
             self.assertTrue(spec["hosted"] and spec["tools"])
         with self.subTest("paper search is local, delimited, logged, and off by default"):
             self.check_paper_search()
+        with self.subTest("the SAT solver answers by name, runs a confined script, and logs"):
+            self.check_sat_solve()
+
+    @unittest.skipIf(abi_version() < 4, "Landlock ABI 4 unavailable")
+    def check_sat_solve(self):
+        script = """import sys
+n = int(sys.argv[1])  # n + 1 pigeons in n holes
+hole = lambda p, h: p * n + h + 1
+print(f"p cnf {(n + 1) * n} {n + 1 + n * n * (n + 1) // 2}")
+for p in range(n + 1):
+    print(*(hole(p, h) for h in range(n)), 0)
+for h in range(n):
+    for p in range(n + 1):
+        for q in range(p):
+            print(-hole(p, h), -hole(q, h), 0)
+"""
+        with tempfile.TemporaryDirectory() as folder:
+            log = Path(folder) / "log.jsonl"
+            (Path(folder) / "lean-toolchain").write_text(
+                (common.WORKSPACE / "lean-toolchain").read_text()
+            )
+            (Path(folder) / "named.cnf").write_text(
+                "c var 1 a\nc var 2 b\np cnf 2 2\n1 2 0\n-1 0\n"
+            )
+            (Path(folder) / "pigeons.py").write_text(script)
+            (Path(folder) / "free.cnf").write_text(
+                "c var 1 a\nc var 2 b\np cnf 2 1\n1 2 0\n"
+            )
+            directory = os.getcwd()
+            os.chdir(folder)
+            try:
+                with mock.patch.dict(os.environ, {"SAT_SEARCH_LOG": str(log)}):
+                    named = sat_solve.main(["named.cnf"])
+                    pigeons = sat_solve.main(["pigeons.py", "4"])
+                    sweep = sat_solve.main(["pigeons.py", "--sweep", "0..2"])
+                    count = sat_solve.main(["free.cnf", "--all", "10"])
+                    cases = sat_solve.main(["named.cnf", "--split", "a"])
+                    kernel = sat_solve.main(["pigeons.py", "3", "--lrat", "php"])
+                    self.assertTrue((Path(folder) / "php.lean").read_text().startswith("lrat_proof php"))
+                    self.assertIn("sat-solve", common.tool_commands()[0])
+            finally:
+                os.chdir(directory)
+            self.assertRegex(named, r"^SATISFIABLE \(\d+\.\d s\)\na = false\nb = true$")
+            self.assertTrue(pigeons.startswith("UNSATISFIABLE"))
+            self.assertEqual(
+                [line.split(" (")[0] for line in sweep.splitlines()],
+                ["0: UNSATISFIABLE", "1: UNSATISFIABLE", "2: UNSATISFIABLE"],
+            )
+            self.assertTrue(count.startswith("exactly 3 assignment(s)"))
+            self.assertRegex(cases, r"^a = true: UNSATISFIABLE .*\na = false: SATISFIABLE")
+            modes = [json.loads(line)["mode"] for line in log.read_text().splitlines()]
+            self.assertTrue(kernel.startswith("UNSATISFIABLE"))
+            self.assertEqual(modes, ["solve", "solve", "sweep", "all", "split", "lrat"])
+        self.assertEqual(settings.validate({"sat_search": True}), {"sat_search": True})
+        self.assertEqual(settings.validate({"bv_decide": True}), {"bv_decide": True})
 
     def check_paper_search(self):
         page = b"""<OAI-PMH xmlns="http://www.openarchives.org/OAI/2.0/"><ListRecords>

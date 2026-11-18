@@ -606,7 +606,7 @@ function chapterProve() {
 const CHECK_TEXT = {
   compiles: "The standalone file with definitions, lemmas and solution compiles.",
   no_sorry: "No sorry placeholder remains.",
-  standard_axioms_only: "The solution depends only on propext, Classical.choice and Quot.sound.",
+  standard_axioms_only: "The solution depends only on propext, Classical.choice and Quot.sound, and in a run with SAT search also on Lean.ofReduceBool and Lean.trustCompiler, which bv_decide adds.",
   module_build: "The Definitions, Theorems and Solutions modules build in the Lean project.",
   statement_matches: "A module importing both the theorem and the solution checks that the solution's type equals the audited theorem statement.",
   verified: "All checks above hold.",

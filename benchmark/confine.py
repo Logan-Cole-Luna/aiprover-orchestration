@@ -1,7 +1,7 @@
 """Run the Claude CLI under Landlock, with an empty home.
 
     python3 -I confine.py --run DIR --credentials FILE [--execute PATH]...
-        [--read PATH]... [--lean yes] -- command [argument]...
+        [--read PATH]... [--lean yes] [--port N]... -- command [argument]...
 
 The command reads the system directories, reads and writes `DIR` and the
 credentials file, executes only the listed paths and the ELF loader, and
@@ -11,7 +11,8 @@ libraries, the caller's home, and the Lean toolchain are outside its reach.
 The environment is replaced, so that no setting of the caller reaches it.
 With `--lean`, it also executes the Lean toolchain, Git (which Lake runs), the
 shell, and the filters of LEAN_FILTERS; no other program is reachable, so that
-port 443 serves the model API alone.
+port 443 serves the model API alone. Each `--port` also opens TCP to that
+port, for a service on the loopback interface such as the paper search.
 """
 
 import importlib.util
@@ -66,7 +67,8 @@ def main(arguments: list[str]) -> None:
     options, command = arguments[:split], arguments[split + 1 :]
     values: dict[str, list[str]] = {}
     for flag, value in zip(options[::2], options[1::2]):
-        values.setdefault(flag, []).append(os.path.realpath(value))
+        value = value if flag == "--port" else os.path.realpath(value)
+        values.setdefault(flag, []).append(value)
     run = values["--run"][0]
     sandbox = load_sandbox()
     abi = sandbox.abi_version()
@@ -83,7 +85,7 @@ def main(arguments: list[str]) -> None:
         write=[run, *values.get("--credentials", [])],
         execute=execute,
         abi=abi,
-        connect_ports=(API_PORT,),
+        connect_ports=(API_PORT, *map(int, values.get("--port", []))),
     )
     os.execvpe(command[0], command, {**environment(run), **extra})
 

@@ -7,7 +7,9 @@ pkgs.buildEnv {
   name = "aiprover-orchestration-tools";
   paths = with pkgs; [
     # The skill's helpers, the trace pages (pygments), the reasoning proxy (aiohttp), and the
-    # query server and pipeline (fastapi, uvicorn, anthropic, psutil).
+    # query server and pipeline (fastapi, uvicorn, anthropic, psutil). Investigations and research
+    # sessions run their scripts with this interpreter, sandboxed, and compute with numpy, scipy
+    # and sympy.
     (python312.withPackages (ps: [
       ps.pygments
       ps.aiohttp
@@ -15,7 +17,13 @@ pkgs.buildEnv {
       ps.uvicorn
       ps.anthropic
       ps.psutil
+      ps.numpy
+      ps.scipy
+      ps.sympy
     ]))
+    # The `singular` command of agents with tools (aiprover_orchestration/cas): Groebner bases
+    # and ideal membership certificates.
+    singular
     jq
     ripgrep
     # npm: the server installs Codex when a user first needs it.

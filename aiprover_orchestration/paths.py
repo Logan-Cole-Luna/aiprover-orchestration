@@ -95,6 +95,13 @@ if LIBRARY_PACKAGE:
     os.environ["LEAN_PATH"] = str(WORKSPACE / ".lake" / "build" / "lib" / "lean")
     # AIProver sessions build their own LEAN_PATH and append this one.
     os.environ["AIPROVER_EXTRA_LEAN_PATH"] = os.environ["LEAN_PATH"]
+# Every file of a run imports Mathlib and the root modules of its package
+# library, if it has one.
+LIBRARY_IMPORTS = "".join(
+    f"import {root.stem}\n"
+    for root in sorted(WORKSPACE.glob("*.lean"))
+    if LIBRARY_PACKAGE and root.stem != "lakefile"
+)
 LIBRARIES_DIR = HOME_DIR / "libraries"  # single-file result libraries
 RESULTS_DIR = HOME_DIR / "results"  # per-run outputs
 LOGS_DIR = HOME_DIR / "logs"

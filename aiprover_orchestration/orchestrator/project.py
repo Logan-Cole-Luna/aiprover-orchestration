@@ -389,15 +389,20 @@ def library_environment(library: str) -> dict:
     return libraries.environment(f"libraries/{library}" if library else "")
 
 
-def start_task(name: str, kind: str, question: str) -> None:
-    """Run one task of project_tasks.py in the foreground, as the page starts it."""
+def start_task(
+    name: str, kind: str, question: str, max_usd: float = 20, agents: int = 3
+) -> None:
+    """Run one task of project_tasks.py in the foreground, as the page starts
+    it; an explore task has `agents` agents."""
     from .project_tasks import task_dir
 
     # This process waits for the task, so its id tells the server whether
     # the task still runs.
-    task = {"kind": kind, "question": question, "max_usd": 20, "blueprint": False,
+    task = {"kind": kind, "question": question, "max_usd": max_usd, "blueprint": False,
             "id": time.strftime("%Y%m%d_%H%M%S"), "state": "running",
             "started": time.time(), "pid": os.getpid()}  # fmt: skip
+    if kind == "explore":
+        task["agents"] = agents
 
     def append(project: dict) -> dict:
         if any(other.get("state") == "running" for other in project["tasks"]):
@@ -431,10 +436,12 @@ def main() -> None:
     run.add_argument("name")
     run.add_argument("--config", type=Path, required=True)
     run.add_argument("--dataset", type=Path, default=HOME_DIR / "data" / "openai_math.jsonl")
-    task = actions.add_parser("task", help="research or write the paper")
+    task = actions.add_parser("task", help="research, explore, or write the paper")
     task.add_argument("name")
-    task.add_argument("kind", choices=("research", "paper"))
+    task.add_argument("kind", choices=("research", "explore", "paper"))
     task.add_argument("question", nargs="?", default="")
+    task.add_argument("--max-usd", type=float, default=20)
+    task.add_argument("--agents", type=int, default=3, help="of an explore task")
     # review = actions.add_parser("review", help="a person's decision on a claim")
     # review.add_argument("name")
     # review.add_argument("index", type=int)
@@ -445,7 +452,7 @@ def main() -> None:
         project = load(args.name)
         launch(project, lambda body: run_member(body, project, args.config, args.dataset))
     elif args.action == "task":
-        start_task(args.name, args.kind, args.question)
+        start_task(args.name, args.kind, args.question, args.max_usd, args.agents)
     # else:
     #     decide(args.name, args.index, args.decision, args.note)
 

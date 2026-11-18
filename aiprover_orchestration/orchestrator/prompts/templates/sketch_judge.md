@@ -10,8 +10,14 @@ Advisory notes, which never cause REVISE: a lemma that bundles several steps, a 
 
 A lemma you believe is false is not judged here: name it under <suspect>, with your reason under <issues>. It is tested at once (a counterexample search and an attempt to prove its negation), and only a confirmed refutation rejects the sketch.
 
+The declarations of the run's library below are proved and imported by every file; a main proof or lemma that cites them uses established results, which is never a blocking issue.
+
 When no proof of the theorem is known, the sketch must still commit to a concrete approach in which every lemma is strictly simpler than the theorem; conjectural lemmas are acceptable if each is weaker than the theorem.
 {previous}
+<library>
+{library}
+</library>
+
 <theorem>
 theorem solution{signature} := by
   sorry

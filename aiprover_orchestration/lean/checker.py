@@ -29,6 +29,10 @@ from ..utils.processes import ProcessStopped, run_group
 from .text import strip_comments
 
 STANDARD_AXIOMS = {"propext", "Classical.choice", "Quot.sound"}
+# Axioms of compiled evaluation. `bv_decide` adds them when it checks a SAT
+# solver's certificate with the verified checker of the standard library; a
+# run with the option `bv_decide` accepts them (sat_search.md).
+COMPILER_AXIOMS = {"Lean.ofReduceBool", "Lean.trustCompiler"}
 
 # Keywords of commands that declare or extend, reserved by Lean: a bare
 # occurrence anywhere is the command, however it is introduced (`open X in`).
@@ -60,6 +64,12 @@ EXECUTION_PATTERNS = {
     "implemented_by": r"implemented_by",
     "extern": _ATTRIBUTE_LIST + r"\bextern\b",
     "native_decide": r"\bnative_decide\b",
+    # Other routes to compiled evaluation, so that `bv_decide` is the only
+    # source of COMPILER_AXIOMS.
+    "native evaluation": (
+        r"\+native\b|\bnative\s*:=|"
+        r"\b(ofReduceBool|ofReduceNat|reduceBool|reduceNat|trustCompiler)\b"
+    ),
 }
 
 # Constructs that could discharge or bypass a goal without a proof, and those
@@ -197,18 +207,17 @@ def forbidden_problems(
 
 
 def nonstandard_axioms(
-    result: CheckResult, declaration: str
+    result: CheckResult, declaration: str, accepted: set[str] = STANDARD_AXIOMS
 ) -> list[str] | None:
-    """Axioms of `declaration` outside the standard three.
+    """Axioms of `declaration` outside `accepted`, by default the standard
+    three.
 
     Returns None when the output reports no axioms for `declaration`.
     """
     if declaration not in result.axioms:
         return None
     return [
-        axiom
-        for axiom in result.axioms[declaration]
-        if axiom not in STANDARD_AXIOMS
+        axiom for axiom in result.axioms[declaration] if axiom not in accepted
     ]
 
 

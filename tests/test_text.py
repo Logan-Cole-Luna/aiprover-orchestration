@@ -2,7 +2,13 @@
 
 import unittest
 
-from aiprover_orchestration.lean.checker import forbidden_problems
+from aiprover_orchestration.lean.checker import (
+    COMPILER_AXIOMS,
+    STANDARD_AXIOMS,
+    CheckResult,
+    forbidden_problems,
+    nonstandard_axioms,
+)
 from aiprover_orchestration.lean.text import statements_only
 
 
@@ -16,6 +22,21 @@ class ForbiddenTest(unittest.TestCase):
         self.assertTrue(forbidden_problems("by native_decide"))
         self.assertTrue(forbidden_problems("#eval IO.println 1"))
         self.assertTrue(forbidden_problems("axiom cheat : False"))
+
+    def test_bv_decide_is_the_only_route_to_compiled_evaluation(self):
+        for text in (
+            "by decide +native",
+            "by decide (config := { native := true })",
+            "exact Lean.ofReduceBool _ _ rfl",
+        ):
+            self.assertTrue(forbidden_problems(text), text)
+        self.assertFalse(forbidden_problems("by bv_decide"))
+        result = CheckResult(
+            True, "", axioms={"t": ["propext", "Lean.ofReduceBool"]}
+        )
+        self.assertEqual(nonstandard_axioms(result, "t"), ["Lean.ofReduceBool"])
+        accepted = STANDARD_AXIOMS | COMPILER_AXIOMS
+        self.assertEqual(nonstandard_axioms(result, "t", accepted), [])
 
 class FilterEvasionTest(unittest.TestCase):
 

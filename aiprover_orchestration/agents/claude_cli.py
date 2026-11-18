@@ -38,7 +38,6 @@ from .common import (
     add_source,
     failed_call,
     lean_scratch_project,
-    paper_search,
     tool_commands,
 )
 
@@ -139,8 +138,7 @@ def invoke_once(
     if tools:
         cmd += ["--permission-mode", "dontAsk", "--max-budget-usd"]
         cmd += [str(max_budget_usd), "--allowedTools", *LEAN_TOOL_PERMISSIONS]
-        if paper_search():
-            cmd += ["Bash(paper-search:*)"]
+        cmd += [f"Bash({name}:*)" for name in tool_commands()[0][1:]]
         if max_turns:
             cmd += ["--max-turns", str(max_turns)]
     env = dict(os.environ)

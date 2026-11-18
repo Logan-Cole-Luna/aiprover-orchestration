@@ -3,9 +3,12 @@ outlives the server.
 
 A research task is a session that writes a report and a second that
 referees it; asking for a blueprint is a research task whose question says so.
-The referee's report supplies the project's open lemmas, its claims to review,
-and its proposed blueprint. A paper task writes the project's paper. Each task
-lies in data/projects/<name>/tasks/<id>/.
+An explore task has several sessions work on one question at once, each
+choosing its direction from what the others post to a shared ledger, and a
+referee that reads a digest of the ledger and their reports. The referee's
+report supplies the project's open lemmas, its claims to review, and its
+proposed blueprint. A paper task writes the project's paper. Each task lies in
+data/projects/<name>/tasks/<id>/.
 
 A claim is not a proof; the way to settle one is to add it as a theorem to
 prove. The check task, which had the service referee one claim, is archived.
@@ -18,6 +21,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -25,14 +29,22 @@ from ..agents.base import TOKENS_PER_USD, TURNS_PER_USD, billed_tokens
 from ..agents.codex_cli import DEFAULT_CODEX_MODEL, parse_events, token_usage
 from ..agents.codex_cli import command as codex_command
 from ..agents.common import (
+    FINDINGS_BIN,
+    FINDINGS_NOTE,
     LEAN_CHECK_BIN,
     MAX_RETRIES,
     PAPER_SEARCH_BIN,
     PAPER_SEARCH_NOTE,
+    SAT_SOLVE_BIN,
+    SAT_SOLVE_NOTE,
+    SINGULAR_BIN,
+    SINGULAR_NOTE,
     failed_call,
     make_lean_project,
 )
 from ..agents.session_tools import TURN_LIMIT
+from ..cas import singular
+from ..findings.findings import digest, entries
 from ..utils.processes import run_group
 from ..paths import LIBRARIES_DIR
 from . import prompts
@@ -55,6 +67,15 @@ PERMISSIONS = (
 SESSION_BIN = Path(__file__).resolve().parent / "bin"
 # A final message this long is taken for the report itself.
 REPORT_CHARS = 2000
+# The agents of an explore task unless it names their number.
+AGENTS = 3
+# The referee of an explore task reads at most this much of its agents'
+# reports inline, and the rest from their files; and a digest of their ledger
+# of this length.
+MAX_DRAFT_CHARS = 300_000
+# The part of an agent's limit kept for reconciling its report at the end.
+RECONCILE_SHARE = 0.2
+DIGEST_CHARS = 20_000
 # Every session writes its report as it goes, so that a session that ends
 # early, at a limit or by an error, leaves what it found.
 REPORT_NOTE = """
@@ -82,10 +103,26 @@ def task_dir(name: str, task_id: str) -> Path:
 
 def readable_files(project: dict) -> list[Path]:
     """What a session reads, which keeps projects' material apart."""
-    readable = [PROJECTS_DIR / project["name"]]
+    readable = [PROJECTS_DIR / project["name"]] if "name" in project else []
     if project.get("source"):
         readable.append(Path(project["source"]))
     return readable
+
+
+def optional_tools(project: dict) -> list[tuple[str, Path, str, str]]:
+    """The optional commands of a session, each with its directory, its note,
+    and the variable of its log: `paper-search` and `sat-solve` when the
+    project asks for them, `singular` on a site that names Singular, and
+    `findings` for the agents of an explore task, whose ledger is its log."""
+    tools = [
+        ("paper-search", PAPER_SEARCH_BIN, PAPER_SEARCH_NOTE, "PAPER_SEARCH_LOG"),
+        ("sat-solve", SAT_SOLVE_BIN, SAT_SOLVE_NOTE, "SAT_SEARCH_LOG"),
+        ("singular", SINGULAR_BIN, SINGULAR_NOTE, "SINGULAR_LOG"),
+        ("findings", FINDINGS_BIN, FINDINGS_NOTE, "FINDINGS_DIR"),
+    ]
+    enabled = (project.get("paper_search"), project.get("sat_search"),
+               singular.executable(), project.get("findings"))  # fmt: skip
+    return [tool for tool, wanted in zip(tools, enabled) if wanted]
 
 
 def session_environment(project: dict, folder: Path) -> dict[str, str]:
@@ -93,13 +130,23 @@ def session_environment(project: dict, folder: Path) -> dict[str, str]:
     trees = readable_files(project)
     if project.get("library"):
         trees.append(LIBRARIES_DIR / project["library"])
-    papers = {}
-    if project.get("paper_search"):
-        papers = {"PAPER_SEARCH_LOG": str(folder / "paper_search.jsonl")}
-    bins = [SESSION_BIN, LEAN_CHECK_BIN] + [PAPER_SEARCH_BIN] * bool(papers)
+    tools = optional_tools(project)
+    # Each command logs its calls in the session's folder; searches go to the
+    # run's log instead when a run set one.
+    logs = {}
+    for name, _, _, variable in tools:
+        own = str(folder / f"{name.replace('-', '_')}.jsonl")
+        logs[variable] = own if name == "paper-search" else os.environ.get(variable, own)
+    if project.get("findings"):
+        # An explore task's agents post to its shared folder under their
+        # folders' names.
+        logs |= {"FINDINGS_DIR": project["findings"], "FINDINGS_AUTHOR": folder.name}
+    if project.get("findings_read_only"):
+        logs["FINDINGS_READ_ONLY"] = "1"
+    bins = [SESSION_BIN, LEAN_CHECK_BIN, *(path for _, path, _, _ in tools)]
     return {
         **os.environ,
-        **papers,
+        **logs,
         "PATH": ":".join([*map(str, bins), os.environ.get("PATH", "")]),
         "SESSION_PYTHON": sys.executable,
         # A virtualenv's standard library lies under its base prefix.
@@ -116,8 +163,7 @@ def claude_command(project: dict, limit: float) -> list[str]:
     reads = [f"{rule}(/{path}/**)" for path in readable
              for rule in ("Read", "Glob", "Grep")]
     reads.append(f"Read(/{LIBRARIES_DIR / project.get('library', '')})")
-    if project.get("paper_search"):
-        reads.append("Bash(paper-search:*)")
+    reads += [f"Bash({name}:*)" for name, *_ in optional_tools(project)]
     return ["claude", "-p", "--model", MODEL, "--effort", "high",
             "--tools", TOOLS, "--setting-sources", "", "--strict-mcp-config",
             "--no-session-persistence", "--permission-mode", "dontAsk",
@@ -143,7 +189,8 @@ def session(
             read=tuple(map(str, readable_files(project)))
             + ((str(LIBRARIES_DIR / project["library"]),) if project.get("library") else ()),
             tools=("python3", "lean-check")
-            + ("paper-search",) * bool(project.get("paper_search")),
+            + ("paper-search",) * bool(project.get("paper_search"))
+            + ("findings",) * bool(project.get("findings")),
             max_turns=round(limit * TURNS_PER_USD),
         )
         if codex
@@ -162,12 +209,15 @@ def session(
                 stdin=prompt
                 + REPORT_NOTE
                 + (CODEX_NOTE if codex else "")
-                + (PAPER_SEARCH_NOTE if project.get("paper_search") else ""),
+                + "".join(note for _, _, note, _ in optional_tools(project)),
                 env=session_environment(project, folder),
             )
             payload = {} if codex else json.loads(reply.stdout)
         except (subprocess.TimeoutExpired, json.JSONDecodeError):
             spent.append(cost + limit)
+            # A session stopped at its time limit leaves the report it wrote.
+            if (folder / "report.md").exists():
+                return (folder / "report.md").read_text()
             raise
         if codex:
             _, tokens, error = parse_events(reply.stdout)
@@ -189,7 +239,7 @@ def session(
         (folder / "events.jsonl").write_text(reply.stdout)
     if not report.exists() and len(final or "") >= REPORT_CHARS:
         report.write_text(final)
-    if payload.get("is_error") or not report.exists():
+    if not report.exists():
         raise RuntimeError(
             no_report(payload.get("subtype", ""), reply, limit, spent[-1])
             + activity(reply.stdout, payload, final)
@@ -390,9 +440,45 @@ def continuation(project: dict, task: dict) -> str:
     return f"This task continues research task {earlier['id']}, which {outcome}.{where}\n\n"
 
 
+def outcome(report: str) -> str:
+    """`argument` or `open`, from the first line of a report that states it."""
+    first = report.strip().splitlines()[:1]
+    found = re.match(r"\W*outcome\W*(argument|open)", first[0], re.I) if first else None
+    return found[1].lower() if found else ""
+
+
+def referee(
+    project: dict, task: dict, folder: Path, spent: list, limit: float,
+    draft: str, files: str, **fields,
+):  # fmt: skip
+    """The referee of a draft whose files lie in `files` of `folder`; what
+    survives joins the project, and `fields` join the task."""
+    report = session(
+        project,
+        folder,
+        prompts.RESEARCH_CRITIC_TEMPLATE.format(
+            **paths(project), question=continuation(project, task) + task["question"],
+            draft=draft, files=files, tasks=folder.parent, ledger=ledger(project),
+        ),  # fmt: skip
+        limit,
+        spent,
+    )
+    replace = task.get("blueprint", task.get("milestones", False))
+
+    def absorbed(current: dict) -> None:
+        absorb(current, report, replace, task["id"])
+        record = next(t for t in current["tasks"] if t["id"] == task["id"])
+        record.update(outcome=outcome(report), **fields)
+
+    return absorbed
+
+
 def research(project: dict, task: dict, folder: Path, spent: list):
+    """A research task: the investigation's method with every tool, then a
+    referee; what survives joins the project."""
     question = continuation(project, task) + task["question"]
     filled = paths(project) | {"question": question}
+    project = {**project, "paper_search": True, "sat_search": True}
     draft = session(
         project,
         folder / "draft",
@@ -402,15 +488,89 @@ def research(project: dict, task: dict, folder: Path, spent: list):
         task["max_usd"] / 2,
         spent,
     )
-    report = session(
-        project,
-        folder,
-        prompts.RESEARCH_CRITIC_TEMPLATE.format(**filled, draft=draft, ledger=ledger(project)),
-        task["max_usd"] / 2,
-        spent,
-    )
-    replace = task.get("blueprint", task.get("milestones", False))
-    return lambda current: absorb(current, report, replace, task["id"])
+    return referee(project, task, folder, spent, task["max_usd"] / 2, draft, "`draft/`")
+
+
+def explore(project: dict, task: dict, folder: Path, spent: list):
+    """An explore task: agents at once on one question, with the tools of
+    research. No one assigns their directions: each posts its sketch to the
+    shared ledger first and then its findings, and chooses by what the others
+    posted. A failed agent leaves its report, if any, and its entries. Once
+    all agents end, each reconciles its report with the entries posted after
+    its last read, in a short second session (RECONCILE_SHARE of its limit),
+    since an agent that ends early never sees the others' last findings. A
+    referee then reads the ledger's digest and every report, and the entries
+    it needs through `findings`, which it may not post to. The task's limit is
+    split evenly between the agents and the referee, and the task records the
+    agents that ended with an error and those whose first entry was not a
+    sketch."""
+    count = task.get("agents", AGENTS)
+    shared = folder / "shared"
+    shared.mkdir(parents=True, exist_ok=True)
+    names = [f"agent_{k}" for k in range(1, count + 1)]
+    limit = task["max_usd"] / (count + 1)
+    project = {**project, "paper_search": True, "sat_search": True}
+    filled = paths(project) | {"question": task["question"], "agents": count,
+                               "shared": shared, "tasks": folder.parent}  # fmt: skip
+    reports, failed = {}, {}
+
+    def agent(name: str, template: str, share: float) -> None:
+        # The session appends its cost to `spent` itself; list.append is atomic.
+        try:
+            reports[name] = session(
+                {**project, "findings": str(shared)},
+                folder / name,
+                template.format(**filled, agent=name),
+                limit * share,
+                spent,
+            )
+        except Exception as error:
+            failed.setdefault(name, str(error)[:500])
+            partial = folder / name / "report.md"
+            if partial.exists():
+                reports[name] = partial.read_text()
+
+    rounds = [(prompts.EXPLORE_TEMPLATE, 1 - RECONCILE_SHARE),
+              (prompts.EXPLORE_RECONCILE_TEMPLATE, RECONCILE_SHARE)]  # fmt: skip
+    for template, share in rounds:
+        threads = [threading.Thread(target=agent, args=(name, template, share)) for name in names]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+    ledger = entries(shared)
+    first = {}
+    for entry in ledger:
+        first.setdefault(entry["agent"], entry["kind"])
+    unsketched = [name for name in names if first.get(name) != "sketch"]
+    draft = explore_draft(names, reports, failed, digest(ledger, time.time(), DIGEST_CHARS))
+    files = ", ".join(f"`{name}/`" for name in names) + ", and the shared folder `shared/`"
+    reader = {**project, "findings": str(shared), "findings_read_only": True}
+    return referee(reader, task, folder, spent, limit, draft, files,
+                   agent_errors=failed, missing_sketch=unsketched)  # fmt: skip
+
+
+def explore_draft(names: list[str], reports: dict, failed: dict, summary: str) -> str:
+    """What the agents of an explore task left, for its referee: the digest of
+    their ledger and each report, cut so that the whole stays within
+    MAX_DRAFT_CHARS."""
+    share = max(2000, MAX_DRAFT_CHARS // len(names))
+    parts = [
+        f"This draft is the work of {len(names)} agents on the question, each "
+        "in its own folder, who shared their sketches and results in a ledger. "
+        "Below are the ledger's digest and each agent's report. Read the "
+        "entries you need with `findings read <id>`, `findings list --topic "
+        "<prefix>`, or `findings since 0 --topic <prefix>`; you cannot post. "
+        "Their cited files lie in `shared/files/`.",
+        f"## Digest of the ledger\n\n{summary}",
+    ]
+    for name in names:
+        ended = f" (it ended early: {failed[name]})" if name in failed else ""
+        text = reports.get(name, "(no report)").strip()
+        if len(text) > share:
+            text = text[:share] + f"\n\n(Cut here; the whole report is `{name}/report.md`.)"
+        parts.append(f"## Report of {name}{ended}\n\n{text}")
+    return "\n\n".join(parts)
 
 
 # def check(project: dict, task: dict, folder: Path, spent: list):
@@ -439,7 +599,7 @@ def write_paper(project: dict, task: dict, folder: Path, spent: list):
         raise RuntimeError(f"the paper did not compile: {record['problems']}")
 
 
-KINDS = {"research": research, "paper": write_paper}
+KINDS = {"research": research, "explore": explore, "paper": write_paper}
 
 
 def finish(name: str, task_id: str, absorbed=None, **fields) -> None:

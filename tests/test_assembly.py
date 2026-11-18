@@ -18,6 +18,7 @@ from aiprover_orchestration.orchestrator.structures import Lemma, Sketch
 class Stage(AssembleStage):
     config = SimpleNamespace(lean_timeout=300)
     state = ResumeState()
+    accepted_axioms = checker.STANDARD_AXIOMS
 
     def __init__(self, axioms: dict, timed_out: bool = False):
         self.axioms = axioms
@@ -81,6 +82,11 @@ class ResponsibleLemmasTest(unittest.TestCase):
         ).responsible_lemmas(sketch(), "")
         self.assertEqual(list(problems), ["root"])
         self.assertIn("Lean.ofReduceBool", problems["root"])
+
+    def test_a_run_with_bv_decide_accepts_its_axioms(self):
+        stage = Stage({"root": BAD, "user": BAD, "clean": ["propext"]})
+        stage.accepted_axioms = checker.STANDARD_AXIOMS | checker.COMPILER_AXIOMS
+        self.assertEqual(stage.responsible_lemmas(sketch(), ""), {})
 
 class RejectAssemblyTest(unittest.TestCase):
     def test_only_the_lemma_responsible_is_reopened(self):

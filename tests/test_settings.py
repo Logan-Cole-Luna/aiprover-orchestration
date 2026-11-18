@@ -117,12 +117,14 @@ class SettingsTest(unittest.TestCase):
                 _test_suspects=lambda *args: "",
                 _decision=lambda *args, **fields: None,
                 proof_for=lambda reader: "draft",
+                library="-- Library: the Lean package lib",
                 _orchestrator=lambda prompt, phase: seen.append(prompt) or next(replies),
             )
             sketch = Sketch([Lemma("a", "theorem a : True")], "trivial")
             self.assertIn("misses a case", SketchStage._judge_sketch(judge, form, sketch, 0))
             self.assertEqual(SketchStage._judge_sketch(judge, form, sketch, 1), "")
             self.assertIn("misses a case", seen[1])
+            self.assertIn("the Lean package lib", seen[0])
         with self.subTest("the draft is reused on resume"):
             with tempfile.TemporaryDirectory() as folder:
                 stage.result_dir = Path(folder)

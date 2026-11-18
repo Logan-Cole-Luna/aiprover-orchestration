@@ -3,22 +3,9 @@
 import re
 from dataclasses import dataclass, field
 
-from ..paths import (
-    DEFAULT_LEAN_RELEASE,
-    LEAN_IMPORT,
-    LEAN_RELEASE,
-    LIBRARY_PACKAGE,
-    WORKSPACE,
-)
+from ..paths import DEFAULT_LEAN_RELEASE, LEAN_IMPORT, LEAN_RELEASE, LIBRARY_IMPORTS
 from ..utils.vocabulary import modernize
 
-# Every file of a run imports LEAN_IMPORT and the root modules of its package
-# library, if it has one.
-LIBRARY_IMPORTS = "".join(
-    f"import {root.stem}\n"
-    for root in sorted(WORKSPACE.glob("*.lean"))
-    if LIBRARY_PACKAGE and root.stem != "lakefile"
-)
 FILE_HEADER = f"import {LEAN_IMPORT}\n{LIBRARY_IMPORTS}set_option autoImplicit false\n\n"
 MAIN_NAME = "solution"
 
@@ -252,6 +239,13 @@ class Config:
     # (YYYY-MM-DD), the cutoff of a benchmark taken from arXiv.
     paper_search: bool = False
     paper_search_before: str = ""
+    # Accept proofs by `bv_decide`, which check a SAT certificate by compiled
+    # evaluation and so add the compiler axioms (sat_search.md).
+    bv_decide: bool = False
+    # Give the orchestrator `sat-solve` (sat/sat_solve.py), which explores
+    # finite spaces: sweeps of sizes, counts, and case splits. Its answers
+    # reach the run only through Lean.
+    sat_search: bool = False
     # Session time limit of a lemma's first job (s); 0 = the prover's own.
     # A short first job finds the easy lemmas before long jobs start.
     aiprover_first_job_seconds: int = 0
@@ -294,6 +288,11 @@ class Config:
     sketch_feedback: str = ""
     plan_revision: int = 0
     sketch_guidance: str = ""
+    # Spend limit in USD of an investigation before the draft (mode prove;
+    # 0: none): a sandboxed session with Python, `lean-check`, and the
+    # orchestrator's `source_dir`, whose report the draft receives
+    # (stages/draft.py).
+    investigation_usd: float = 0.0
     # Library of verified results the run builds on (a Lean file; see
     # libraries.py); overrides the problem's `library` field. With
     # `extend_library`, a reviewed proof is appended to it.

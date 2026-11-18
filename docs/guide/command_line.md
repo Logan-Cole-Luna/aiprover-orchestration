@@ -53,6 +53,9 @@ all. The most used:
 | `--sketch-approval true` | Stop after the proof plan for review; on resume, `--sketch-approval false` approves (`--sketch-guidance TEXT` adds comments), and `--sketch-feedback TEXT --plan-revision N` asks for a revision |
 | `--write-reports true` | Write the report, informal proof, and blueprint (also on resume) |
 | `--paper-search true` | The orchestrator may search arXiv and read papers |
+| `--bv-decide true` | Proofs may use `bv_decide`, which checks a SAT certificate by compiled evaluation and so trusts the compiler ([SAT search](../../sat_search.md)) |
+| `--sat-search true` | The orchestrator may explore finite spaces with a SAT solver: sweeps of sizes, counts of solutions, and case splits ([SAT search](../../sat_search.md)) |
+| `--investigation-usd 30` | In mode prove, a sandboxed session with Python, `lean-check`, and the orchestrator's `source_dir` explores the problem before the draft, within this spend limit; the draft receives its report (`investigation.md`) |
 | `--workers N` | Prover chains per lemma |
 | `--aiprover-attempts-per-lemma N` | Failed AIProver jobs before a lemma statement is given up |
 | `--aiprover-escalation-after N`, `--max-escalations N` | Failed jobs before a lemma is escalated to the orchestrator, and escalations per run |
@@ -76,6 +79,7 @@ A project is a file `data/projects/<name>.json` (format in
 P="$PY -m aiprover_orchestration.orchestrator.project"
 $P run <name> --config configs/orchestrator/default.json    # prove its results in order
 $P task <name> research "Which lemmas does the main theorem need?"
+$P task <name> explore "<question>" --agents 4 --max-usd 100  # agents sharing a ledger
 $P task <name> check "<claim>"                               # referee one claim
 $P task <name> paper                                          # write the paper
 $P review <name> 0 confirmed "checked by hand"               # decide on claim 0

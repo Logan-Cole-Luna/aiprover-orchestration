@@ -95,6 +95,34 @@ with Lean's error. With `max_stall_hours` set, a run stops once no lemma has
 been proved for that many hours, counted from its first prover job or its
 resumption; it is off by default.
 
+An explore task, started from the command line ([command line](command_line.md)),
+puts several sessions on one question at once, three unless the task names
+another number, each with an equal share of the task's limit and with the
+tools of research. No session assigns the others their directions; they
+coordinate through a ledger shared by the task, `shared/ledger.jsonl` of its
+folder, to which they post with the command `findings`. The ledger is an
+append-only log of typed entries: sketches of a direction with the criteria of
+its success and of a dead end, claims, results (positive, negative, or a
+counterexample), and notes, each with a topic, a status among proved, tested,
+conjectured, refuted, and pruned, and files copied into the shared folder
+under the hash of their content. An entry is never changed; a later entry
+supersedes or refutes it. Sessions do not read the log whole. A digest
+computed from it, bounded in length however long the log grows, gives the
+counts of entries, the open alerts, the topics held, and the latest results of
+each topic, and each session reads the entries posted since its last check
+through a cursor kept in its folder. A sketch or a claim leases its topic for
+a few hours, until its holder posts a result on it; a refutation, or a
+negative result on a held topic, alerts the holders and the authors of the
+entries it concerns, and an alert is listed first wherever a session reads.
+Each session also keeps a memory file of its plan, its progress, and what it
+has read. After all sessions end, a referee reads the digest and the reports,
+and the entries it needs, and writes the task's report, which the project
+absorbs as it absorbs a research report; the task records the sessions that
+ended with an error and those whose first entry was not a sketch. Islands of
+sessions with ledgers of their own and a periodic migration of their best
+entries, and verifier sessions that check the results posted as proved, fit
+the same layout and are left to later work.
+
 ## Libraries
 
 A library is one Lean file or a Lean package uploaded as a zip, which the
@@ -115,6 +143,30 @@ math abstracts, ranked by embedding similarity fused with keyword scores, and
 read chosen papers a page at a time, with formulas as LaTeX. Queries stay on
 the machine; the paper service alone fetches papers from arXiv, and a
 config's `paper_search_before` hides later papers from benchmark runs.
+
+## SAT search
+
+Two settings under "Proof search" concern finite search. With "Proofs may use
+bv_decide, which trusts the compiler", the run accepts proofs by `bv_decide`,
+which decide a goal over `Bool` and `BitVec` with a SAT solver and check its
+certificate by compiled evaluation; such proofs depend on `Lean.ofReduceBool`
+and `Lean.trustCompiler` in addition to the standard axioms, and the final
+checks of the run list the axioms of its solution. With "Orchestrator explores
+finite spaces with a SAT solver", the orchestrator may run `sat-solve`, which
+decides a propositional formula with CaDiCaL, the solver shipped with the Lean
+toolchain, and covers what `bv_decide` does not: a sweep over sizes, a count
+of solutions, and the timing of the cases of a split. Its answers enter the run
+only through Lean, and each call is recorded in the run's `sat_search.jsonl`
+([SAT search](../../sat_search.md)).
+
+Where Singular is installed (the Nix profile includes it; elsewhere, the
+variable `SINGULAR` names the executable, or `Singular` is found on the search
+path), agents with tools and research sessions may also run `singular`, which
+computes Gröbner bases and ideal membership certificates under the sandbox; a
+certificate enters a proof only through `linear_combination`, and each call is
+recorded in `singular.jsonl`. Research sessions and investigations run their
+Python scripts sandboxed with the server's interpreter, which in the Nix
+profile includes numpy, scipy, and sympy.
 
 ## Model servers and sign-in
 

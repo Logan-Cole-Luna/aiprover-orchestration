@@ -128,7 +128,8 @@ LIBRARY_NAME = re.compile(r"^[A-Za-z0-9_-]+(?:\.lean)?$")
 PROJECT_NAME = re.compile(r"[A-Za-z0-9_-]+")
 TASK_ID = re.compile(r"\d{8}_\d{6}")  # a task's start, as its folder names it
 RESULT_PAGES = (
-    "trace.html", "trace_replay.html", "summary.json", "paper_search.jsonl"
+    "trace.html", "trace_replay.html", "summary.json", "paper_search.jsonl",
+    "sat_search.jsonl"
 )
 # Single files of a run, by the name the page links them under.
 ROOT_FILES = {
