@@ -86,5 +86,6 @@ $P review <name> 0 confirmed "checked by hand"               # decide on claim 0
 ```bash
 $PY -m aiprover_orchestration.orchestrator.trace_view results/<run_id>/trace.json   # trace pages
 $PY -m aiprover_orchestration.library verify NAME FILE [--disprove]                   # theorem library
+$PY -m aiprover_orchestration.orchestrator.grade results/<run_id> --dry-run         # rubric grading (grading.md)
 $PY -m unittest discover -s tests -t .                                                # tests
 ```

@@ -26,7 +26,7 @@ v4.23.0 and Mathlib v4.23.0.
 | --- | --- | --- |
 | [1. Setup](#1-setup) | Installation, model server, search, services | [setup](docs/guide/setup.md), [models](docs/guide/models.md) |
 | [2. Web server](#2-web-server) | Runs, blueprints, projects on the page | [web server](docs/guide/web_server.md) |
-| [3. Command line](#3-command-line) | The same runs and projects without the server | [command line](docs/guide/command_line.md) |
+| [3. Command line](#3-command-line) | The same runs and projects without the server, and grading of recorded runs | [command line](docs/guide/command_line.md), [grading](docs/guide/grading.md) |
 | [4. Claude Code skill](#4-claude-code-skill) | The session's agent as orchestrator | [plugin](orchestration_plugin/README.md) |
 | [5. Layout](#5-layout) | Repository structure | |
 | [6. Configuration](#6-configuration) | Backends, deployment settings, limits | [configuration](docs/guide/configuration.md) |
