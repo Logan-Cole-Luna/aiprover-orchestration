@@ -37,7 +37,9 @@ presents the plan as a blueprint, which the reviewer approves, approves with
 comments, returns for revision, or rejects. Generate documents writes the
 report, the informal proof, and the blueprint of a proved run that lacks them.
 Import run adds a run started elsewhere from a zip of its `results/<run_id>/`
-folder or of its export, and the export downloads a run as one zip.
+folder or of its export, and the export downloads a run as one zip. The
+README of a verified run's export names the standalone file's SHA-256, its
+import, the command that checks it, and the axioms of its principal theorem.
 
 ## Projects
 
@@ -47,10 +49,51 @@ library. A project starts from a goal and optional source files.
 Plan blueprint proposes the chain, which remains editable until it starts.
 Research has one session answer a question and a second session referee the
 answer; the report adds open lemmas, together with claims that lack a Lean
-proof. A claim may be confirmed or rejected by a person, checked by a model,
-or added as a result to prove in Lean, and only the last of these settles it.
-Launch then proves the results in order, each by its own run on the shared
-library, and Paper writes them up as one article.
+proof. The referee maintains these lists: it receives the active claims,
+each with an id, and the open statements, cites one it still relies on by its
+id instead of restating it, and retires one that it refutes, replaces by a
+sharper one, or proves, with the reason. Retired items remain visible with
+that reason. Prove in Lean adds a claim to the project as a result to prove,
+and the claim then shows the state of that result, from not started to
+proved, or false when the run disproves it. Launch
+then proves the results in order, each by its own run on the shared library,
+and Paper writes them up as one article. The results table also lists every
+other run whose group is the project's title, newest first, with its files
+and the reason a failed run stopped; research, open lemmas, claims, and the
+shared files open on a click. Research is listed as a timeline, newest
+first, with the last message of each session and a link to its report.
+Continue from this starts a research task whose session first reads the
+earlier task's report, or learns that the task failed. Open lemmas and claims
+list first those that the latest report named, and the earlier ones below.
+
+Each project shows its title and a summary line, and opens on a click, as a
+run does. The eye icon of a project or of an ended run hides it from the list
+without changing it, and Show hidden lists it again.
+
+The settings icon of a project opens, in a window over the page, the
+configuration step of the run form for the project: its
+task, the models of every role, the GPU group, the Lean version, the budget,
+and every run setting. They are checked as a run submission's are and apply
+to the results the project starts afterwards, while started results keep
+their own. A result may also carry a Lean statement, kept exactly as given
+when the task is to prove a theorem.
+
+A project's export is one zip of its library, research, source files, and
+the result folders of its runs, and Import a project restores it under a
+free name, with its runs as imported runs in its group. A library already
+present with the same content is kept, and a different one of the same name
+is imported under a new name.
+
+A result of a project may carry extra definitions, which follow the
+project's library in its run and join the library together with the result
+once it is proved, so that later results build on both. They are compiled
+after the library when the result is saved.
+
+A library file given with a run is compiled when the run is submitted, under
+the import the run will use, and a library that does not compile is refused
+with Lean's error. With `max_stall_hours` set, a run stops once no lemma has
+been proved for that many hours, counted from its first prover job or its
+resumption; it is off by default.
 
 ## Libraries
 

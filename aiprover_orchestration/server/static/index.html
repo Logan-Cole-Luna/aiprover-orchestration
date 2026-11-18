@@ -85,13 +85,34 @@ button.plain { color: var(--ink); background: var(--surface); }
 .plan-lemmas { width: 100%; }
 .plan-bar { width: 26%; } .plan-bar span { display: block; height: 7px; background: var(--accent); }
 dialog { width: min(640px, 92vw); color: var(--ink); background: var(--surface); border: 1px solid var(--line); }
-.project { background: var(--surface); border: 1px solid var(--line); padding: 10px 14px; margin-bottom: 14px; overflow-x: auto; }
+.project { position: relative; background: var(--surface); border: 1px solid var(--line); padding: 10px 14px; margin-bottom: 14px; overflow-x: auto; }
 .project tr:has([data-run-slot]:empty) { display: none; }
-.report { white-space: pre-wrap; max-height: 420px; overflow: auto; }
-.project h2 { font-size: 1.1rem; margin: 0 0 2px; }
+.project h2 { font-size: 1.1rem; margin: 0 0 2px; padding-right: 64px; }
+/* Small icon buttons: a project's settings and hide, a run's hide. */
+.icon-button { padding: 4px; line-height: 0; color: var(--muted); background: none; border: 0; cursor: pointer; }
+.icon-button:hover:not(:disabled) { color: var(--ink); background: none; }
+.icon-button svg { pointer-events: none; }
+.card-icons { position: absolute; top: 6px; right: 8px; display: flex; gap: 2px; }
+dt .icon-button { float: right; margin-top: -2px; }
+/* The Projects view's actions, a row above the projects. */
+.project-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 14px; }
+.project-actions .big { flex: 1 1 220px; padding: 6px; }
+.project-actions .check { align-self: center; margin: 0; }
+.project h2 a { color: inherit; text-decoration: none; }
+.project h2 a::before { content: "▸ "; color: var(--muted); }
+.project h2 a[aria-expanded=true]::before { content: "▾ "; }
+/* A window over the page, nearly its full size. */
+dialog.window { width: min(1100px, 96vw); max-width: 96vw; height: 94vh; max-height: 94vh; overflow: auto; padding: 18px 24px; }
+dialog.window::backdrop { background: rgb(0 0 0 / .45); }
+.window-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.window-head h3 { margin: 0; }
 .project table { width: 100%; margin-top: 8px; }
 .project th { text-align: left; font-weight: 600; color: var(--muted); }
 .project td, .project th { padding: 2px 12px 2px 0; }
+.project details.section > summary { font-weight: 600; margin-top: 10px; cursor: pointer; }
+.project .why { color: var(--muted); font-size: 0.85em; }
+.project .task { margin: 6px 0; }
+.project .task .note { margin: 2px 0 0 1.2em; }
 .brand { font-weight: 700; color: inherit; }
 .home-lead { max-width: 640px; margin: 28px 0 22px; }
 .home-lead h1 { margin: 0 0 8px; font-size: 1.7rem; }
@@ -177,11 +198,28 @@ table.servers .group { font-weight: 600; } table.servers .note { max-width: 360p
 #submission { max-width: 780px; }
 .count { color: var(--muted); font-size: .8rem; margin-top: 2px; }
 .nav { margin-top: 18px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-.models { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 4px 24px; }
-.models .pick { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.models .pick select:first-child { grid-column: 1 / -1; }
-.models h3, .settings h3 { margin: 10px 0 0; font-size: .95rem; }
-.role-note, small.models-note { color: var(--muted); font-size: .84rem; margin: 0 0 6px; display: block; }
+.form-head { margin: 22px 0 6px; font-size: 1rem; padding-bottom: 4px; border-bottom: 1px solid var(--line); }
+.roles .role { display: grid; grid-template-columns: 150px minmax(0, 1fr); gap: 12px; padding: 6px 0; }
+.roles .role b { display: block; font-size: .95rem; } .roles .role small { color: var(--muted); font-size: .8rem; }
+.pick { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; } .pick select { width: auto; min-width: 140px; }
+.pick select:first-child { min-width: 230px; }
+details.more { margin: 10px 0; } details.more summary small { font-weight: 400; color: var(--muted); margin-left: 6px; }
+.env { display: flex; flex-wrap: wrap; gap: 0 16px; align-items: flex-end; } .env select { width: 220px; }
+.settings h3 { margin: 10px 0 0; font-size: .95rem; }
+.changed label { color: var(--accent); } .changed input, .changed select { border-color: var(--accent); }
+/* Advanced settings: one group at a time, a row per setting with a narrow control. */
+#settings .seg { margin: 10px 0 4px; flex-wrap: wrap; }
+.compact > div { display: grid; grid-template-columns: minmax(0, 1fr) 200px; gap: 16px; align-items: center; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.compact label { margin: 0; font-weight: 400; font-size: .9rem; }
+.compact label small { display: block; color: var(--muted); font-size: .78rem; font-weight: 400; }
+.compact input[type=checkbox] { width: auto; justify-self: start; }
+@media (max-width: 600px) {
+  .roles .role { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .pick select, .pick select:first-child { min-width: 0; flex: 1 1 140px; }
+  .env > div { flex: 1 1 100%; } .env select { width: 100%; }
+  .compact > div { grid-template-columns: minmax(0, 1fr) 110px; }
+}
+.models-note { color: var(--muted); font-size: .84rem; margin: 0 0 6px; display: block; }
 .settings { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 4px 24px; }
 .settings h3 { grid-column: 1 / -1; }
 .settings label { font-weight: 400; font-size: .88rem; margin: 6px 0 2px; }
@@ -309,7 +347,12 @@ figcaption { font-size: .9rem; line-height: 1.45; color: var(--caption); margin-
     </div>
 
     <div id="view-projects" class="hidden">
-      <p class="note"><a href="#submit" id="start-project">Start a project</a></p>
+      <div class="project-actions">
+        <button class="big" id="start-project">Start a project</button>
+        <input type="file" id="import-project-file" class="hidden" accept=".zip" aria-label="Project archive to import">
+        <button class="big plain" id="import-project" title="Add a project from its export: its library, research, source files, and runs. The runs are shown as recorded and are not checked again.">Import a project</button>
+        <label class="check"><input type="checkbox" id="show-hidden-projects"> <span id="show-hidden-projects-label">Show hidden</span></label>
+      </div>
       <div id="project-list"></div>
     </div>
 
@@ -364,18 +407,26 @@ figcaption { font-size: .9rem; line-height: 1.45; color: var(--caption); margin-
           <small class="models-note">A library is a Lean file that compiles on its own, without <code>sorry</code>. The run uses its definitions and may cite its theorems instead of proving them again. A zip of Lean files, with its root modules at the top level, becomes a package library: it is built on the chosen Lean version once, every file of the run imports it, and agents read its statements through their tools rather than in their prompts.</small>
         </div>
         <div data-step="2" class="hidden">
-          <div class="models" id="models"></div>
+          <h3 class="form-head">Models</h3>
+          <div class="roles" id="models"></div>
+          <details class="more"><summary>Other roles <small id="other-roles"></small></summary><div class="roles" id="other-models"></div></details>
           <small class="models-note" id="models-note">Roles that use AIProver must use the same version.</small>
-          <label for="gpu-group">GPU group</label>
-          <select id="gpu-group" style="max-width:240px"></select>
-          <button type="button" class="plain" data-add-server>Model servers</button>
-          <small class="models-note" id="gpu-note">Each group has its own model server; runs of a group share it. Group <code>cpu</code> has none: use it when every role runs on Claude, Codex, or your own server.</small>
-          <label for="lean-release">Lean version</label>
-          <select id="lean-release" style="max-width:240px"></select>
+          <h3 class="form-head">Run options</h3>
+          <div class="settings" id="run-options"></div>
+          <h3 class="form-head">Environment</h3>
+          <div class="env">
+            <div><label for="gpu-group">GPU group</label><select id="gpu-group"></select></div>
+            <div><label for="lean-release">Lean version</label><select id="lean-release"></select></div>
+            <button type="button" class="plain" data-add-server>Model servers</button>
+          </div>
+          <small class="models-note" id="gpu-note">Runs of one GPU group share its model server; group <code>cpu</code> has none.</small>
           <div id="lean-release-note" class="models-note"></div>
-          <details open><summary>Orchestrator settings</summary>
-            <div class="settings" id="settings"></div>
-            <small class="models-note">An empty field keeps the value shown, which runs use by default. A resumed run keeps its settings.</small>
+          <h3 class="form-head">Budget</h3>
+          <div class="settings" id="budget"></div>
+          <details class="more"><summary>Advanced settings <small id="settings-changed"></small></summary>
+            <div id="settings"></div>
+            <div class="row"><button type="button" class="plain" id="settings-reset">Reset all settings</button>
+              <small class="models-note">An empty field uses the default shown. A resumed run keeps its settings.</small></div>
           </details>
         </div>
         <div data-step="3" class="hidden">
@@ -426,9 +477,24 @@ figcaption { font-size: .9rem; line-height: 1.45; color: var(--caption); margin-
   </div>
 </div>
 <script src="/static/guide.js"></script>
+<dialog id="project-settings-dialog" class="window" aria-labelledby="project-settings-title">
+  <form id="project-settings-form" method="dialog">
+    <div class="window-head">
+      <h3 id="project-settings-title"></h3>
+      <button type="button" class="plain" id="project-settings-close" aria-label="Close">Close</button>
+    </div>
+    <p class="note">These models and settings apply to the results the project starts from now on; started results keep theirs. The project's results are always added to its library.</p>
+    <label for="project-mode">Task</label>
+    <select id="project-mode"><option value="autoformalize">Formalize a proof</option><option value="prove">Prove a theorem</option></select>
+    <div id="project-settings-slot"></div>
+    <p id="project-settings-error" class="error"></p>
+    <div class="row"><button type="submit">Save</button><button type="button" class="plain" id="project-settings-cancel">Cancel</button></div>
+  </form>
+</dialog>
 <dialog id="task-dialog">
   <form id="task-form">
     <h3>Research</h3>
+    <p class="note" id="task-after"></p>
     <label for="task-question">Question <small>a session answers, and a second referees the answer</small></label>
     <textarea id="task-question" required></textarea>
     <label for="task-limit">Spending limit in USD</label>
@@ -447,8 +513,12 @@ figcaption { font-size: .9rem; line-height: 1.45; color: var(--caption); margin-
     <textarea id="member-statement"></textarea>
     <label for="member-proof">Informal proof <small>optional: a proof to follow, if you have one</small></label>
     <textarea id="member-proof"></textarea>
+    <label for="member-formal">Lean statement <small>optional, when the project's task is to prove a theorem; kept exactly as given</small></label>
+    <textarea id="member-formal" spellcheck="false" placeholder="Definitions, then theorem name ... := by sorry"></textarea>
     <label for="member-uses">Depends on <small>names of earlier theorems, separated by commas</small></label>
     <input id="member-uses">
+    <label for="member-extra">Extra definitions <small>optional: Lean that follows the project's library in this result's run, and joins the library with the result once it is proved; compiled when saved</small></label>
+    <textarea id="member-extra" spellcheck="false"></textarea>
     <div class="row"><button type="submit">Save</button><button type="button" class="plain" id="member-up">Move up</button><button type="button" class="plain" id="member-remove">Remove</button><button type="button" class="plain" id="member-cancel">Cancel</button></div>
   </form>
 </dialog>
@@ -584,10 +654,15 @@ const providerOptions = () => optionList([["claude", "Claude"], ["codex", "Codex
 
 const isService = provider => ["claude", "codex"].includes(provider);
 
+// The roles shown first; the others keep their defaults in most runs.
+const MAIN_ROLES = ["orchestrator", "subagent"];
 function buildPickers() {
   ROLES = catalog.roles.map(r => r.role);
-  $("models").innerHTML = catalog.roles.map(r => `<div><h3>${escapeHtml(r.label)}</h3>
-    <p class="role-note">${escapeHtml(r.description)}</p><div class="pick" id="pick-${r.role}"></div></div>`).join("");
+  const row = r => `<div class="role"><div><b>${escapeHtml(r.label)}</b><small>${escapeHtml(r.description)}</small></div><div class="pick" id="pick-${r.role}"></div></div>`;
+  const others = catalog.roles.filter(r => !MAIN_ROLES.includes(r.role));
+  $("models").innerHTML = catalog.roles.filter(r => MAIN_ROLES.includes(r.role)).map(row).join("");
+  $("other-models").innerHTML = others.map(row).join("");
+  $("other-roles").textContent = others.map(r => r.label).join(", ");
   for (const role of ROLES) {
     const box = $("pick-" + role);
     // A phase of the orchestrator (the escalation) follows the orchestrator by default.
@@ -596,17 +671,21 @@ function buildPickers() {
       <select aria-label="${role} model choice" data-field="model"></select>
       <select aria-label="${role} reasoning level" data-field="effort"></select>${toolPickers(role)}`;
     box.addEventListener("change", () => syncPicker(role));
-    const wanted = catalog.default[role] || {provider: ""};
-    box.querySelector('[data-field="provider"]').value =
-      ["aiprover", "custom"].includes(wanted.provider) ? `${wanted.provider}:${wanted.model}` : wanted.provider;
-    syncPicker(role);
-    if (isService(wanted.provider)) box.querySelector('[data-field="model"]').value = wanted.model;
-    for (const field of ["tools", "judge_tools"]) {
-      const pick = box.querySelector(`[data-field="${field}"]`);
-      if (pick) pick.value = wanted[field] ? "on" : "off";
-    }
-    syncPicker(role, wanted.effort);
+    setPicker(role, catalog.default[role] || {provider: ""});
   }
+}
+// Show the choice `wanted` ({provider, model, effort, tools}) in a role's picker.
+function setPicker(role, wanted) {
+  const box = $("pick-" + role);
+  box.querySelector('[data-field="provider"]').value =
+    ["aiprover", "custom"].includes(wanted.provider) ? `${wanted.provider}:${wanted.model}` : wanted.provider;
+  syncPicker(role);
+  if (isService(wanted.provider)) box.querySelector('[data-field="model"]').value = wanted.model;
+  for (const field of ["tools", "judge_tools"]) {
+    const pick = box.querySelector(`[data-field="${field}"]`);
+    if (pick) pick.value = wanted[field] ? "on" : "off";
+  }
+  syncPicker(role, wanted.effort);
 }
 
 // Lean tools (compile, Mathlib search) of a role; the orchestrator also
@@ -686,27 +765,79 @@ function settingInput(s) {
   if (s.type === "int") {
     return `<input type="number" id="${id}" min="${s.minimum}" max="${s.maximum}" step="1" placeholder="${escapeHtml(settingDefault(s))}">`;
   }
-  const choices = s.type === "bool" ? [[true, "yes"], [false, "no"]]
-    : s.choices.map(c => [c, c || "none"]);
+  const choices = s.choices.map(c => [c, c || "none"]);
   return `<select id="${id}"><option value="">default (${escapeHtml(settingDefault(s))})</option>`
     + choices.map(([value, label]) => `<option value='${JSON.stringify(value)}'>${escapeHtml(label)}</option>`).join("")
     + `</select>`;
 }
 
+const RUN_OPTIONS = ["sketch_approval", "paper_search", "write_reports", "disproof"];
+const BUDGET = ["max_hosted_usd", "max_hosted_calls"];
+function settingField(s) {
+  const field = s.type === "bool"
+    ? `<label class="check"><input type="checkbox" id="setting-${s.name}"${s.default ? " checked" : ""}> ${escapeHtml(s.label)}</label>`
+    : `<label for="setting-${s.name}">${escapeHtml(s.label)}</label>${settingInput(s)}`;
+  return `<div data-setting="${s.name}">${field}</div>`;
+}
+// A compact row; a trailing parenthesis of the label, such as "(0: unlimited)", becomes its hint.
+function compactField(s) {
+  const [, text, hint] = s.label.match(/^(.*?)(?:\s*\(([^()]*)\))?$/);
+  const control = s.type === "bool"
+    ? `<input type="checkbox" id="setting-${s.name}"${s.default ? " checked" : ""}>` : settingInput(s);
+  return `<div data-setting="${s.name}"><label for="setting-${s.name}">${escapeHtml(text)}${hint ? `<small>${escapeHtml(hint.replace(/^s(?=;|$)/, "seconds"))}</small>` : ""}</label>${control}</div>`;
+}
 function buildSettings() {
-  let group = "";
-  $("settings").innerHTML = (catalog.settings || []).filter(s => s.name !== "mode").map(s => {
-    const heading = s.group !== group ? `<h3>${escapeHtml(group = s.group)}</h3>` : "";
-    return `${heading}<div><label for="setting-${s.name}">${escapeHtml(s.label)}</label>${settingInput(s)}</div>`;
-  }).join("");
+  const all = (catalog.settings || []).filter(s => s.name !== "mode");
+  const fields = names => names.map(name => all.find(s => s.name === name)).filter(Boolean).map(settingField).join("");
+  $("run-options").innerHTML = fields(RUN_OPTIONS);
+  $("budget").innerHTML = fields(BUDGET);
+  const rest = all.filter(s => ![...RUN_OPTIONS, ...BUDGET].includes(s.name));
+  const groups = [...new Set(rest.map(s => s.group))];
+  $("settings").innerHTML = `<div class="seg" role="group" aria-label="Setting groups">${groups.map((group, i) =>
+      `<button type="button" data-group="${i}" aria-pressed="${!i}">${escapeHtml(group)}<small></small></button>`).join("")}</div>`
+    + groups.map((group, i) => `<div class="compact${i ? " hidden" : ""}" data-panel="${i}">${
+      rest.filter(s => s.group === group).map(compactField).join("")}</div>`).join("");
+  markChanged();
+}
+// Changed settings are highlighted, and the advanced ones counted in its summary.
+function markChanged() {
+  const changed = chosenSettings();
+  for (const field of document.querySelectorAll("[data-setting]")) field.classList.toggle("changed", field.dataset.setting in changed);
+  const hidden = Object.keys(changed).filter(name => ![...RUN_OPTIONS, ...BUDGET].includes(name)).length;
+  $("settings-changed").textContent = hidden ? `${hidden} changed` : "";
+  for (const tab of document.querySelectorAll("#settings [data-group]")) {
+    const count = document.querySelectorAll(`[data-panel="${tab.dataset.group}"] .changed`).length;
+    tab.querySelector("small").textContent = count || "";
+  }
+}
+$("settings").addEventListener("click", event => {
+  const tab = event.target.closest("[data-group]");
+  if (!tab) return;
+  for (const other of document.querySelectorAll("#settings [data-group]")) other.setAttribute("aria-pressed", other === tab);
+  for (const panel of document.querySelectorAll("#settings [data-panel]")) panel.classList.toggle("hidden", panel.dataset.panel !== tab.dataset.group);
+});
+for (const box of ["run-options", "budget", "settings"]) $(box).addEventListener("input", markChanged);
+$("settings-reset").onclick = buildSettings;
+
+// Show `values` (name: value) in the settings, the others at their defaults.
+function setSettings(values) {
+  buildSettings();
+  for (const s of catalog.settings || []) {
+    if (!(s.name in values) || s.name === "mode") continue;
+    const input = $(`setting-${s.name}`);
+    if (input.type === "checkbox") input.checked = Boolean(values[s.name]);
+    else input.value = s.type === "int" ? values[s.name] : JSON.stringify(values[s.name]);
+  }
+  markChanged();
 }
 
 function chosenSettings() {
   const chosen = {};
   for (const s of (catalog && catalog.settings) || []) {
     if (s.name === "mode") continue;  // the Task switch (setRunMode)
-    const value = $(`setting-${s.name}`).value;
-    if (value !== "") chosen[s.name] = s.type === "int" ? Number(value) : JSON.parse(value);
+    const input = $(`setting-${s.name}`);
+    if (input.type === "checkbox") { if (input.checked !== s.default) chosen[s.name] = input.checked; }
+    else if (input.value !== "") chosen[s.name] = s.type === "int" ? Number(input.value) : JSON.parse(input.value);
   }
   return chosen;
 }
@@ -850,12 +981,6 @@ function actions(run) {
   if (run.reportable) {
     buttons.push(`<button class="plain" data-report="${run.run_id}">Generate documents</button>`);
   }
-  // Ended runs can be hidden from the list (nothing is deleted) and shown again.
-  if (["finished", "cancelled", "rejected", "plan_review"].includes(run.state)) {
-    buttons.push(run.hidden
-      ? `<button class="plain" data-unhide="${run.run_id}">Unhide</button>`
-      : `<button class="plain" data-hide="${run.run_id}" title="Hide from the list">Hide</button>`);
-  }
   return `<div class="row">${buttons.join("")}</div>`;
 }
 
@@ -945,15 +1070,34 @@ function runPanel(run) {
   return `<div class="subtabs" role="tablist">${tabs}${actions(run)}</div>${body[runTab]}`;
 }
 
-function runEntry(run, number) {
+// Icons of Feather (https://feathericons.com, MIT license): settings, and
+// eye and eye-off for showing and hiding a project or a run.
+const ICONS = {
+  settings: `<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>`,
+  show: `<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/>`,
+  hide: `<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/>`,
+};
+// The eye that hides `what` (a run, a project) from its list, or shows it again.
+const hideButton = (hidden, attribute, what) => iconButton(hidden ? "show" : "hide", `data-${hidden ? "un" : ""}hide${attribute}`,
+  hidden ? `Show the ${what} in the list again` : `Hide the ${what} from the list; nothing of it changes`);
+const iconButton = (icon, attributes, label) => `<button type="button" class="icon-button" ${attributes} title="${label}" aria-label="${label}">`
+  + `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[icon]}</svg></button>`;
+
+function runLinks(run) {
   const links = [["informal.pdf", "pdf"], ["standalone.lean", "lean"], ["trace_replay.html", "replay"]]
     .filter(([name]) => run.files.includes(name)).map(([name, text]) => fileLink(run, name, text));
-  links.push(`<a href="/api/runs/${run.run_id}/export" download>export</a>`);
+  return [...links, `<a href="/api/runs/${run.run_id}/export" download>export</a>`];
+}
+function runEntry(run, number) {
+  const links = runLinks(run);
   const result = resultOf(run);
   const [glyph, kind] = OUTCOMES[result] || ["×", "bad"];
   const models = run.agents?.orchestrator
     ? `; ${shortModel(run.agents.orchestrator)} with ${shortModel(run.agents.subagent)}` : "";
-  return `<dt data-kind="${kind}"><span class="index">[${number}]</span><code>${escapeHtml(run.run_id)}</code> &nbsp;[${links.join(", ")}]</dt>
+  // Ended runs can be hidden from the list (nothing is deleted) and shown again.
+  const ended = ["finished", "cancelled", "rejected", "plan_review"].includes(run.state);
+  const hide = ended ? hideButton(run.hidden, `="${run.run_id}"`, "run") : "";
+  return `<dt data-kind="${kind}">${hide}<span class="index">[${number}]</span><code>${escapeHtml(run.run_id)}</code> &nbsp;[${links.join(", ")}]</dt>
     <dd data-kind="${kind}"><div class="title"><a href="#" data-open="${run.run_id}" aria-expanded="${run.run_id === selected}">${escapeHtml(run.title === run.uuid ? runTitle(run) : run.title)}</a></div>
     <div class="meta"><span class="${kind}">${glyph} ${run.state === "queued" ? queuedText(run) : result}</span>${elapsed(run) ? `; ${elapsed(run)} elapsed` : ""}${models}</div>
     ${run.run_id === selected ? runPanel(run) : ""}</dd>`;
@@ -1352,9 +1496,15 @@ function openResume(run) {
   const keep = [["", "Keep"]];
   $("resume-model").innerHTML = optionList([...keep, ...catalog.claude.map(entry => [entry.model, entry.label])]);
   $("resume-group").innerHTML = optionList([...keep, ...catalog.gpu_groups.map(group => [group, group])]);
-  const reports = projects.find(project => project.members.some(member => member.run === run.run_id))?.tasks.filter(task => task.kind === "research" && task.report) || [];
+  const project = projects.find(entry => entry.members.some(member => member.run === run.run_id)), projectName = project?.name;
+  const reports = project?.tasks.filter(task => task.kind === "research" && task.has_report) || [];
   $("resume-report").innerHTML = `<option value="">None</option>` + reports.map(task => `<option value="${task.id}">${escapeHtml(task.question.slice(0, 80))}</option>`).join("");
-  $("resume-report").onchange = () => { $("resume-findings").value = reports.find(task => task.id === $("resume-report").value)?.report.slice(0, 60000) || ""; };
+  // A report is read when chosen, since the project list carries none.
+  $("resume-report").onchange = async () => {
+    const id = $("resume-report").value;
+    const reply = id && await fetch(`/api/projects/${projectName}/tasks/${id}/report${PAGE_QUERY}`, {credentials: "same-origin"});
+    $("resume-findings").value = reply?.ok ? (await reply.text()).slice(0, 60000) : "";
+  };
   $("resume-dialog").showModal();
 }
 for (const name of ["resume", "task", "member", "server", "account"]) $(`${name}-cancel`).onclick = () => $(`${name}-dialog`).close();
@@ -1374,31 +1524,94 @@ const MONEY = value => `$${value.toFixed(2)}`;
 let projects = [], shownProjects = "", editing = null, openPlan = null;
 const unstarted = project => project.members.filter(member => !member.run);
 
-function projectRow(project, member, index) {
-  const job = member.job, [proved, total] = member.lemmas;
-  const name = escapeHtml(member.uuid);
-  const link = job ? `<a href="#" data-project-run="${job.run_id}">${name}</a>`
-    : member.run || project.owner ? name : `<a href="#" data-edit data-project="${project.name}" data-index="${index}">${name}</a>`;
-  return `<tr><td>${index + 1}</td><td>${link}</td>
-    <td>${escapeHtml(member.role)}</td><td>${job ? escapeHtml(resultOf(job)) : "Not started"}</td>
-    <td>${total ? `${proved} of ${total}` : ""}</td><td>${job?.cost_usd == null ? "" : MONEY(job.cost_usd)}</td></tr>
-    <tr><td colspan="6" data-run-slot="${job?.run_id}"></td></tr>`;
+// A result of the project: a member, which may have no run yet, or another run
+// in the project's group. A failed run shows why in one line.
+function resultRow(entry, name, role, number, edit = "") {
+  const job = entry.job, [proved, total] = entry.lemmas;
+  const link = job ? `<a href="#" data-project-run="${job.run_id}">${escapeHtml(name)}</a>`
+    : edit ? `<a href="#" data-edit ${edit}>${escapeHtml(name)}</a>` : escapeHtml(name);
+  const why = entry.error ? `<div class="why">${escapeHtml(entry.error.split("\n")[0].slice(0, 160))}</div>` : "";
+  return `<tr><td>${number}</td><td>${link}</td><td>${escapeHtml(role)}</td>
+    <td>${job ? escapeHtml(resultOf(job)) : "Not started"}${why}</td>
+    <td>${total ? `${proved} of ${total}` : ""}</td><td>${job?.cost_usd == null ? "" : MONEY(job.cost_usd)}</td>
+    <td>${job ? runLinks(job).join(" ") : ""}</td></tr>
+    <tr><td colspan="7" data-run-slot="${job?.run_id}"></td></tr>`;
 }
-function taskEntry(task) {
+const RECENT_RUNS = 10;
+function projectResults(project) {
+  const head = `<tr><th>#</th><th>Result</th><th>Role</th><th>Status</th><th>Lemmas</th><th>Spent</th><th>Files</th></tr>`;
+  const members = project.members.map((member, index) => resultRow(member, member.uuid, member.role, index + 1,
+    member.run || project.owner ? "" : `data-project="${project.name}" data-index="${index}"`));
+  // A server started before projects listed their runs sends none.
+  const runs = (project.runs || []).map((entry, index) => resultRow(entry, entry.job.title || entry.job.run_id, "run", members.length + index + 1));
+  const older = runs.slice(RECENT_RUNS);
+  return `<table>${head}${members.join("")}${runs.slice(0, RECENT_RUNS).join("")}</table>`
+    + (older.length ? section(project, "older-runs", `Earlier runs (${older.length})`, `<table>${head}${older.join("")}</table>`) : "");
+}
+// A part of a project that opens on a click and stays open across refreshes.
+const openSections = new Set();
+const section = (project, key, title, body) => `<details class="section" data-section="${escapeHtml(project.name)}/${key}"`
+  + ` ${openSections.has(`${project.name}/${key}`) ? "open" : ""}><summary>${title}</summary>${body}</details>`;
+// A task as one line of the research timeline: when, what it asked, how it
+// ended, and its session's last message; the report opens on its own.
+const taskTime = id => `${id.slice(4, 6)}-${id.slice(6, 8)} ${id.slice(9, 11)}:${id.slice(11, 13)}`;
+const taskTitle = task => (task.question.split("\n").find(line => line.trim()) || task.kind).slice(0, 110);
+function taskEntry(project, task) {
   const cost = task.cost_usd ? `, ${MONEY(task.cost_usd)}` : "";
-  return `<details><summary>${escapeHtml(task.question.slice(0, 90) || task.kind)} <small>${task.state}${cost}</small></summary>
-    ${task.error ? `<p class="error">${escapeHtml(task.error)}</p>` : ""}<pre class="report">${escapeHtml(task.report)}</pre></details>`;
+  // A project of a user's server is that user's file, so its fields are escaped.
+  const id = escapeHtml(task.id);
+  const report = task.has_report ? ` <a href="/api/projects/${project.name}/tasks/${encodeURIComponent(task.id)}/report${PAGE_QUERY}" target="_blank">report</a>` : "";
+  const more = task.kind === "research" && task.state !== "running" && !project.owner
+    ? ` <button type="button" class="plain" data-continue="${id}" data-project="${project.name}">Continue from this</button>` : "";
+  return `<div class="task"><small>${escapeHtml(taskTime(task.id))}</small> ${escapeHtml(taskTitle(task))} <small>${escapeHtml(task.state)}${cost}</small>${report}${more}
+    ${task.error ? `<div class="note error">${escapeHtml(task.error)}</div>` : task.summary ? `<div class="note">${escapeHtml(task.summary)}</div>` : ""}</div>`;
 }
-function reviewEntry(project, review, index) {
-  const data = `data-project="${project.name}" data-claim="${index}"`;
-  const decided = review.decision ? `${review.decision} by ${escapeHtml(review.by)}${review.note ? `: ${escapeHtml(review.note)}` : ""}` : "not reviewed";
-  const claude = review.claude ? `; automated check: ${escapeHtml(review.claude)}` : "";
-  return `<li>${escapeHtml(review.claim)}<div class="note">${decided}${claude}</div>
-    <div class="row${project.owner ? " hidden" : ""}"><button type="button" class="plain" data-decide="confirmed" ${data}>Confirm</button>
-    <button type="button" class="plain" data-decide="rejected" ${data}>Reject</button>
-    <button type="button" class="plain" data-ask ${data}>Request a check</button>
-    <button type="button" class="plain" data-formalize ${data}>Prove in Lean</button></div></li>`;
+// Open lemmas and claims: those the latest research report named, then the
+// earlier ones, which an item without a task belongs to, then those a referee
+// retired (refuted, superseded, proved) or a condensation did (stale), with
+// the reason. `show` gives an item's content.
+const RETIRED = {stale: "not restated"};
+function frontier(project, items, key, title, show) {
+  const live = items.filter(item => !item.retired), retired = items.filter(item => item.retired);
+  const tagged = new Set(live.map(item => item.task).filter(Boolean));
+  const latest = [...project.tasks].reverse().find(task => tagged.has(task.id))?.id;
+  const current = live.filter(item => latest && item.task === latest), earlier = live.filter(item => !latest || item.task !== latest);
+  const counts = [current.length && `${current.length} from the latest report`, earlier.length && `${earlier.length} earlier`, retired.length && `${retired.length} retired`].filter(Boolean);
+  const list = rows => `<ul>${rows.map(item => `<li>${show(item)}</li>`).join("")}</ul>`;
+  const why = item => `<li>${show(item)}<div class="note">${escapeHtml(RETIRED[item.retired.reason] || item.retired.reason)}${item.retired.note ? `: ${escapeHtml(item.retired.note)}` : ""}</div></li>`;
+  return section(project, key, `${title} (${counts.join(", ") || 0})`,
+    (current.length ? list(current) : "")
+    + (earlier.length ? (current.length ? section(project, `${key}-earlier`, `Earlier (${earlier.length})`, list(earlier)) : list(earlier)) : "")
+    + (retired.length ? section(project, `${key}-retired`, `Retired (${retired.length})`, `<ul>${retired.map(why).join("")}</ul>`) : ""));
 }
+// A claim with its state in Lean: not attempted, or that of the result
+// proving it, which "Prove in Lean" adds to the project. Decisions on claims
+// and a check by the service are archived: no one used them.
+function claimState(member) {
+  if (!member.job) return `queued as result ${escapeHtml(member.uuid)}, not started`;
+  const link = `<a href="#" data-project-run="${member.job.run_id}">${escapeHtml(member.uuid)}</a>`;
+  if (member.job.status === "disproved") return `false: disproved in Lean (${link})`;
+  return `${escapeHtml(resultOf(member.job))} in Lean (${link})`;
+}
+function reviewEntry(project, review) {
+  const member = project.members.find(entry => entry.claim === review.claim);
+  const index = project.reviews.indexOf(review);
+  const state = member ? claimState(member)
+    : project.owner ? "not attempted in Lean"
+    : `not attempted in Lean <button type="button" class="plain" data-formalize data-claim="${index}" data-project="${project.name}">Prove in Lean</button>`;
+  const id = review.id ? `<b>${escapeHtml(review.id)}</b> ` : "";
+  return `${id}${escapeHtml(review.claim)}<div class="note">${state}</div>`;
+}
+// function reviewEntry(project, review, index) {
+//   const data = `data-project="${project.name}" data-claim="${index}"`;
+//   const decided = review.decision ? `${review.decision} by ${escapeHtml(review.by)}${review.note ? `: ${escapeHtml(review.note)}` : ""}` : "not reviewed";
+//   const claude = review.claude ? `; automated check: ${escapeHtml(review.claude)}` : "";
+//   return `<li>${escapeHtml(review.claim)}<div class="note">${decided}${claude}</div>
+//     <div class="row${project.owner ? " hidden" : ""}"><button type="button" class="plain" data-decide="confirmed" ${data}>Confirm</button>
+//     <button type="button" class="plain" data-decide="rejected" ${data}>Reject</button>
+//     <button type="button" class="plain" data-ask ${data}>Request a check</button>
+//     <button type="button" class="plain" data-formalize ${data}>Prove in Lean</button></div></li>`;
+// }
 // A goal longer than one line shows its first line; the rest opens on a click,
 // and stays open across the page's refreshes.
 const openGoals = new Set();
@@ -1411,6 +1624,10 @@ function projectGoal(project) {
     + `<p>${escapeHtml(goal)}</p></details>`;
 }
 document.addEventListener("toggle", event => {
+  const key = event.target.dataset?.section;
+  if (key) event.target.open ? openSections.add(key) : openSections.delete(key);
+}, true);
+document.addEventListener("toggle", event => {
   const goal = event.target.dataset?.goal;
   if (!goal) return;
   if (event.target.open) openGoals.add(goal); else openGoals.delete(goal);
@@ -1422,11 +1639,20 @@ function projectCard(project) {
   const data = `data-project="${project.name}"`, link = path => `/api/projects/${project.name}/${path}${PAGE_QUERY}`;
   const idle = `${data} ${project.tasks.some(task => task.state === "running") ? "disabled" : ""}`;
   const change = `class="plain${project.owner ? " hidden" : ""}"`;
-  return `<section class="project"><h2>${escapeHtml(project.title)}${project.owner ? ` <small>managed by ${escapeHtml(project.owner)}'s server; view only here</small>` : ""}</h2>
-    <div class="note">${MONEY(project.spent_usd)} on hosted models${project.research_usd ? `, of which ${MONEY(project.research_usd)} on research` : ""}</div>
+  const icons = (project.owner ? "" : iconButton("settings", `data-settings ${data}`, "Project settings"))
+    + hideButton(project.hidden, `-project ${data}`, "project");
+  // A project shows its title and a summary line until it is opened, as a run does.
+  const open = openProjects.has(project.name);
+  const entries = [...project.members, ...(project.runs || [])];
+  const proved = entries.filter(entry => entry.job?.status === "proved").length;
+  const head = `<section class="project"><div class="card-icons">${icons}</div><h2><a href="#" data-toggle-project ${data} aria-expanded="${open}">${escapeHtml(project.title)}</a>`
+    + `${project.owner ? ` <small>managed by ${escapeHtml(project.owner)}'s server; view only here</small>` : ""}${project.hidden ? " <small>hidden</small>" : ""}</h2>
+    <div class="note">${entries.length} results, ${proved} proved; ${project.tasks.length} research tasks; ${MONEY(project.spent_usd)} on hosted models${project.research_usd ? `, of which ${MONEY(project.research_usd)} on research` : ""}</div>`;
+  if (!open) return `${head}</section>`;
+  return `${head}
     ${projectGoal(project)}
     ${openPlan === project.name ? `<div id="blueprint" data-project="${project.name}"></div>` : ""}
-    <table><tr><th>#</th><th>Result</th><th>Role</th><th>Status</th><th>Lemmas</th><th>Spent</th></tr>${project.members.map((member, index) => projectRow(project, member, index)).join("")}</table>
+    ${projectResults(project)}
     <div class="row">
       ${unstarted(project).length && !project.owner ? `<button type="button" data-launch ${data}>Start remaining results</button>` : ""}
       <button type="button" ${change} data-edit ${data}>Add theorem to prove</button>
@@ -1435,14 +1661,15 @@ function projectCard(project) {
       <button type="button" ${change} data-paper ${idle}>Write paper</button>
       ${project.members.length ? `<button type="button" class="plain" data-toggle-plan ${data} aria-pressed="${openPlan === project.name}">Blueprint</button>` : ""}
       ${project.paper ? `<a href="${link("paper.pdf")}">paper</a> <a href="${link("paper.tex")}">tex</a>` : ""}
+      <a href="${link("export")}" download title="The project as one zip: its library, research, source files, and runs, which Import a project restores">export</a>
     </div>
-    <h3>Shared by the results</h3>
-    <p class="note">Each result builds on the Lean library, and its orchestrator may read the source.</p>
-    <ul><li><a href="${link("library")}" target="_blank">Lean library: ${escapeHtml(project.library)}</a></li>
-    ${project.source_files.length ? `<li><details><summary>Source files (${project.source_files.length})</summary><ul>${project.source_files.map(file => `<li><a href="${link(`source/${encodeURI(file)}`)}" target="_blank">${escapeHtml(file)}</a></li>`).join("")}</ul></details></li>` : ""}</ul>
-    ${project.open.length ? `<h3>Open lemmas</h3><ul>${project.open.map(item => `<li><code>${escapeHtml(item.lemma)}</code>: ${escapeHtml(item.reason)}</li>`).join("")}</ul>` : ""}
-    ${project.reviews.length ? `<h3>Claims without a Lean proof</h3><p class="note">Review is optional.</p><ul>${project.reviews.map((review, index) => reviewEntry(project, review, index)).join("")}</ul>` : ""}
-    ${project.tasks.length ? `<h3>Research</h3>${project.tasks.map(taskEntry).join("")}` : ""}</section>`;
+    ${project.tasks.length ? section(project, "research", `Research (${project.tasks.length})`, [...project.tasks].reverse().map(task => taskEntry(project, task)).join("")) : ""}
+    ${project.open.length ? frontier(project, project.open, "open", "Open lemmas", item => `<code>${escapeHtml(item.lemma)}</code>: ${escapeHtml(item.reason)}`) : ""}
+    ${project.reviews.length ? frontier(project, project.reviews, "claims", "Claims in the research reports", review => reviewEntry(project, review)) : ""}
+    ${section(project, "shared", `Shared by the results: the Lean library${project.source_files.length ? ` and ${project.source_files.length} source files` : ""}`,
+      `<p class="note">Each result builds on the Lean library, and its orchestrator may read the source.</p>
+      <ul><li><a href="${link("library")}" target="_blank">Lean library: ${escapeHtml(project.library)}</a></li>
+      ${project.source_files.map(file => `<li><a href="${link(`source/${encodeURI(file)}`)}" target="_blank">${escapeHtml(file)}</a></li>`).join("")}</ul>`)}</section>`;
 }
 // The run list moves under its project's row, with its panels and handlers.
 function placeRunList() {
@@ -1451,10 +1678,22 @@ function placeRunList() {
   shownRuns = "";
   renderRuns();
 }
+// Projects opened on the page, which stay open across refreshes.
+const openProjects = new Set();
+// Why the project list could not be read, shown in place of the list.
+let projectsError = "";
 async function refreshProjects() {
-  projects = await api("/api/projects" + PAGE_QUERY).catch(() => []);
+  projectsError = "";
+  projects = await api("/api/projects" + PAGE_QUERY).catch(error => { projectsError = error.message; return []; });
   renderHome();
-  const page = projects.map(projectCard).join("") || "<p>No projects.</p>";
+  renderProjects();
+}
+function renderProjects() {
+  const hidden = projects.filter(project => project.hidden).length;
+  $("show-hidden-projects-label").textContent = hidden ? `Show hidden (${hidden})` : "Show hidden";
+  const shown = projects.filter(project => $("show-hidden-projects").checked || !project.hidden);
+  const page = projectsError ? `<p class="error">The projects could not be read: ${escapeHtml(projectsError)}</p>`
+    : shown.map(projectCard).join("") || "<p>No projects.</p>";
   if (page === shownProjects || pageHeld()) return;
   shownProjects = page;
   $("run-home").append($("run-list"));
@@ -1468,9 +1707,20 @@ const projectCall = (name, path, method, body) => api(`/api/projects/${name}/${p
   .then(() => true, error => { alert(error.message); return false; }).finally(refreshProjects);
 const startTask = (name, body) => projectCall(name, "tasks", "POST", body);
 
+$("show-hidden-projects").onchange = renderProjects;
 $("project-list").addEventListener("click", async event => {
-  const {projectRun: run, runTab: tab, togglePlan, edit, index, project: name, task, launch, paper, claim, decide, ask, formalize} = event.target.dataset;
+  const {projectRun: run, runTab: tab, togglePlan, edit, index, project: name, task, launch, paper, continue: after, settings: openSettings, formalize, claim,
+         toggleProject, hideProject, unhideProject} = event.target.dataset;
   const project = projects.find(entry => entry.name === name);
+  if (toggleProject !== undefined) {
+    event.preventDefault();
+    if (openProjects.has(name)) {
+      openProjects.delete(name);
+      if (openPlan === name) openPlan = null;
+    } else openProjects.add(name);
+    return renderProjects();
+  }
+  if (hideProject !== undefined || unhideProject !== undefined) return projectCall(name, hideProject !== undefined ? "hide" : "unhide", "POST");
   if (run) {
     event.preventDefault();
     await refreshRuns();
@@ -1483,28 +1733,44 @@ $("project-list").addEventListener("click", async event => {
     showProjectPlan(openPlan === name ? null : name);
   }
   if (edit !== undefined) { event.preventDefault(); openMember(project, index); }
-  if (task !== undefined) { Object.assign($("task-form").dataset, {project: name, blueprint: task === PLAN_QUESTION}); $("task-question").value = task; $("task-dialog").showModal(); }
+  if (task !== undefined || after) {
+    const earlier = project.tasks.find(entry => entry.id === after);
+    Object.assign($("task-form").dataset, {project: name, blueprint: task === PLAN_QUESTION, after: after || ""});
+    $("task-after").textContent = earlier ? `Continues the research of ${taskTime(earlier.id)}, "${taskTitle(earlier)}" (${earlier.state}); its session reads that report first.` : "";
+    $("task-question").value = task || "";
+    $("task-dialog").showModal();
+  }
   if (launch !== undefined && confirm(`Queue the remaining results of ${project.title}? Each run spends hosted-model and GPU time.`)) projectCall(name, "launch", "POST");
   if (paper !== undefined) startTask(name, {kind: "paper"});
-  const review = project?.reviews[claim];
-  if (decide) {
-    const note = prompt(decide === "confirmed" ? "Note (optional)" : "What is wrong with the claim?");
-    if (note !== null) projectCall(name, `reviews/${claim}`, "POST", {decision: decide, note});
+  if (openSettings !== undefined) openProjectSettings(project);
+  // Archived with decisions on claims (reviewEntry).
+  // const review = project?.reviews[claim];
+  // if (decide) {
+  //   const note = prompt(decide === "confirmed" ? "Note (optional)" : "What is wrong with the claim?");
+  //   if (note !== null) projectCall(name, `reviews/${claim}`, "POST", {decision: decide, note});
+  // }
+  // if (ask !== undefined && confirm("Spend up to $10 of hosted-model calls on a check of this claim?")) startTask(name, {kind: "check", question: review.claim, max_usd: 10});
+  // if (formalize !== undefined) projectCall(name, "members", "PUT", [...unstarted(project), {uuid: `claim_${Number(claim) + 1}`, role: "main", statement: review.claim}]);
+  // A claim becomes a result to prove, which remembers its claim; "Start
+  // remaining results" then proves it with the others.
+  if (formalize !== undefined) {
+    const text = project.reviews[claim].claim, taken = new Set(project.members.map(member => member.uuid));
+    let number = Number(claim) + 1;
+    while (taken.has(`claim_${number}`)) number += 1;
+    projectCall(name, "members", "PUT", [...unstarted(project), {uuid: `claim_${number}`, role: "main", statement: text, claim: text}]);
   }
-  if (ask !== undefined && confirm("Spend up to $10 of hosted-model calls on a check of this claim?")) startTask(name, {kind: "check", question: review.claim, max_usd: 10});
-  if (formalize !== undefined) projectCall(name, "members", "PUT", [...unstarted(project), {uuid: `claim_${Number(claim) + 1}`, role: "main", statement: review.claim}]);
 });
 
 $("task-form").addEventListener("submit", event => {
   event.preventDefault();
   $("task-dialog").close();
-  const {project, blueprint} = $("task-form").dataset;
-  startTask(project, {kind: "research", question: $("task-question").value, max_usd: Number($("task-limit").value), blueprint: blueprint === "true"});
+  const {project, blueprint, after} = $("task-form").dataset;
+  startTask(project, {kind: "research", question: $("task-question").value, max_usd: Number($("task-limit").value), blueprint: blueprint === "true", after});
 });
 
 // Only results without a run can change.
 function openMember(project, index) {
-  const member = project.members[index] || {uuid: "", role: "main", statement: "", proof: ""};
+  const member = project.members[index] || {uuid: "", role: "main", statement: "", proof: "", library_extra: ""};
   editing = {project, member};
   $("member-name").value = member.uuid;
   $("member-name").disabled = Boolean(index);
@@ -1512,14 +1778,19 @@ function openMember(project, index) {
   $("member-statement").value = member.statement || "";
   $("member-uses").value = (member.uses || []).join(", ");
   $("member-proof").value = member.proof || "";
+  $("member-formal").value = member.formal_statement || "";
+  $("member-extra").value = member.library_extra || "";
   $("member-dialog").showModal();
 }
-function saveMember(change) {
+// The dialog stays open until the server accepts the change, since it
+// compiles new extra definitions and may refuse them.
+async function saveMember(change) {
   const {project, member} = editing, members = unstarted(project), place = members.indexOf(member);
-  const edited = {uuid: $("member-name").value, role: $("member-role").value, statement: $("member-statement").value, proof: $("member-proof").value, uses: $("member-uses").value.split(",").map(name => name.trim()).filter(Boolean)};
+  const edited = {uuid: $("member-name").value, role: $("member-role").value, statement: $("member-statement").value, proof: $("member-proof").value, formal_statement: $("member-formal").value,
+                  uses: $("member-uses").value.split(",").map(name => name.trim()).filter(Boolean), library_extra: $("member-extra").value,
+                  claim: member.claim || ""};
   change(members, place < 0 ? members.length : place, edited);
-  $("member-dialog").close();
-  projectCall(project.name, "members", "PUT", members);
+  if (await projectCall(project.name, "members", "PUT", members)) $("member-dialog").close();
 }
 $("member-form").addEventListener("submit", event => { event.preventDefault(); saveMember((members, place, edited) => members.splice(place, 1, edited)); });
 $("member-up").onclick = () => saveMember((members, place, edited) => { members.splice(place, 1); members.splice(Math.max(place - 1, 0), 0, edited); });
@@ -1542,7 +1813,17 @@ async function setSubmitKind(kind) {
   $("project-lean").value = leanReleases.default;
 }
 $("submit-kind").onclick = event => event.target.dataset.kind && setSubmitKind(event.target.dataset.kind);
-$("start-project").onclick = () => setSubmitKind("project");
+$("start-project").onclick = () => { go("submit"); setSubmitKind("project"); };
+$("import-project").onclick = () => $("import-project-file").click();
+$("import-project-file").onchange = async () => {
+  const archive = $("import-project-file").files[0];
+  $("import-project-file").value = "";
+  if (!archive) return;
+  try {
+    await api("/api/projects/import" + PAGE_QUERY, {method: "POST", body: archive, headers: {"Content-Type": "application/zip"}});
+    await Promise.all([refreshRuns(), refreshProjects()]);
+  } catch (e) { alert(e.message); }
+};
 // Only AIProver versions need a group's model server.
 $("project-prover").onchange = () => {
   const wanted = $("project-prover").value.startsWith("aiprover:") ? catalog.default_gpu_group : "cpu";
@@ -1700,6 +1981,10 @@ $("lean-release-note").addEventListener("click", async event => {
 });
 const STEPS = ["Problem", "Library", "Models and settings", "Review"];
 let step = 0;
+// A project's settings are edited in the configuration step of the run form,
+// shown in a window over the page, so that a project offers every option a
+// run submission does. The project being edited, while the window is open.
+let projectSettings = null;
 
 // The address names the view (#runs, #submit, #guide) or a section of the guide
 // (#guide-<id>), so that Back, reloads, and links lead to it.
@@ -1771,6 +2056,56 @@ function showStep(index) {
   $("submit-message").textContent = "";
   summarizeIfShown();
 }
+
+// The configuration panel of the run form, and where it lives there.
+const configPanel = document.querySelector(`[data-step="${STEPS.indexOf("Models and settings")}"]`);
+const configHome = {parent: configPanel.parentNode, next: configPanel.nextSibling};
+// The run form's choices, kept while the window borrows its panel.
+let runFormChoices = null;
+function showChoices({roles, gpu, lean, settings}) {
+  for (const role of ROLES) setPicker(role, roles[role] || {provider: ""});
+  $("gpu-group").value = gpu;
+  $("lean-release").value = lean;
+  renderRelease();
+  setSettings(settings);
+}
+async function openProjectSettings(project) {
+  projectSettings = project;
+  runFormChoices = {roles: Object.fromEntries(ROLES.map(role => [role, selection(role)])),
+                    gpu: $("gpu-group").value, lean: $("lean-release").value, settings: chosenSettings()};
+  await refreshReleases();
+  $("project-settings-slot").append(configPanel);
+  configPanel.classList.remove("hidden");
+  const chosen = project.selection || {};
+  showChoices({roles: Object.fromEntries(ROLES.map(role => [role, chosen[role] || catalog.default[role]])),
+               gpu: project.gpu_group || catalog.default_gpu_group,
+               lean: chosen.lean_release || leanReleases?.default || $("lean-release").value, settings: project.settings || {}});
+  $("project-mode").value = project.settings?.mode === "prove" ? "prove" : "autoformalize";
+  $("project-settings-title").textContent = `Settings of ${project.title}`;
+  $("project-settings-error").textContent = "";
+  $("project-settings-dialog").showModal();
+}
+// However the window closes, the panel returns to the run form as it was.
+$("project-settings-dialog").addEventListener("close", () => {
+  projectSettings = null;
+  configHome.parent.insertBefore(configPanel, configHome.next);
+  showChoices(runFormChoices);
+  showStep(step);
+});
+for (const id of ["project-settings-close", "project-settings-cancel"]) $(id).onclick = () => $("project-settings-dialog").close();
+$("project-settings-form").addEventListener("submit", async event => {
+  event.preventDefault();
+  const body = {gpu_group: $("gpu-group").value, lean_release: $("lean-release").value, settings: chosenSettings(), page: PAGE};
+  for (const role of ROLES) body[role] = selection(role);
+  if ($("project-mode").value === "prove") body.settings.mode = "prove";
+  try {
+    await api(`/api/projects/${projectSettings.name}/settings${PAGE_QUERY}`, {method: "PUT", body: JSON.stringify(body)});
+    $("project-settings-dialog").close();
+    refreshProjects();
+  } catch (e) {
+    $("project-settings-error").textContent = e.message;
+  }
+});
 const summarizeIfShown = () => { if (step === STEPS.length - 1) summarizeRun(); };
 
 // The last step lists the submission, and Submit waits for its problem.

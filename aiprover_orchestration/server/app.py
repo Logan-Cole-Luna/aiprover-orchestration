@@ -26,6 +26,8 @@ is the submitting user's own.
 """
 
 import asyncio
+import fcntl
+import hashlib
 import io
 import json
 import logging
@@ -62,7 +64,7 @@ from pydantic import AliasChoices, BaseModel, Field
 from ..lean import releases
 from ..library import api as library_api
 from ..orchestrator import gpu_usage, libraries
-from ..orchestrator.config import FILE_HEADER, current_names
+from ..orchestrator.config import FILE_HEADER, MAIN_NAME, current_names
 from ..agents.base import TOKENS_PER_USD
 from ..agents.codex_cli import DEFAULT_CODEX_MODEL
 from ..orchestrator import project as project_file
@@ -71,7 +73,7 @@ from ..orchestrator.project_tasks import ROLES, THEOREM_NAME, task_dir
 from ..orchestrator.reports import blueprint
 from ..orchestrator.reports.informal import RESULT_ROW_SUFFIX
 from ..orchestrator.trace import Trace
-from ..utils.files import read_record
+from ..utils.files import read_record, write_atomic
 from ..utils.vocabulary import modernize
 from ..paths import (
     CONFIG_DIR,
@@ -123,6 +125,8 @@ MAX_IMPORTS_PER_USER = 20
 LIBRARY_DIR = LIBRARIES_DIR
 # A single-file library, or a package library (a folder).
 LIBRARY_NAME = re.compile(r"^[A-Za-z0-9_-]+(?:\.lean)?$")
+PROJECT_NAME = re.compile(r"[A-Za-z0-9_-]+")
+TASK_ID = re.compile(r"\d{8}_\d{6}")  # a task's start, as its folder names it
 RESULT_PAGES = (
     "trace.html", "trace_replay.html", "summary.json", "paper_search.jsonl"
 )
@@ -136,6 +140,10 @@ ROOT_FILES = {
 # Problem groups of this server, {"<start of a problem id>": "<group>"}. They
 # are specific to its users, so they lie in its state and not in the repository.
 GROUPS = STATE_DIR / "groups.json"
+# Projects left out of the page's list, by name (`<account>:<name>` for one of
+# a user's server).
+HIDDEN_PROJECTS = STATE_DIR / "hidden_projects.json"
+# DELETED_PROJECTS = STATE_DIR / "deleted_projects"  # with delete_project
 TERMINAL_STATES = ("finished", "cancelled", "rejected", PLAN_REVIEW)
 # Statuses of a finished run that settle its theorem; such a run is final.
 CONCLUSIVE = ("proved", "disproved")
@@ -610,6 +618,9 @@ class Submission(BaseModel):
     gpu_group: str = model_servers.DEFAULT_GROUP
     library: str = ""  # a file in libraries/
     library_text: str = ""  # or an uploaded library
+    # Definitions that follow a library file in the run's files, added to it
+    # with the result when the run extends it.
+    library_extra_text: str = ""
     extend_library: bool = False
     new_library: str = ""  # or a library this run starts, in libraries/
     after: str = ""  # a run that must end first
@@ -732,11 +743,9 @@ def in_data(path: str) -> bool:
     return any(Path(path).resolve().is_relative_to(r.resolve()) for r in roots)
 
 
-@app.post("/api/runs", status_code=201)
-def submit(body: Submission, user: str = Depends(current_user)) -> dict:
-    check_capacity(user)
-
-    page = page_of(body.page)
+def run_configuration(body: Submission, page: Page) -> tuple[dict, dict]:
+    """The models and run settings of a submission, checked as a run's are:
+    its GPU group, models, settings, Lean release, and sign-in."""
     if body.gpu_group not in page.gpu_groups:
         raise HTTPException(400, f"unknown GPU group {body.gpu_group!r}")
     try:
@@ -774,6 +783,14 @@ def submit(body: Submission, user: str = Depends(current_user)) -> dict:
         )
     check_group(body.gpu_group, selection)
     require_sign_in(selection)
+    return selection, run_settings
+
+
+@app.post("/api/runs", status_code=201)
+def submit(body: Submission, user: str = Depends(current_user)) -> dict:
+    check_capacity(user)
+    page = page_of(body.page)
+    selection, run_settings = run_configuration(body, page)
 
     if body.uuid:
         row = read_dataset(page).get(body.uuid)
@@ -838,8 +855,10 @@ def submit(body: Submission, user: str = Depends(current_user)) -> dict:
     return {"run_id": run_id, "state": store.get(run_id)["state"]}
 
 
-def unpack_run(archive: zipfile.ZipFile, target: Path) -> None:
-    """Restore a zip of a run folder or of an export into `target`."""
+def archive_files(archive: zipfile.ZipFile) -> list[tuple]:
+    """The files of an archive with their paths inside its one folder, if it
+    holds one, refusing paths that leave it and archives that unpack to too
+    much data."""
     files = {
         info: PurePosixPath(info.filename)
         for info in archive.infolist()
@@ -851,16 +870,30 @@ def unpack_run(archive: zipfile.ZipFile, target: Path) -> None:
         raise ValueError("the archive unpacks to too much data")
     if any(path.is_absolute() or ".." in path.parts for path in files.values()):
         raise ValueError("the archive has paths outside its folder")
-    # Both forms may hold one folder named after the run.
     tops = {path.parts[0] for path in files.values()}
     nested = len(tops) == 1 and all(len(p.parts) > 1 for p in files.values())
-    for info, path in files.items():
-        relative = restored_path(path.parts[nested:])
-        if relative is None:
-            continue
-        (target / relative).parent.mkdir(parents=True, exist_ok=True)
-        with archive.open(info) as source, open(target / relative, "wb") as out:
-            shutil.copyfileobj(source, out)
+    return [(info, path.parts[nested:]) for info, path in files.items()]
+
+
+def extract(archive: zipfile.ZipFile, info, target: Path) -> None:
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with archive.open(info) as source, open(target, "wb") as out:
+        shutil.copyfileobj(source, out)
+
+
+def unpack_files(archive: zipfile.ZipFile, target: Path) -> None:
+    """Extract an archive of one folder into `target`."""
+    for info, parts in archive_files(archive):
+        extract(archive, info, target / Path(*parts))
+
+
+def unpack_run(archive: zipfile.ZipFile, target: Path) -> None:
+    """Restore a zip of a run folder or of an export into `target`; both
+    forms may hold one folder named after the run."""
+    for info, parts in archive_files(archive):
+        relative = restored_path(parts)
+        if relative is not None:
+            extract(archive, info, target / relative)
 
 
 def first_text(key: str, *records: dict) -> str:
@@ -909,23 +942,31 @@ def read_run(unpacked: Path) -> dict:
 
 
 def restore_run(upload, user: str, page: str) -> str:
-    """Add a run archive to the run list as a finished run; its results stay
-    as they were produced and are not checked again. A resumed import uses
-    the page's default models."""
+    """Add a run archive to the run list as a finished run (restore_folder)."""
     with tempfile.TemporaryDirectory(dir=TEMP_DIR) as staging:
         unpacked = Path(staging) / "run"
         try:
             with zipfile.ZipFile(upload) as archive:
                 unpack_run(archive, unpacked)
-            run = read_run(unpacked)
-            blueprint.from_summary(unpacked)
         # An archive is arbitrary data; any failure to read it is the upload's.
         except Exception as error:
             raise HTTPException(400, f"unreadable run archive: {error}")
-        run_id = new_run_id("", f"imported_{run['original']}")
-        dataset = write_problem(run_id, run["problem"])
-        for item in unpacked.iterdir():
-            shutil.move(item, RESULTS_DIR / run_id)
+        return restore_folder(unpacked, user, page)
+
+
+def restore_folder(unpacked: Path, user: str, page: str, group: str = "") -> str:
+    """Add an unpacked run folder to the run list as a finished run, in the
+    group `group` if given; its results stay as they were produced and are
+    not checked again. A resumed import uses the page's default models."""
+    try:
+        run = read_run(unpacked)
+        blueprint.from_summary(unpacked)
+    except Exception as error:
+        raise HTTPException(400, f"unreadable run archive: {error}")
+    run_id = new_run_id("", f"imported_{run['original']}")
+    dataset = write_problem(run_id, run["problem"])
+    for item in unpacked.iterdir():
+        shutil.move(item, RESULTS_DIR / run_id)
     # The trace's pages, which an archive of the results alone lacks.
     if (RESULTS_DIR / run_id / "trace.json").exists():
         run_command(trace_pages_command(RESULTS_DIR / run_id / "trace.json"), timeout=300)
@@ -942,6 +983,7 @@ def restore_run(upload, user: str, page: str) -> str:
             "agents": json.dumps(models.validate(PAGES[page].defaults)),
             "gpu_group": PAGES[page].gpu_groups[0],
             "page": page,
+            **({"problem_group": group} if group else {}),
         }
     )
     return run_id
@@ -962,24 +1004,51 @@ async def import_run(
         raise HTTPException(
             429, f"at most {MAX_IMPORTS_PER_USER} imported runs per user"
         )
-    TEMP_DIR.mkdir(exist_ok=True)
-    size = 0
-    with tempfile.TemporaryFile(dir=TEMP_DIR) as upload:
-        async for chunk in request.stream():
-            size += len(chunk)
-            if size > MAX_IMPORT_BYTES:
-                raise HTTPException(413, "run archive too large")
-            try:
-                await asyncio.to_thread(upload.write, chunk)
-            except OSError as error:
-                raise HTTPException(507, f"cannot store the upload: {error}")
+    with await stream_upload(request, "run archive") as upload:
         run_id = await asyncio.to_thread(restore_run, upload, user, page)
     return {"run_id": run_id, "state": "finished"}
 
 
+async def stream_upload(request: Request, what: str):
+    """The request's body in a temporary file of TEMP_DIR, at most
+    MAX_IMPORT_BYTES."""
+    TEMP_DIR.mkdir(exist_ok=True)
+    upload, size = tempfile.TemporaryFile(dir=TEMP_DIR), 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > MAX_IMPORT_BYTES:
+            upload.close()
+            raise HTTPException(413, f"{what} too large")
+        try:
+            await asyncio.to_thread(upload.write, chunk)
+        except OSError as error:
+            upload.close()
+            raise HTTPException(507, f"cannot store the upload: {error}")
+    return upload
+
+
+def zip_response(folder: str, texts: dict[str, str], files: dict[str, Path]) -> FileResponse:
+    """A download of `texts` and `files`, by their places, in one folder of a
+    zip, written to TEMP_DIR and removed once sent."""
+    TEMP_DIR.mkdir(exist_ok=True)
+    archive = tempfile.NamedTemporaryFile(suffix=".zip", dir=TEMP_DIR, delete=False)
+    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as bundle:
+        for target, text in texts.items():
+            bundle.writestr(f"{folder}/{target}", text)
+        for target, path in files.items():
+            bundle.write(path, f"{folder}/{target}")
+    archive.close()
+    return FileResponse(
+        archive.name,
+        media_type="application/zip",
+        filename=f"{folder}.zip",
+        background=BackgroundTask(os.unlink, archive.name),
+    )
+
+
 def library_options(body: Submission, run_id: str) -> dict:
     """Run options for a submission's library and dependency."""
-    options = {}
+    options, uploads = {}, []
     if sum(map(bool, (body.library, body.library_text, body.new_library))) > 1:
         raise HTTPException(
             400, "give one of a library name, a library file or a new library"
@@ -1004,6 +1073,7 @@ def library_options(body: Submission, run_id: str) -> dict:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(body.library_text)
         options["library"] = str(path.relative_to(HOME_DIR))
+        uploads.append(path)
     elif body.new_library:
         # A new library starts empty; the run extends it with its result.
         name = body.new_library.removesuffix(".lean") + ".lean"
@@ -1015,6 +1085,29 @@ def library_options(body: Submission, run_id: str) -> dict:
         if not body.extend_library:
             raise HTTPException(400, "a new library requires extend_library")
         options["library"] = f"libraries/{name}"
+    if body.library_extra_text.strip():
+        library = options.get("library", "")
+        if not library or libraries.is_package(library) or not libraries.resolve(library).exists():
+            raise HTTPException(400, "extra definitions follow an existing library file")
+        if len(body.library_extra_text) > MAX_LIBRARY_CHARS:
+            raise HTTPException(413, "extra definitions too long")
+        path = LIBRARY_DIR / "uploads" / f"{run_id}_extra.lean"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body.library_extra_text)
+        options["library_extra"] = str(path.relative_to(HOME_DIR))
+        uploads.append(path)
+    # The run's library check, now rather than at its start, in one compile.
+    # The extra definitions of a run that waits for another build on what
+    # that run adds to the library, so its own check at its start covers them.
+    extra = "" if body.after else body.library_extra_text
+    if body.library_text.strip() or extra.strip():
+        problem = libraries.check_file(
+            options["library"], body.lean_release or DEFAULT_LEAN_RELEASE, extra
+        )
+        if problem:
+            for path in uploads:
+                path.unlink(missing_ok=True)
+            raise HTTPException(400, f"the library does not compile: {problem}")
     if body.extend_library:
         if "library" not in options:
             raise HTTPException(400, "extend_library requires a library")
@@ -1111,8 +1204,14 @@ def problem_group(job: dict) -> str:
     """The group a run was given, else that of its problem id; empty if none."""
     if job.get("problem_group"):
         return job["problem_group"]
-    groups = read_json(GROUPS).items()
+    groups = recorded_groups(GROUPS, gpu_usage.modified(GROUPS)).items()
     return next((name for p, name in groups if job["uuid"].startswith(p)), "")
+
+
+@lru_cache(maxsize=4)
+def recorded_groups(path: Path, stamp: float) -> dict:
+    """The groups of problem ids, as written at `stamp`."""
+    return read_json(path)
 
 
 def reportable(job: dict, files: list[str]) -> bool:
@@ -1129,6 +1228,14 @@ def reportable(job: dict, files: list[str]) -> bool:
     )
 
 
+def hosted_usd(costs: dict) -> float:
+    """A run's hosted-model spending as its limit counts it: list prices, and
+    tokens without a price (such as a Codex subscription's) at
+    TOKENS_PER_USD."""
+    priced = costs.get("hosted_cost_usd") or 0
+    return priced + (costs.get("unpriced_tokens") or 0) / TOKENS_PER_USD
+
+
 def spent_limit(job: dict) -> bool:
     """Whether a run has spent its hosted-model limit, and so would stop at once.
     The final review of a verified proof is exempt."""
@@ -1141,10 +1248,7 @@ def spent_limit(job: dict) -> bool:
     limit = current_names(read_json(paths[0]).get("config", {})).get(
         "max_hosted_usd"
     )
-    costs = read_json(paths[1]).get("costs", {})
-    cost = (costs.get("hosted_cost_usd") or 0) + (
-        costs.get("unpriced_tokens") or 0
-    ) / TOKENS_PER_USD
+    cost = hosted_usd(read_json(paths[1]).get("costs", {}))
     return bool(limit and cost and cost >= limit)
 
 
@@ -1220,7 +1324,7 @@ def describe(job: dict) -> dict:
         "reportable": reportable(job, files),
         "plan_review": job["state"] == PLAN_REVIEW,
         "settled": job.get("status") in CONCLUSIVE,
-        "cost_usd": costs.get("hosted_cost_usd"),
+        "cost_usd": round(hosted_usd(costs), 4) if costs else None,
         "tokens": costs.get("hosted_tokens"),
         "gpu": gpu,
         "external": "home" in job,
@@ -1414,32 +1518,64 @@ def decide_plan(
     return requeued(job)
 
 
+def run_entry(job: dict) -> dict:
+    """A run with the lemmas of its plan and why it failed, if it did."""
+    path = run_dir(job, RESULTS_DIR) / "summary.json"
+    proved, total, error = (
+        summary_facts(path, gpu_usage.modified(path)) if servable(job, path) else (0, 0, "")
+    )
+    return {"job": describe(job), "lemmas": [proved, total], "error": error}
+
+
+@lru_cache(maxsize=1024)
+def summary_facts(path: Path, stamp: float) -> tuple[int, int, str]:
+    """The proved and planned lemmas of a run and its error, from its
+    summary written at `stamp`."""
+    summary = read_record(path)
+    lemmas = (summary.get("sketch") or {}).get("lemmas", [])
+    return sum(bool(lemma.get("proved")) for lemma in lemmas), len(lemmas), summary.get("error", "")
+
+
 def project_member(member: dict, account: str = "") -> dict:
-    """A project's member with its run and the lemmas of its plan."""
+    """A project's member with its run."""
     run = member.get("run")
     job = find_job(f"{account}:{run}" if account else run) if run else None
-    if job is None:
-        return member | {"job": None, "lemmas": [0, 0]}
-    path = run_dir(job, RESULTS_DIR) / "summary.json"
-    summary = read_record(path) if servable(job, path) else {}
-    lemmas = (summary.get("sketch") or {}).get("lemmas", [])
-    proved = sum(bool(lemma.get("proved")) for lemma in lemmas)
-    return member | {"job": describe(job), "lemmas": [proved, len(lemmas)]}
+    # A started result's extra definitions are its run's; the page needs none.
+    if run and member.get("library_extra"):
+        member = {**member, "library_extra": ""}
+    return member | (run_entry(job) if job else {"job": None, "lemmas": [0, 0]})
 
 
 def task_state(task: dict) -> str:
-    """A task's state; one whose process died has failed."""
-    running = task["state"] == "running"
-    if running and not Path(f"/proc/{task['pid']}").exists():
+    """A task's state; one whose process died has failed. A task recorded
+    before tasks kept their process keeps its state."""
+    pid = task.get("pid")
+    if task["state"] == "running" and pid and not Path(f"/proc/{pid}").exists():
         return "failed"
     return task["state"]
 
 
+def task_file(path: Path, task_id: str, name: str) -> Path | None:
+    """A file of a project's task, unless it is missing or a link (a user's
+    server may link its files to the server account's)."""
+    file = path.with_suffix("") / "tasks" / task_id / name
+    return file if file.exists() and not file.is_symlink() else None
+
+
+# Characters of a task's question that the project list carries.
+QUESTION_CHARS = 300
+
+
 def task_view(path: Path, task: dict) -> dict:
-    report = path.with_suffix("") / "tasks" / task["id"] / "report.md"
-    readable = report.exists() and not report.is_symlink()
-    text = report.read_text(errors="replace") if readable else ""
-    return task | {"state": task_state(task), "report": text}
+    """A task as the project list shows it: its question's start and its
+    session's last message; the report is read on its own."""
+    reply = task_file(path, task["id"], "reply.md")
+    return task | {
+        "state": task_state(task),
+        "question": task["question"][:QUESTION_CHARS],
+        "summary": open(reply, errors="replace").read(600) if reply else "",
+        "has_report": task_file(path, task["id"], "report.md") is not None,
+    }
 
 
 def source_files(project: dict, home: Path = HOME_DIR) -> list[str]:
@@ -1454,18 +1590,42 @@ def source_files(project: dict, home: Path = HOME_DIR) -> list[str]:
     )
 
 
-def project_view(path: Path, account: str = "") -> dict:
+def project_account(path: Path) -> str:
+    """The account whose server holds the project file `path`; empty for this
+    server's."""
+    return path.parents[2].name if path.is_relative_to(USERS_DIR) else ""
+
+
+def group_runs(project: dict, account: str = "", jobs: list[dict] | None = None) -> list[dict]:
+    """The runs given the project's title as their group, newest first, of
+    `jobs` if given (its server's jobs, read once for many projects)."""
+    if jobs is None:
+        jobs = user_jobs(account) if account else store.jobs()
+    return [job for job in jobs if problem_group(job) == project["title"]]
+
+
+def project_view(path: Path, account: str = "", jobs: list[dict] | None = None) -> dict:
     """A project; one of an account's server is named `<account>:<name>` and
     can only be read, like the runs of that server."""
     project = project_file.load(path.stem, path.parent)
     members = [project_member(m, account) for m in project["members"]]
+    # The other runs in the project's group, newest first.
+    listed = {m["job"]["run_id"] for m in members if m["job"]}
+    runs = [
+        run_entry(job)
+        for job in group_runs(project, account, jobs)
+        if job["run_id"] not in listed
+    ]
     tasks = [task_view(path, task) for task in project["tasks"]]
-    spent = sum(m["job"]["cost_usd"] or 0 for m in members if m["job"])
+    spent = sum(
+        entry["job"]["cost_usd"] or 0 for entry in members + runs if entry["job"]
+    )
     research = project.get("research_usd", 0) + sum(
         task.get("cost_usd", 0) for task in tasks
     )
     return project | {
         "members": members,
+        "runs": runs,
         "tasks": tasks,
         "research_usd": round(research, 2),
         "paper": (path.parent / path.stem / f"{path.stem}_paper.pdf").exists(),
@@ -1578,13 +1738,19 @@ def list_projects(
 ) -> list[dict]:
     if page.own_runs and not PER_USER:
         return []
-    projects = [project_view(p) for p in sorted(PROJECTS_DIR.glob("*.json"))]
+    jobs = store.jobs()
+    projects = [project_view(p, "", jobs) for p in sorted(PROJECTS_DIR.glob("*.json"))]
     for account in other_users():
         folder = USERS_DIR / account / "data" / "projects"
+        jobs = user_jobs(account)
         projects += [
-            project_view(path, account)
+            project_view(path, account, jobs)
             for path in sorted(folder.glob("*.json"))
+            if PROJECT_NAME.fullmatch(path.stem)
         ]
+    hidden = set(read_json(HIDDEN_PROJECTS).get("names", []))
+    for project in projects:
+        project["hidden"] = project["name"] in hidden
     return sorted(projects, key=lambda project: project["created"], reverse=True)
 
 
@@ -1672,7 +1838,7 @@ def known_project(
 ) -> str:
     if (
         (page.own_runs and not PER_USER)
-        or not re.fullmatch(r"[A-Za-z0-9_-]+", name)
+        or not PROJECT_NAME.fullmatch(name)
         or not (PROJECTS_DIR / f"{name}.json").exists()
     ):
         raise HTTPException(404, f"unknown project {name}")
@@ -1728,13 +1894,80 @@ class Member(BaseModel):
     proof: str = Field("", max_length=MAX_TEXT_CHARS)
     formal_statement: str = Field("", max_length=MAX_TEXT_CHARS)
     uses: list[str] = []
+    # Definitions that follow the project's library in this result's run, and
+    # join the library with the result.
+    library_extra: str = Field("", max_length=MAX_LIBRARY_CHARS)
+    # The claim of a research report that this result proves, whose state
+    # the page then shows.
+    claim: str = Field("", max_length=MAX_TEXT_CHARS)
+
+
+def check_extras(project: dict, extras: list[str]) -> None:
+    """Refuse extra definitions of results that do not compile, in order,
+    after the project's library, which they join as those results are
+    proved."""
+    library = f"libraries/{project['library']}"
+    if libraries.is_package(library):
+        raise HTTPException(400, "extra definitions follow a library file, and this project's library is a package")
+    release = (project.get("selection") or {}).get("lean_release") or DEFAULT_LEAN_RELEASE
+    problem = libraries.check_file(library, release, "\n\n".join(extras))
+    if problem:
+        raise HTTPException(400, f"the extra definitions do not compile: {problem}")
+
+
+@app.put("/api/projects/{name}/settings")
+def set_project_settings(
+    body: Submission, name: str = Depends(known_project)
+) -> dict:
+    """The models, GPU group, Lean release and run settings of the results
+    the project starts from now on, from the configuration step of a run
+    submission and checked as a run's are; started results keep theirs."""
+    _, run_settings = run_configuration(body, page_of(body.page))
+    release = run_settings.pop("lean_release", "")
+    roles = {
+        role: getattr(body, role).model_dump(exclude_none=True)
+        for role in models.SELECTABLE_ROLES
+        if getattr(body, role)
+    }
+
+    def change(project: dict) -> None:
+        library = f"libraries/{project['library']}"
+        if libraries.is_package(library):
+            built = libraries.release(library)
+            if (release or DEFAULT_LEAN_RELEASE) != built:
+                raise HTTPException(400, f"the project's library is built on Lean {built}")
+        orchestrator = roles.get("orchestrator", {}).get("provider")
+        project |= {
+            "selection": roles | ({"lean_release": release} if release else {}),
+            "gpu_group": body.gpu_group,
+            "settings": run_settings,
+            "paper_search": bool(run_settings.get("paper_search")),
+        }
+        # Research and checks run on the orchestrator's service.
+        if orchestrator in ("claude", "codex"):
+            project["service"] = orchestrator
+
+    project_file.update(name, change)
+    return {"settings": run_settings}
 
 
 @app.put("/api/projects/{name}/members")
 def set_members(
     body: list[Member], name: str = Depends(known_project)
 ) -> dict:
-    """Replace the members without a run: the plan the user edits."""
+    """Replace the members without a run: the plan the user edits. Extra
+    definitions that are new or changed are compiled first."""
+    project = project_file.load(name)
+    stored = {m["uuid"]: m.get("library_extra", "") for m in project["members"]}
+    if any(m.library_extra.strip() and m.library_extra != stored.get(m.uuid) for m in body):
+        # The extras of started results not yet proved come first, in order.
+        started = [
+            m["library_extra"] for m in project["members"]
+            if m.get("run") and m.get("library_extra")
+            and (find_job(m["run"]) or {}).get("status") != "proved"
+        ]
+        check_extras(project, started + [m.library_extra for m in body if m.library_extra.strip()])
+
     def change(project: dict) -> None:
         try:
             project_file.replace_unstarted(project, [m.model_dump() for m in body])
@@ -1746,10 +1979,12 @@ def set_members(
 
 
 class Task(BaseModel):
-    kind: Literal["research", "check", "paper"]
+    # "check", a referee of one claim, is archived with decisions on claims.
+    kind: Literal["research", "paper"]
     question: str = Field("", max_length=MAX_TEXT_CHARS)
     max_usd: float = Field(20, gt=0, le=MAX_TASK_USD)
     blueprint: bool = False  # the report's theorems replace the unstarted ones
+    after: str = Field("", pattern=rf"^({TASK_ID.pattern})?$")  # the task it continues
 
 
 def task_user(request: Request) -> str:
@@ -1809,32 +2044,34 @@ def start_task(
     return task
 
 
-class Decision(BaseModel):
-    decision: Literal["confirmed", "rejected"]
-    note: str = Field("", max_length=4000)
-
-
-@app.post("/api/projects/{name}/reviews/{index}")
-def decide_review(
-    index: int,
-    body: Decision,
-    name: str = Depends(known_project),
-    user: str = Depends(current_user),
-) -> dict:
-    """Record a person's decision on a claim."""
-    def change(project: dict) -> None:
-        if not 0 <= index < len(project["reviews"]):
-            raise HTTPException(404, "unknown claim")
-        project["reviews"][index] |= body.model_dump() | {"by": user}
-
-    project_file.update(name, change)
-    return {"decision": body.decision}
+# Decisions on claims are archived: no one used them, and a claim is settled
+# by proving it as a theorem.
+# class Decision(BaseModel):
+#     decision: Literal["confirmed", "rejected"]
+#     note: str = Field("", max_length=4000)
+#
+#
+# @app.post("/api/projects/{name}/reviews/{index}")
+# def decide_review(
+#     index: int,
+#     body: Decision,
+#     name: str = Depends(known_project),
+#     user: str = Depends(current_user),
+# ) -> dict:
+#     """Record a person's decision on a claim."""
+#     def change(project: dict) -> None:
+#         if not 0 <= index < len(project["reviews"]):
+#             raise HTTPException(404, "unknown claim")
+#         project["reviews"][index] |= body.model_dump() | {"by": user}
+#
+#     project_file.update(name, change)
+#     return {"decision": body.decision}
 
 
 @app.get("/api/projects/{name}/blueprint")
 def project_blueprint(path: Path = Depends(project_path)) -> dict:
     """The project's results as a plan whose lemmas are its members."""
-    account = path.parents[2].name if path.is_relative_to(USERS_DIR) else ""
+    account = project_account(path)
     project = project_file.load(path.stem, path.parent)
     members = [project_member(m, account) for m in project["members"]]
     known = {member["uuid"] for member in members}
@@ -1858,6 +2095,204 @@ def project_blueprint(path: Path = Depends(project_path)) -> dict:
         }
 
     return {"version": 1, "nodes": [*map(node, members)], "problems": []}
+
+
+@app.get("/api/projects/{name}/tasks/{task_id}/report")
+def project_report(task_id: str, path: Path = Depends(project_path)) -> FileResponse:
+    if not TASK_ID.fullmatch(task_id):
+        raise HTTPException(404, "no report")
+    report = task_file(path, task_id, "report.md")
+    if report is None:
+        raise HTTPException(404, "no report")
+    return FileResponse(report, media_type="text/plain; charset=utf-8")
+
+
+def project_files(path: Path) -> dict[str, Path]:
+    """The files of a project's export (export_project), by their place in
+    it: build folders (.lake) and links are left out."""
+    project = project_file.load(path.stem, path.parent)
+    home = path.parents[2].resolve()
+    files = {"project.json": path}
+
+    # A user's server may link its files to the server account's, so only
+    # files that resolve inside its state are taken.
+    def add(root: Path, prefix: str) -> None:
+        for file in sorted(root.rglob("*")) if root.is_dir() else []:
+            relative = file.relative_to(root)
+            if (
+                file.is_file()
+                and not file.is_symlink()
+                and ".lake" not in relative.parts
+                and file.resolve().is_relative_to(home)
+            ):
+                files[f"{prefix}/{relative.as_posix()}"] = file
+
+    add(path.with_suffix("") / "tasks", "tasks")
+    if project.get("source"):
+        add(Path(project["source"]), "source")
+    if LIBRARY_NAME.match(project["library"]):
+        library = home / "libraries" / project["library"]
+        if library.is_dir():
+            add(library, f"library/{project['library']}")
+        elif library.is_file() and library.resolve().is_relative_to(home):
+            files[f"library/{project['library']}"] = library
+    account = project_account(path)
+    members = [find_job(f"{account}:{m['run']}" if account else m["run"]) for m in project["members"] if m.get("run")]
+    for job in [job for job in members if job] + group_runs(project, account):
+        result_dir = run_dir(job, RESULTS_DIR)
+        for file in sorted(result_dir.rglob("*")) if result_dir.is_dir() else []:
+            if file.is_file() and servable(job, file):
+                local = job.get("local_id", job["run_id"])
+                files[f"runs/{local}/{file.relative_to(result_dir).as_posix()}"] = file
+    return files
+
+
+@app.get("/api/projects/{name}/export")
+def export_project(path: Path = Depends(project_path)) -> FileResponse:
+    """The project as a zip of one folder: project.json, its library, its
+    tasks and source files, and the result folder of each of its runs
+    (members and runs in its group), which import_project restores."""
+    return zip_response(path.stem, {}, project_files(path))
+
+
+def free_name(taken, base: str) -> str:
+    """`base`, or `base_2`, `base_3`, ... if `taken(name)` holds for it."""
+    name, count = base, 1
+    while taken(name):
+        count += 1
+        name = f"{base}_{count}"
+    return name
+
+
+def restore_project(upload, user: str, page: str) -> str:
+    """Add a project from its export under a free name: its library (kept
+    under its name if the same file is already there, else renamed), tasks
+    and source files, and its runs as imported runs in its group, which
+    its results then name."""
+    with tempfile.TemporaryDirectory(dir=TEMP_DIR) as staging:
+        root = Path(staging) / "project"
+        try:
+            with zipfile.ZipFile(upload) as archive:
+                unpack_files(archive, root)
+            project = json.loads((root / "project.json").read_text())
+        except Exception as error:
+            raise HTTPException(400, f"unreadable project archive: {error}")
+        # Names from the archive become paths, so they must be plain names.
+        if not PROJECT_NAME.fullmatch(str(project.get("name", ""))) or not (
+            LIBRARY_NAME.match(str(project.get("library", "")))
+        ):
+            raise HTTPException(400, "the project archive names an invalid project or library")
+        if not all(THEOREM_NAME.fullmatch(str(m.get("uuid", ""))) for m in project.get("members", [])):
+            raise HTTPException(400, "the project archive names an invalid result")
+        project["tasks"] = [
+            task for task in project.get("tasks", [])
+            if TASK_ID.fullmatch(str(task.get("id", "")))
+        ]
+        name = free_name(lambda n: (PROJECTS_DIR / f"{n}.json").exists(), project["name"])
+        titles = {project_file.load(p.stem)["title"] for p in PROJECTS_DIR.glob("*.json")}
+        title = free_name(lambda t: t in titles, project["title"])
+        folder = PROJECTS_DIR / name
+        library = root / "library" / project["library"]
+        if not library.exists():
+            raise HTTPException(400, "the project archive holds no library")
+        runs = sorted((root / "runs").iterdir() if (root / "runs").is_dir() else [])
+        # Every run is read before anything is moved, so a bad one moves nothing.
+        try:
+            for run in runs:
+                read_run(run)
+        except Exception as error:
+            raise HTTPException(400, f"unreadable run {run.name} in the project archive: {error}")
+        target = LIBRARY_DIR / project["library"]
+        same = target.is_file() and library.is_file() and target.read_bytes() == library.read_bytes()
+        if not same:
+            if target.exists():
+                stem, suffix = target.stem, target.suffix
+                project["library"] = free_name(
+                    lambda n: (LIBRARY_DIR / f"{n}{suffix}").exists(), f"{stem}_imported"
+                ) + suffix
+            LIBRARY_DIR.mkdir(parents=True, exist_ok=True)
+            shutil.move(library, LIBRARY_DIR / project["library"])
+        for part in ("tasks", "source"):
+            if (root / part).is_dir():
+                folder.mkdir(parents=True, exist_ok=True)
+                shutil.move(root / part, folder / part)
+        project["source"] = str(folder / "source") if (folder / "source").is_dir() else ""
+        restored = {run.name: restore_folder(run, user, page, title) for run in runs}
+        # A result whose run the archive lacks has none on this server.
+        for member in project["members"]:
+            if member.get("run") in restored:
+                member["run"] = restored[member["run"]]
+            else:
+                member.pop("run", None)
+        for task in project.get("tasks", []):
+            if task.get("state") == "running":
+                task["state"] = "failed"
+        project |= {"name": name, "title": title}
+        project.pop("owner", None)
+        PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
+        project_file.save(project)
+    return name
+
+
+@app.post("/api/projects/import", status_code=201)
+async def import_project(
+    request: Request,
+    user: str = Depends(current_user),
+    page: str = DEFAULT_PAGE,
+) -> dict:
+    """Add a project from a zip of its export (the body)."""
+    if page_of(page).own_runs and not PER_USER:
+        raise HTTPException(404, "this page has no projects")
+    with await stream_upload(request, "project archive") as upload:
+        name = await asyncio.to_thread(restore_project, upload, user, page)
+    return {"name": name}
+
+
+def set_project_hidden(name: str, hidden: bool) -> dict:
+    """Leave a project out of the page's list, or show it again; nothing of
+    the project changes, so one of a user's server can be hidden too."""
+    with open(HIDDEN_PROJECTS.with_suffix(".lock"), "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        names = set(read_json(HIDDEN_PROJECTS).get("names", []))
+        names = names | {name} if hidden else names - {name}
+        write_atomic(HIDDEN_PROJECTS, json.dumps({"names": sorted(names)}, indent=1))
+    return {"name": name, "hidden": hidden}
+
+
+@app.post("/api/projects/{name}/hide")
+def hide_project(name: str, path: Path = Depends(project_path)) -> dict:
+    return set_project_hidden(name, True)
+
+
+@app.post("/api/projects/{name}/unhide")
+def unhide_project(name: str, path: Path = Depends(project_path)) -> dict:
+    return set_project_hidden(name, False)
+
+
+# Deleting a project is archived for now; hiding leaves it out of the list.
+# @app.delete("/api/projects/{name}")
+# def delete_project(name: str = Depends(known_project)) -> dict:
+#     """Move a project of this server out of the list, into
+#     state/deleted_projects/, from where it can be restored by hand. Its runs
+#     stay in the run list and its library in libraries/."""
+#     target = DELETED_PROJECTS / f"{name}_{time.strftime('%Y%m%d_%H%M%S')}"
+#
+#     def move(project: dict) -> None:
+#         if any(task_state(task) == "running" for task in project["tasks"]):
+#             raise HTTPException(409, "a task of this project is running")
+#         target.mkdir(parents=True)
+#         for item in (PROJECTS_DIR / name, PROJECTS_DIR / f"{name}.json"):
+#             if item.exists():
+#                 shutil.move(item, target / item.name)
+#
+#     # The project's lock is held while its file moves, so that no task
+#     # writes it meanwhile.
+#     with open(PROJECTS_DIR / f"{name}.lock", "w") as lock:
+#         fcntl.flock(lock, fcntl.LOCK_EX)
+#         move(project_file.load(name))
+#     (PROJECTS_DIR / f"{name}.lock").unlink(missing_ok=True)
+#     set_project_hidden(name, False)
+#     return {"deleted": name, "kept_in": str(target.relative_to(HOME_DIR))}
 
 
 @app.get("/api/projects/{name}/library")
@@ -2138,9 +2573,11 @@ def export_readme(
     trace_agents: dict,
     files: list[str],
     release: str,
+    proof: dict | None = None,
 ) -> str:
     """A short guide to the exported folder; the models and Lean `release`
-    are those the trace records."""
+    are those the trace records, and `proof` (replay_facts) tells how to
+    check the standalone file."""
     root_files = [name for name in files if "/" not in name]
     folders = [
         folder
@@ -2200,13 +2637,43 @@ def export_readme(
             f"- {ROLE_NAMES.get(role, role)}: {model_label(trace_agents[role], version)}"
             for role in roles
         ]
-    if any(name.endswith("_standalone.lean") for name in root_files):
+    if proof:
+        name, module = proof["file"], proof["imports"]
+        how = (
+            f"Lean {release} alone checks it: `lean {name}`."
+            if proof["core"]
+            else f"It checks in a Lake project with Lean {release} and those packages (Mathlib {release}): `lake env lean {name}`."
+        )
+        axioms = ", ".join(proof["axioms"]) or "none"
         lines += [
             "",
-            f"The standalone file compiles with Lean {release} and Mathlib {release} in a Lake project:",
-            "`lake env lean <file>`.",
+            "## Checking the proof",
+            "",
+            f"`{name}` (SHA-256 `{proof['sha256']}`) imports {module}. {how}",
+            f"The run recorded the axioms of its principal theorem `{MAIN_NAME}` as: {axioms}.",
+            f"Appending `#print axioms {MAIN_NAME}` to the file prints them again.",
         ]
     return "\n".join(lines) + "\n"
+
+
+def replay_facts(sources: dict[str, Path], summary: dict) -> dict | None:
+    """What a reader needs to check a run's verified standalone file
+    independently: its name, hash and import, and the axioms the run
+    recorded. None unless the run's checks verified the file."""
+    name = next((n for n in sources if "/" not in n and n.endswith("_standalone.lean")), None)
+    checks = summary.get("checks") or {}
+    if name is None or not checks.get("verified"):
+        return None
+    data = sources[name].read_bytes()
+    roots = libraries.import_roots(data.decode(errors="replace"))
+    return {
+        "file": name,
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "imports": ", ".join(sorted(roots)) or "nothing",
+        # Lean's own libraries come with Lean; any other needs its package.
+        "core": roots <= {"Init", "Std", "Lean"},
+        "axioms": checks.get("axioms", []),
+    }
 
 
 @app.get("/api/runs/{run_id}/export")
@@ -2269,28 +2736,19 @@ def export_run(job: dict = Depends(owned_job)) -> FileResponse:
         trace = {}
     trace_agents = trace.get("agents") or {}
     toolchain = (trace.get("lean_environment") or {}).get("toolchain", "")
+    summary_path = result_dir / "summary.json"
+    summary = read_record(summary_path) if servable(job, summary_path) else {}
     entries = {
         "README.md": export_readme(
             record,
             trace_agents,
             list(entries) + list(sources),
             toolchain.rpartition(":")[2] or DEFAULT_LEAN_RELEASE,
+            replay_facts(sources, summary),
         ),
         **entries,
     }
-    archive = tempfile.NamedTemporaryFile(suffix=".zip", delete=False)
-    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as bundle:
-        for target, text in entries.items():
-            bundle.writestr(f"{run_id}/{target}", text)
-        for target, path in sources.items():
-            bundle.write(path, f"{run_id}/{target}")
-    archive.close()
-    return FileResponse(
-        archive.name,
-        media_type="application/zip",
-        filename=f"{run_id}.zip",
-        background=BackgroundTask(os.unlink, archive.name),
-    )
+    return zip_response(run_id, entries, sources)
 
 
 @app.get("/api/runs/{run_id}/progress")
